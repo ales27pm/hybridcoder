@@ -31,11 +31,16 @@ nonisolated struct GenerablePatchPlan: Sendable {
 @Observable
 @MainActor
 final class FoundationModelService {
+    private let registry: ModelRegistry
+    private let modelID: String
+
     var statusText: String = "Checking…"
     var isAvailable: Bool = false
     var isGenerating: Bool = false
 
-    init() {
+    init(registry: ModelRegistry, modelID: String) {
+        self.registry = registry
+        self.modelID = modelID
         refreshStatus()
     }
 
@@ -44,18 +49,28 @@ final class FoundationModelService {
         case .available:
             statusText = "Ready"
             isAvailable = true
+            registry.setAvailability(for: modelID, isAvailable: true)
+            registry.setLoadState(for: modelID, .loaded)
         case .unavailable(.appleIntelligenceNotEnabled):
             statusText = "Enable Apple Intelligence in Settings"
             isAvailable = false
+            registry.setAvailability(for: modelID, isAvailable: false)
+            registry.setLoadState(for: modelID, .unloaded)
         case .unavailable(.modelNotReady):
             statusText = "Model downloading…"
             isAvailable = false
+            registry.setAvailability(for: modelID, isAvailable: false)
+            registry.setLoadState(for: modelID, .loading)
         case .unavailable(.deviceNotEligible):
             statusText = "Device not supported"
             isAvailable = false
+            registry.setAvailability(for: modelID, isAvailable: false)
+            registry.setLoadState(for: modelID, .unloaded)
         default:
             statusText = "Unavailable"
             isAvailable = false
+            registry.setAvailability(for: modelID, isAvailable: false)
+            registry.setLoadState(for: modelID, .unloaded)
         }
     }
 

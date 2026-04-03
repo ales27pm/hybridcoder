@@ -106,8 +106,8 @@ struct OnboardingView: View {
 
                 modelRow(
                     icon: "waveform.badge.magnifyingglass",
-                    name: ModelDownloadService.canonicalEmbeddingModelLabel(),
-                    detail: "Semantic search · CoreML · \(ModelDownloadService.canonicalEmbeddingModelID())"
+                    name: orchestrator.modelRegistry.entry(for: orchestrator.modelRegistry.activeEmbeddingModelID)?.displayName ?? orchestrator.modelRegistry.activeEmbeddingModelID,
+                    detail: "Semantic search · CoreML · \(orchestrator.modelRegistry.activeEmbeddingModelID)"
                 )
 
                 modelRow(
@@ -180,7 +180,7 @@ struct OnboardingView: View {
             VStack(spacing: 16) {
                 downloadCard(
                     icon: "waveform.badge.magnifyingglass",
-                    name: ModelDownloadService.canonicalEmbeddingModelLabel(),
+                    name: orchestrator.modelRegistry.entry(for: orchestrator.modelRegistry.activeEmbeddingModelID)?.displayName ?? orchestrator.modelRegistry.activeEmbeddingModelID,
                     progress: orchestrator.modelDownload.downloadProgress,
                     isActive: orchestrator.modelDownload.isDownloading,
                     isDone: embeddingComplete,
@@ -376,15 +376,10 @@ struct OnboardingView: View {
     }
 
     private func downloadEmbedding() async {
-        await orchestrator.modelDownload.downloadIfNeeded()
+        await orchestrator.downloadActiveEmbeddingModel()
 
         if orchestrator.modelDownload.isModelReady {
-            do {
-                try await orchestrator.embeddingService.load()
-                withAnimation { embeddingComplete = true }
-            } catch {
-                embeddingError = error.localizedDescription
-            }
+            withAnimation { embeddingComplete = true }
         } else {
             embeddingError = orchestrator.modelDownload.downloadError ?? "Download failed"
         }

@@ -4,12 +4,23 @@ import Foundation
 @Observable
 @MainActor
 final class QwenCoderService {
+    let generationModelID: String
+    let embeddingModelID: String
+
     var isLoaded: Bool = false
     var isLoading: Bool = false
     var isGenerating: Bool = false
     var loadError: String? = "MLX runtime is no longer supported in this build."
     var tokensPerSecond: Double = 0
     var loadProgress: Double = 0
+
+    init(
+        generationModelID: String = "apple/foundation-language-model",
+        embeddingModelID: String = "microsoft/codebert-base"
+    ) {
+        self.generationModelID = generationModelID
+        self.embeddingModelID = embeddingModelID
+    }
 
     func warmUp(progressHandler: ((Double) -> Void)? = nil) async {
         progressHandler?(0)
@@ -80,7 +91,7 @@ final class QwenCoderService {
         nonisolated var errorDescription: String? {
             switch self {
             case .modelNotLoaded:
-                return "MLX runtime is not available in this iOS 26+ Foundation Models build."
+                return "Configured model runtime is not available in this iOS 26+ Foundation Models build."
             case .alreadyGenerating:
                 return "A generation is already in progress."
             }

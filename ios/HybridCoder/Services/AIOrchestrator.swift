@@ -4,8 +4,9 @@ import Foundation
 @MainActor
 final class AIOrchestrator {
     let repoAccess = RepoAccessService()
-    let embeddingService = CoreMLEmbeddingService()
-    let modelDownload = ModelDownloadService()
+    let modelRegistry: ModelRegistry
+    let embeddingService: CoreMLEmbeddingService
+    let modelDownload: ModelDownloadService
 
     private(set) var searchIndex: SemanticSearchIndex?
     private(set) var patchEngine: PatchEngine?
@@ -22,6 +23,14 @@ final class AIOrchestrator {
     private(set) var indexingProgress: (completed: Int, total: Int)?
 
     var isRepoLoaded: Bool { repoRoot != nil }
+
+    init() {
+        let registry = ModelRegistry()
+        self.modelRegistry = registry
+        self.embeddingService = CoreMLEmbeddingService(modelID: registry.activeEmbeddingModelID, registry: registry)
+        self.modelDownload = ModelDownloadService(registry: registry)
+        refreshRegistryInstallState()
+    }
 
     var foundationModelStatus: String {
         if #available(iOS 26.0, *),
@@ -40,17 +49,11 @@ final class AIOrchestrator {
     }
 
     var modelSummary: String {
-        var parts: [String] = []
-        if isFoundationModelAvailable { parts.append("Apple Intelligence ready") }
-        if modelDownload.isModelReady { parts.append("Embeddings ready") }
-        if parts.isEmpty {
-            return "No models loaded"
-        }
-        return parts.joined(separator: " · ")
+        modelRegistry.readinessSummary()
     }
 
     var hasAnyModel: Bool {
-        isFoundationModelAvailable
+        modelRegistry.hasAnyGenerationModelReady()
     }
 
     func warmUp() async {
@@ -61,7 +64,7 @@ final class AIOrchestrator {
         let embeddingAlreadyLoaded = await embeddingService.isLoaded
 
         if !embeddingAlreadyLoaded {
-            if modelDownload.isModelReady {
+            if modelRegistry.entry(for: modelRegistry.activeEmbeddingModelID)?.installState == .installed {
                 do {
                     try await embeddingService.load()
                 } catch {
@@ -81,13 +84,29 @@ final class AIOrchestrator {
 
         if #available(iOS 26.0, *) {
             if foundationModel == nil {
-                let fm = FoundationModelService()
+                let fm = FoundationModelService(registry: modelRegistry, modelID: modelRegistry.activeGenerationModelID)
                 fm.refreshStatus()
                 foundationModel = fm
             }
         }
 
         isWarmingUp = false
+    }
+
+    func downloadActiveEmbeddingModel() async {
+        await modelDownload.download(modelID: modelRegistry.activeEmbeddingModelID)
+        if modelRegistry.entry(for: modelRegistry.activeEmbeddingModelID)?.installState == .installed {
+            try? await embeddingService.load()
+        }
+    }
+
+    func deleteActiveEmbeddingModel() async {
+        await embeddingService.unload()
+        modelDownload.deleteDownloadedModels(modelID: modelRegistry.activeEmbeddingModelID)
+    }
+
+    func refreshRegistryInstallState() {
+        modelDownload.refreshInstallState(modelID: modelRegistry.activeEmbeddingModelID)
     }
 
     func importRepo(url: URL) async throws {
