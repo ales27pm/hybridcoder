@@ -125,7 +125,7 @@ final class AIOrchestrator {
 
         repoRoot = url
         repoFiles = files
-        contextPolicySnapshot = contextPolicyLoader.loadPolicyFiles(startingAt: url)
+        contextPolicySnapshot = await contextPolicyLoader.loadPolicyFiles(startingAt: url, stopAt: url)
 
         await rebuildIndex()
     }
@@ -143,7 +143,7 @@ final class AIOrchestrator {
         let files = await repoAccess.listSourceFiles(in: url)
         repoRoot = url
         repoFiles = files
-        contextPolicySnapshot = contextPolicyLoader.loadPolicyFiles(startingAt: url)
+        contextPolicySnapshot = await contextPolicyLoader.loadPolicyFiles(startingAt: url, stopAt: url)
         return true
     }
 
