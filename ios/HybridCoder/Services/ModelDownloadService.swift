@@ -15,7 +15,10 @@ final class ModelDownloadService {
     private(set) var shouldSuggestTokenInput: Bool = false
 
     private let registry: ModelRegistry
-    private let logger = Logger(subsystem: "com.hybridcoder.app", category: "ModelDownloadService")
+    private let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.hybridcoder",
+        category: "ModelDownloadService"
+    )
 
     init(registry: ModelRegistry) {
         self.registry = registry
@@ -112,8 +115,12 @@ final class ModelDownloadService {
                 guard let httpResponse = response as? HTTPURLResponse,
                       (200...299).contains(httpResponse.statusCode) else {
                     let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-                    logger.error("HTTP download failed status=\(code, privacy: .public) modelID=\(modelID, privacy: .public) remotePath=\(file.remotePath, privacy: .public) remoteBaseURL=\(entry.remoteBaseURL ?? "nil", privacy: .public)")
-                    throw DownloadError.httpError(code, file.remotePath, modelID: modelID, repoBaseURL: entry.remoteBaseURL)
+                    throw DownloadError.httpError(
+                        statusCode: code,
+                        remotePath: file.remotePath,
+                        modelID: modelID,
+                        repoBaseURL: entry.remoteBaseURL
+                    )
                 }
 
                 let parentDir = localURL.deletingLastPathComponent()
@@ -244,11 +251,11 @@ final class ModelDownloadService {
 
     nonisolated enum DownloadError: Error, LocalizedError, Sendable {
         case modelNotDownloaded(String)
-        case httpError(Int, String, modelID: String?, repoBaseURL: String?)
+        case httpError(statusCode: Int, remotePath: String, modelID: String?, repoBaseURL: String?)
         case fileCorrupt(String)
 
         nonisolated var isAuthorizationError: Bool {
-            if case .httpError(let code, _, _, _) = self {
+            if case .httpError(statusCode: let code, remotePath: _, modelID: _, repoBaseURL: _) = self {
                 return code == 401 || code == 403
             }
             return false
@@ -258,7 +265,7 @@ final class ModelDownloadService {
             switch self {
             case .modelNotDownloaded(let details):
                 return "modelNotDownloaded: \(details)"
-            case .httpError(let code, let remotePath, let modelID, let repoBaseURL):
+            case .httpError(statusCode: let code, remotePath: let remotePath, modelID: let modelID, repoBaseURL: let repoBaseURL):
                 return "httpError status=\(code) remotePath=\(remotePath) modelID=\(modelID ?? "nil") repoBaseURL=\(repoBaseURL ?? "nil")"
             case .fileCorrupt(let file):
                 return "fileCorrupt: \(file)"
@@ -269,7 +276,7 @@ final class ModelDownloadService {
             switch self {
             case .modelNotDownloaded(let details):
                 return details
-            case .httpError(let code, let file, _, _):
+            case .httpError(statusCode: let code, remotePath: let file, modelID: _, repoBaseURL: _):
                 if code == 404 {
                     return "HTTP 404 downloading \(file). The file, repository, or remote path could not be found."
                 }
