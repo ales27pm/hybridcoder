@@ -173,12 +173,18 @@ actor CoreMLEmbeddingService {
     ) throws -> MLMultiArray {
         let nsShape = shape.map { NSNumber(value: $0) }
         let array = try MLMultiArray(shape: nsShape, dataType: dataType)
+        let count = values.count
 
         switch dataType {
         case .int32:
-            let ptr = array.dataPointer.bindMemory(to: Int32.self, capacity: values.count)
+            let ptr = array.dataPointer.bindMemory(to: Int32.self, capacity: count)
             for (i, v) in values.enumerated() {
                 ptr[i] = Int32(v)
+            }
+        case .float32:
+            let ptr = array.dataPointer.bindMemory(to: Float.self, capacity: count)
+            for (i, v) in values.enumerated() {
+                ptr[i] = Float(v)
             }
         default:
             for (i, v) in values.enumerated() {
@@ -202,7 +208,8 @@ actor CoreMLEmbeddingService {
             "hidden_states",
             "token_embeddings",
             "output_0",
-            "embeddings"
+            "embeddings",
+            "output_logits"
         ]
 
         var selectedKey: String?
@@ -239,21 +246,43 @@ actor CoreMLEmbeddingService {
     ) -> [Float] {
         let shape = hiddenStates.shape.map { $0.intValue }
         let is3D = shape.count == 3
-        let dim = is3D ? shape[2] : (shape.count == 2 ? shape[1] : embeddingDimension)
+
+        let dim: Int
+        if is3D {
+            dim = shape[2]
+        } else if shape.count == 2 {
+            dim = shape[1]
+        } else {
+            dim = embeddingDimension
+        }
+
         let seqLen = min(sequenceLength, attentionMask.count)
+        let totalElements = hiddenStates.count
 
         var summed = [Float](repeating: 0, count: dim)
         var maskSum: Float = 0
 
+        let strides: [Int]
+        if is3D {
+            strides = hiddenStates.strides.map { $0.intValue }
+        } else {
+            strides = hiddenStates.strides.map { $0.intValue }
+        }
+
         if hiddenStates.dataType == .float32 {
-            let ptr = hiddenStates.dataPointer.bindMemory(to: Float.self, capacity: hiddenStates.count)
+            let ptr = hiddenStates.dataPointer.bindMemory(to: Float.self, capacity: totalElements)
             for t in 0..<seqLen {
                 let m = Float(attentionMask[t])
                 guard m > 0 else { continue }
                 maskSum += m
-                let offset = t * dim
+                let baseOffset: Int
+                if is3D {
+                    baseOffset = strides[1] * t
+                } else {
+                    baseOffset = strides[0] * t
+                }
                 for d in 0..<dim {
-                    summed[d] += ptr[offset + d] * m
+                    summed[d] += ptr[baseOffset + d] * m
                 }
             }
         } else {

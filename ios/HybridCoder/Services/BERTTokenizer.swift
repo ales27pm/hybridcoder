@@ -46,18 +46,20 @@ actor BERTTokenizer {
     var loaded: Bool { isLoaded }
 
     func load(from directory: URL) async throws {
-        let tokenizerJsonURL = directory.appendingPathComponent("tokenizer.json")
         let fm = FileManager.default
+
+        let tokenizerJsonURL = directory.appendingPathComponent("tokenizer.json")
+        let vocabURL = directory.appendingPathComponent("vocab.txt")
+        let vocabJsonURL = directory.appendingPathComponent("vocab.json")
 
         if fm.fileExists(atPath: tokenizerJsonURL.path) {
             try loadFromTokenizerJSON(tokenizerJsonURL)
+        } else if fm.fileExists(atPath: vocabURL.path) {
+            try loadFromVocabTxt(vocabURL)
+        } else if fm.fileExists(atPath: vocabJsonURL.path) {
+            try loadFromVocabJSON(vocabJsonURL)
         } else {
-            let vocabURL = directory.appendingPathComponent("vocab.txt")
-            if fm.fileExists(atPath: vocabURL.path) {
-                try loadFromVocabTxt(vocabURL)
-            } else {
-                throw TokenizerError.fileNotFound("Neither tokenizer.json nor vocab.txt found in \(directory.lastPathComponent)")
-            }
+            throw TokenizerError.fileNotFound("No tokenizer.json, vocab.txt, or vocab.json found in \(directory.lastPathComponent)")
         }
 
         guard !vocab.isEmpty else { throw TokenizerError.vocabEmpty }
@@ -83,9 +85,20 @@ actor BERTTokenizer {
             return EncodedInput(inputIDs: [], attentionMask: [], tokenTypeIDs: [], originalTokenCount: 0)
         }
 
-        let tokens = tokenize(text)
-        let maxContentLen = config.maxLength - 2
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            let ids = [config.clsTokenID, config.sepTokenID]
+            let padCount = config.maxLength - ids.count
+            return EncodedInput(
+                inputIDs: ids + Array(repeating: config.padTokenID, count: padCount),
+                attentionMask: [1, 1] + Array(repeating: 0, count: padCount),
+                tokenTypeIDs: Array(repeating: 0, count: config.maxLength),
+                originalTokenCount: 2
+            )
+        }
 
+        let tokens = tokenize(trimmed)
+        let maxContentLen = config.maxLength - 2
         let truncated = Array(tokens.prefix(maxContentLen))
 
         var inputIDs = [config.clsTokenID]
@@ -95,13 +108,16 @@ actor BERTTokenizer {
         inputIDs.append(config.sepTokenID)
 
         let realLen = inputIDs.count
+        let padCount = config.maxLength - realLen
 
-        while inputIDs.count < config.maxLength {
-            inputIDs.append(config.padTokenID)
+        if padCount > 0 {
+            inputIDs.append(contentsOf: Array(repeating: config.padTokenID, count: padCount))
         }
 
         var attentionMask = Array(repeating: 1, count: realLen)
-        attentionMask.append(contentsOf: Array(repeating: 0, count: config.maxLength - realLen))
+        if padCount > 0 {
+            attentionMask.append(contentsOf: Array(repeating: 0, count: padCount))
+        }
 
         let tokenTypeIDs = Array(repeating: 0, count: config.maxLength)
 
@@ -126,8 +142,7 @@ actor BERTTokenizer {
     }
 
     private func basicTokenize(_ text: String) -> [String] {
-        var cleaned = text.lowercased()
-        cleaned = cleaned.map { ch -> String in
+        let cleaned = text.lowercased().map { ch -> String in
             if ch.isWhitespace { return " " }
             if isPunctuation(ch) { return " \(ch) " }
             if shouldStripChar(ch) { return "" }
@@ -207,20 +222,52 @@ actor BERTTokenizer {
         if let model = json["model"] as? [String: Any],
            let vocabDict = model["vocab"] as? [String: Int] {
             self.vocab = vocabDict
+            mergeAddedTokens(from: json)
             return
         }
 
+        if let model = json["model"] as? [String: Any],
+           let vocabDict = model["vocab"] as? [String: NSNumber] {
+            var converted: [String: Int] = [:]
+            for (key, val) in vocabDict {
+                converted[key] = val.intValue
+            }
+            self.vocab = converted
+            mergeAddedTokens(from: json)
+            return
+        }
+
+        if let vocabDict = json["vocab"] as? [String: Int] {
+            self.vocab = vocabDict
+            mergeAddedTokens(from: json)
+            return
+        }
+
+        var builtVocab: [String: Int] = [:]
         if let addedTokens = json["added_tokens"] as? [[String: Any]] {
             for entry in addedTokens {
                 if let content = entry["content"] as? String,
                    let id = entry["id"] as? Int {
-                    self.vocab[content] = id
+                    builtVocab[content] = id
                 }
             }
         }
 
-        if self.vocab.isEmpty {
-            throw TokenizerError.invalidFormat("Could not extract vocabulary from tokenizer.json")
+        if !builtVocab.isEmpty {
+            self.vocab = builtVocab
+            return
+        }
+
+        throw TokenizerError.invalidFormat("Could not extract vocabulary from tokenizer.json")
+    }
+
+    private func mergeAddedTokens(from json: [String: Any]) {
+        guard let addedTokens = json["added_tokens"] as? [[String: Any]] else { return }
+        for entry in addedTokens {
+            if let content = entry["content"] as? String,
+               let id = entry["id"] as? Int {
+                vocab[content] = id
+            }
         }
     }
 
@@ -235,5 +282,13 @@ actor BERTTokenizer {
             }
         }
         self.vocab = loadedVocab
+    }
+
+    private func loadFromVocabJSON(_ url: URL) throws {
+        let data = try Data(contentsOf: url)
+        guard let dict = try JSONSerialization.jsonObject(with: data) as? [String: Int] else {
+            throw TokenizerError.invalidFormat("vocab.json is not a valid {token: id} dictionary")
+        }
+        self.vocab = dict
     }
 }

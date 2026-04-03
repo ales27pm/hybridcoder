@@ -6,7 +6,6 @@ nonisolated enum BundledEmbeddingAssets: Sendable {
         case modelDirectoryNotFound(name: String)
         case compiledModelNotFound(directory: URL)
         case tokenizerDirectoryNotFound(name: String)
-        case tokenizerFileMissing(name: String, searched: URL)
         case noTokenizerFilesFound(directory: URL)
 
         var description: String {
@@ -17,10 +16,8 @@ nonisolated enum BundledEmbeddingAssets: Sendable {
                 return "No compiled CoreML model (.mlmodelc) found in \(directory.lastPathComponent)"
             case .tokenizerDirectoryNotFound(let name):
                 return "Tokenizer directory '\(name)' not found in app bundle"
-            case .tokenizerFileMissing(let name, let searched):
-                return "Required tokenizer file '\(name)' not found in \(searched.lastPathComponent)"
             case .noTokenizerFilesFound(let directory):
-                return "No tokenizer files found in \(directory.lastPathComponent)"
+                return "No tokenizer files (tokenizer.json, vocab.txt, or vocab.json) found in \(directory.lastPathComponent)"
             }
         }
     }
@@ -29,9 +26,10 @@ nonisolated enum BundledEmbeddingAssets: Sendable {
     private static let tokenizerDirectoryName = "codebert-base-tokenizer"
     private static let embeddingModelsFolder = "EmbeddingModels"
 
-    private static let requiredTokenizerFiles = [
+    private static let acceptedTokenizerFiles = [
         "tokenizer.json",
-        "tokenizer_config.json"
+        "vocab.txt",
+        "vocab.json"
     ]
 
     private static let compiledModelExtension = "mlmodelc"
@@ -88,6 +86,10 @@ nonisolated enum BundledEmbeddingAssets: Sendable {
     private static func findCompiledModel(in directory: URL) throws -> URL {
         let fm = FileManager.default
 
+        if directory.pathExtension == compiledModelExtension, fm.fileExists(atPath: directory.path) {
+            return directory
+        }
+
         let directoryModel = directory.appendingPathComponent("model.\(compiledModelExtension)")
         if fm.fileExists(atPath: directoryModel.path) {
             return directoryModel
@@ -96,10 +98,6 @@ nonisolated enum BundledEmbeddingAssets: Sendable {
         let contents = (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         if let compiled = contents.first(where: { $0.pathExtension == compiledModelExtension }) {
             return compiled
-        }
-
-        if directory.pathExtension == compiledModelExtension, fm.fileExists(atPath: directory.path) {
-            return directory
         }
 
         throw AssetError.compiledModelNotFound(directory: directory)
@@ -113,11 +111,12 @@ nonisolated enum BundledEmbeddingAssets: Sendable {
             throw AssetError.noTokenizerFilesFound(directory: directory)
         }
 
-        for required in requiredTokenizerFiles {
-            let fileURL = directory.appendingPathComponent(required)
-            if !fm.fileExists(atPath: fileURL.path) {
-                throw AssetError.tokenizerFileMissing(name: required, searched: directory)
-            }
+        let hasAcceptedFile = acceptedTokenizerFiles.contains { fileName in
+            fm.fileExists(atPath: directory.appendingPathComponent(fileName).path)
+        }
+
+        guard hasAcceptedFile else {
+            throw AssetError.noTokenizerFilesFound(directory: directory)
         }
     }
 }
