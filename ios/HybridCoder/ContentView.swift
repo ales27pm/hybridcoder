@@ -57,8 +57,13 @@ struct ContentView: View {
             allowedContentTypes: [.folder],
             allowsMultipleSelection: false
         ) { result in
-            if case .success(let urls) = result, let url = urls.first {
-                viewModel.importFolder(url: url)
+            switch result {
+            case .success(let urls):
+                if let url = urls.first {
+                    viewModel.importFolder(url: url)
+                }
+            case .failure(let error):
+                viewModel.importError = error.localizedDescription
             }
         }
         .sheet(isPresented: $viewModel.showSettings) {
@@ -74,12 +79,14 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Sidebar
-
     @ViewBuilder
     private var sidebarContent: some View {
         VStack(spacing: 0) {
             statusHeader
+
+            if let error = viewModel.importError {
+                importErrorBanner(error)
+            }
 
             if viewModel.codeIndexService.isIndexing {
                 indexingBanner
@@ -108,8 +115,6 @@ struct ContentView: View {
         }
         .background(Theme.sidebarBg)
     }
-
-    // MARK: - Status Header
 
     private var statusHeader: some View {
         VStack(spacing: 0) {
@@ -199,7 +204,32 @@ struct ContentView: View {
         .foregroundStyle(Theme.dimText)
     }
 
-    // MARK: - Indexing Banner
+    private func importErrorBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+
+            Text(message)
+                .font(.caption2)
+                .foregroundStyle(.orange.opacity(0.9))
+                .lineLimit(2)
+
+            Spacer()
+
+            Button {
+                viewModel.importError = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.dimText)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.orange.opacity(0.08))
+    }
 
     private var indexingBanner: some View {
         VStack(spacing: 4) {
@@ -222,8 +252,6 @@ struct ContentView: View {
         .padding(.vertical, 8)
         .background(Theme.codeBg)
     }
-
-    // MARK: - Empty State
 
     private var emptyRepositoryState: some View {
         VStack(spacing: 16) {
@@ -256,8 +284,6 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity)
     }
-
-    // MARK: - Sidebar Footer
 
     private var sidebarFooter: some View {
         VStack(spacing: 0) {
@@ -331,8 +357,6 @@ struct ContentView: View {
         .buttonStyle(.plain)
         .sensoryFeedback(.selection, trigger: isActive)
     }
-
-    // MARK: - Detail
 
     @ViewBuilder
     private var detailContent: some View {

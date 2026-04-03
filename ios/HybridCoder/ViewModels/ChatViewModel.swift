@@ -10,7 +10,6 @@ final class ChatViewModel {
     private(set) var messages: [ChatMessage] = []
     var inputText: String = ""
     private(set) var isStreaming: Bool = false
-    private(set) var isImportingRepo: Bool = false
     private(set) var isReindexing: Bool = false
     private(set) var pendingPatchPlan: PatchPlan?
     private(set) var lastPatchResult: PatchEngine.PatchResult?
@@ -24,18 +23,22 @@ final class ChatViewModel {
         if count > 0 {
             return "\(count) files indexed"
         }
-        return "No repository indexed"
+        return "No index"
     }
 
     var foundationModelStatus: String {
         if #available(iOS 26.0, *) {
             return "Available (iOS 26)"
         }
-        return "Unavailable (requires iOS 26)"
+        return "Unavailable"
     }
 
     var hasIndexedFiles: Bool {
         !codeIndexService.indexedFiles.isEmpty
+    }
+
+    var isModelAvailable: Bool {
+        coreMLService.isModelLoaded
     }
 
     init(
@@ -47,8 +50,6 @@ final class ChatViewModel {
         self.patchService = patchService
         self.coreMLService = coreMLService
     }
-
-    // MARK: - Send Message
 
     func sendMessage() async {
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -69,15 +70,13 @@ final class ChatViewModel {
                 patchService.addPatch(patch)
             }
         } catch {
-            let fallback = "Sorry, I couldn't process that: \(error.localizedDescription)"
+            let fallback = "Could not process your request: \(error.localizedDescription)"
             messages.append(ChatMessage(role: .assistant, content: fallback))
             errorMessage = error.localizedDescription
         }
 
         isStreaming = false
     }
-
-    // MARK: - Query Processing
 
     private func processQuery(_ query: String) async throws -> ChatMessage {
         let context = codeIndexService.findRelevantContext(for: query)
@@ -96,7 +95,7 @@ final class ChatViewModel {
         case .patchPlanning:
             let patches = try await generatePatches(query: query, context: context)
             let summary = patches.isEmpty
-                ? "No patches could be generated."
+                ? "No patches could be generated for this request."
                 : "\(patches.count) patch\(patches.count == 1 ? "" : "es") proposed:"
             return ChatMessage(role: .assistant, content: summary, patches: patches)
 
@@ -106,8 +105,6 @@ final class ChatViewModel {
             return ChatMessage(role: .assistant, content: summary)
         }
     }
-
-    // MARK: - Route Classification
 
     private func classifyRoute(for query: String) -> Route {
         let lower = query.lowercased()
@@ -130,8 +127,6 @@ final class ChatViewModel {
         return .explanation
     }
 
-    // MARK: - Generation
-
     private func generateExplanation(query: String, context: String) async throws -> String {
         if let result = await coreMLService.generateCode(
             prompt: "Explain the following based on the codebase context.\n\nQuestion: \(query)\n\nContext:\n\(context)",
@@ -141,7 +136,7 @@ final class ChatViewModel {
         }
 
         if context.isEmpty {
-            return "I don't have enough context to answer that. Try importing a repository first."
+            return "I don't have enough context to answer that. Import a repository first, then try again."
         }
 
         return buildFallbackExplanation(query: query, context: context)
@@ -152,7 +147,7 @@ final class ChatViewModel {
             return result
         }
 
-        return "Code generation requires the Qwen model. Please download it from the Models tab."
+        return "Code generation requires the Qwen model. Download it from the Models tab, then retry."
     }
 
     private func generatePatches(query: String, context: String) async throws -> [Patch] {
@@ -166,8 +161,6 @@ final class ChatViewModel {
         return []
     }
 
-    // MARK: - Reindex
-
     func reindex(url: URL) async {
         guard !isReindexing else { return }
         isReindexing = true
@@ -179,8 +172,6 @@ final class ChatViewModel {
         appendSystemMessage("Index rebuilt — \(count) file\(count == 1 ? "" : "s") indexed.")
         isReindexing = false
     }
-
-    // MARK: - Patch Application
 
     func applyPatch(_ patchId: UUID, rootURL: URL) {
         do {
@@ -195,15 +186,13 @@ final class ChatViewModel {
         patchService.rejectPatch(patchId)
     }
 
-    // MARK: - Clear Chat
-
     func clearChat() {
         messages.removeAll()
         inputText = ""
         errorMessage = nil
+        pendingPatchPlan = nil
+        lastPatchResult = nil
     }
-
-    // MARK: - Private Helpers
 
     private func appendSystemMessage(_ content: String) {
         messages.append(ChatMessage(role: .system, content: content))
@@ -274,13 +263,13 @@ final class ChatViewModel {
         var response = "Based on the indexed repository (\(fileCount) files):\n\n"
 
         if relevant.isEmpty {
-            response += "I couldn't find files directly related to your query. Try rephrasing or checking if the relevant files are in the imported folder."
+            response += "No files directly related to your query were found. Try rephrasing, or check that the relevant files are in the imported folder."
         } else {
             response += "Found \(relevant.count) potentially relevant file\(relevant.count == 1 ? "" : "s"):\n\n"
             for file in relevant.prefix(5) {
                 response += "• **\(file.relativePath)** — \(file.lineCount) lines\n"
             }
-            response += "\nFor deeper analysis, ensure the Qwen model is downloaded from the Models tab."
+            response += "\nFor deeper analysis, download the Qwen model from the Models tab."
         }
 
         return response

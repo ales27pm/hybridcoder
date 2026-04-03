@@ -10,6 +10,7 @@ final class AppViewModel {
     var fileTree: FileNode?
     var isImportingFolder: Bool = false
     var showSettings: Bool = false
+    var importError: String?
 
     let bookmarkService: BookmarkService
     let fileSystemService: FileSystemService
@@ -49,8 +50,16 @@ final class AppViewModel {
     }
 
     func openRepository(_ repository: Repository) {
-        guard let url = bookmarkService.resolveBookmark(repository) else { return }
-        guard url.startAccessingSecurityScopedResource() else { return }
+        guard let url = bookmarkService.resolveBookmark(repository) else {
+            importError = "Could not resolve bookmark for \(repository.name). Try re-importing."
+            return
+        }
+        guard url.startAccessingSecurityScopedResource() else {
+            importError = "Access denied to \(repository.name). Re-import the folder from Files."
+            return
+        }
+
+        importError = nil
         activeRepositoryURL = url
         fileTree = fileSystemService.buildFileTree(at: url)
 
@@ -69,13 +78,19 @@ final class AppViewModel {
     }
 
     func importFolder(url: URL) {
-        guard url.startAccessingSecurityScopedResource() else { return }
+        guard url.startAccessingSecurityScopedResource() else {
+            importError = "Could not access the selected folder."
+            return
+        }
         defer { url.stopAccessingSecurityScopedResource() }
 
         do {
             let repo = try bookmarkService.saveBookmark(for: url)
+            importError = nil
             openRepository(repo)
-        } catch {}
+        } catch {
+            importError = "Failed to save bookmark: \(error.localizedDescription)"
+        }
     }
 
     func selectFile(_ node: FileNode) {
@@ -92,6 +107,7 @@ final class AppViewModel {
         selectedFile = nil
         selectedSection = .chat
         codeIndexService.clearIndex()
+        importError = nil
     }
 
     func initialize() {

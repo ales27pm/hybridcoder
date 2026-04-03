@@ -1,4 +1,5 @@
 import SwiftUI
+import FoundationModels
 
 struct ModelManagerView: View {
     let downloadService: ModelDownloadService
@@ -49,7 +50,7 @@ struct ModelManagerView: View {
     private var foundationModelStatus: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: "apple.intelligence")
+                Image(systemName: "brain.head.profile")
                     .font(.subheadline)
                     .foregroundStyle(Theme.accent)
 
@@ -118,8 +119,6 @@ private struct FoundationModelStatusBadge: View {
     }
 }
 
-import FoundationModels
-
 private struct ModelCard: View {
     let model: ModelInfo
     @Binding var urlString: String
@@ -146,14 +145,22 @@ private struct ModelCard: View {
             }
 
             if model.status == .notDownloaded || model.status == .failed {
-                TextField("Model download URL...", text: $urlString)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(Theme.inputBg, in: .rect(cornerRadius: 8))
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
+                VStack(alignment: .leading, spacing: 4) {
+                    TextField("Model download URL…", text: $urlString)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(Theme.inputBg, in: .rect(cornerRadius: 8))
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+
+                    if model.status == .failed {
+                        Text("Download failed. Check the URL and try again.")
+                            .font(.caption2)
+                            .foregroundStyle(.red.opacity(0.8))
+                    }
+                }
             }
 
             if model.status == .downloading || model.status == .extracting {
@@ -162,7 +169,7 @@ private struct ModelCard: View {
                         .tint(Theme.accent)
 
                     HStack {
-                        Text(model.status == .extracting ? "Extracting..." : "Downloading...")
+                        Text(model.status == .extracting ? "Extracting…" : "Downloading…")
                             .font(.caption2)
                             .foregroundStyle(Theme.dimText)
                         Spacer()

@@ -22,6 +22,7 @@ final class AIOrchestrator {
     private(set) var indexingProgress: (completed: Int, total: Int)?
 
     var isRepoLoaded: Bool { repoRoot != nil }
+
     var foundationModelStatus: String {
         if #available(iOS 26.0, *),
            let fm = foundationModel as? FoundationModelService {
@@ -29,6 +30,7 @@ final class AIOrchestrator {
         }
         return "Unavailable (requires iOS 26)"
     }
+
     var isFoundationModelAvailable: Bool {
         if #available(iOS 26.0, *),
            let fm = foundationModel as? FoundationModelService {
@@ -65,8 +67,6 @@ final class AIOrchestrator {
 
         isWarmingUp = false
     }
-
-    // MARK: - Repository
 
     func importRepo(url: URL) async throws {
         let gained = await repoAccess.startAccessing(url)
@@ -110,8 +110,6 @@ final class AIOrchestrator {
         await searchIndex?.clear()
     }
 
-    // MARK: - Indexing
-
     func rebuildIndex() async {
         guard let root = repoRoot, let index = searchIndex else { return }
         guard !isIndexing else { return }
@@ -127,13 +125,11 @@ final class AIOrchestrator {
             }
             indexStats = await index.stats
         } catch {
-            warmUpError = "Indexing: \(error.localizedDescription)"
+            warmUpError = "Indexing failed: \(error.localizedDescription)"
         }
 
         isIndexing = false
     }
-
-    // MARK: - Semantic Search
 
     func searchCode(query: String, topK: Int = 5) async throws -> [SearchHit] {
         guard let index = searchIndex else {
@@ -141,8 +137,6 @@ final class AIOrchestrator {
         }
         return try await index.search(query: query, topK: topK)
     }
-
-    // MARK: - Task Routing & Response
 
     func processQuery(_ query: String) async throws -> AssistantResponse {
         isProcessing = true
@@ -176,8 +170,6 @@ final class AIOrchestrator {
         }
     }
 
-    // MARK: - Patch Operations
-
     func planPatch(query: String) async throws -> PatchPlan {
         isProcessing = true
         defer { isProcessing = false }
@@ -208,8 +200,6 @@ final class AIOrchestrator {
         guard let engine = patchEngine, let root = repoRoot else { return [] }
         return await engine.validate(plan, repoRoot: root)
     }
-
-    // MARK: - Route Resolution
 
     private func resolveRoute(for query: String) async -> Route {
         if #available(iOS 26.0, *),
@@ -246,8 +236,6 @@ final class AIOrchestrator {
         return .explanation
     }
 
-    // MARK: - Context Gathering
-
     private func gatherContext(for query: String, route: Route) async -> String {
         var contextParts: [String] = []
 
@@ -258,7 +246,7 @@ final class AIOrchestrator {
             }
         }
 
-        if contextParts.isEmpty, let root = repoRoot {
+        if contextParts.isEmpty, repoRoot != nil {
             let sample = repoFiles.prefix(5)
             for file in sample {
                 if let content = await repoAccess.readUTF8(at: file.absoluteURL) {
@@ -270,8 +258,6 @@ final class AIOrchestrator {
 
         return contextParts.joined(separator: "\n\n")
     }
-
-    // MARK: - Generation Backends
 
     private func generateExplanation(query: String, context: String) async throws -> String {
         if #available(iOS 26.0, *),
@@ -324,8 +310,6 @@ final class AIOrchestrator {
         throw OrchestratorError.noModelAvailable
     }
 
-    // MARK: - Helpers
-
     private func extractCodeBlocks(from text: String) -> [CodeBlock] {
         var blocks: [CodeBlock] = []
         let scanner = text as NSString
@@ -338,13 +322,6 @@ final class AIOrchestrator {
             let code = match.numberOfRanges > 2 ? scanner.substring(with: match.range(at: 2)) : ""
             if !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 blocks.append(CodeBlock(language: lang, code: code))
-            }
-        }
-
-        if blocks.isEmpty && text.contains("\n") && !text.contains(" ") == false {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                blocks.append(CodeBlock(language: "", code: trimmed))
             }
         }
 
@@ -386,11 +363,11 @@ final class AIOrchestrator {
             ))
         }
 
-        let summary = operations.isEmpty ? "No valid operations parsed" : "\(operations.count) operation\(operations.count == 1 ? "" : "s")"
+        let summary = operations.isEmpty
+            ? "No valid patch operations could be parsed from the model output."
+            : "\(operations.count) operation\(operations.count == 1 ? "" : "s")"
         return PatchPlan(summary: summary, operations: operations)
     }
-
-    // MARK: - Errors
 
     nonisolated enum OrchestratorError: Error, LocalizedError, Sendable {
         case repoAccessDenied
@@ -401,13 +378,13 @@ final class AIOrchestrator {
         nonisolated var errorDescription: String? {
             switch self {
             case .repoAccessDenied:
-                return "Could not access the selected folder."
+                return "Could not access the selected folder. Re-import it from the Files app."
             case .repoNotLoaded:
-                return "No repository is loaded."
+                return "No repository is loaded. Import a folder first."
             case .indexNotReady:
-                return "The semantic index is not ready. Import a repository first."
+                return "The semantic index is not ready. Import a repository and wait for indexing to complete."
             case .noModelAvailable:
-                return "No AI model is available. Download Qwen or enable Apple Intelligence."
+                return "No AI model is available. Download the Qwen model from the Models tab, or use a device with Apple Intelligence (iOS 26)."
             }
         }
     }

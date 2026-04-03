@@ -43,21 +43,33 @@ struct ChatView: View {
                 .multilineTextAlignment(.center)
 
             if indexService.indexedFiles.isEmpty {
-                Button {
-                    onImportRepo()
-                } label: {
-                    Label("Import a repository to get started", systemImage: "folder.badge.plus")
-                        .font(.caption.weight(.medium))
+                VStack(spacing: 10) {
+                    Button {
+                        onImportRepo()
+                    } label: {
+                        Label("Import a Repository", systemImage: "folder.badge.plus")
+                            .font(.caption.weight(.medium))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+                    .controlSize(.small)
+
+                    Text("Open a folder from the Files app to get started.")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.dimText)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.accent)
-                .controlSize(.small)
                 .padding(.top, 8)
             } else {
-                Label("\(indexService.indexedFiles.count) files indexed", systemImage: "checkmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(Theme.accent.opacity(0.6))
-                    .padding(.top, 8)
+                VStack(spacing: 6) {
+                    Label("\(indexService.indexedFiles.count) files indexed", systemImage: "checkmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(Theme.accent.opacity(0.6))
+
+                    Text("Type a question below to begin.")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.dimText)
+                }
+                .padding(.top, 8)
             }
 
             Spacer()
@@ -165,16 +177,19 @@ struct ChatView: View {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
                         .foregroundStyle(
-                            viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? Theme.dimText : Theme.accent
+                            canSend ? Theme.accent : Theme.dimText
                         )
                 }
-                .disabled(viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isStreaming)
+                .disabled(!canSend)
                 .sensoryFeedback(.impact(weight: .light), trigger: viewModel.messages.count)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(Theme.cardBg)
         }
+    }
+
+    private var canSend: Bool {
+        !viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !viewModel.isStreaming
     }
 }
