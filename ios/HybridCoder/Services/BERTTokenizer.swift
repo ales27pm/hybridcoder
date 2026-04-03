@@ -34,7 +34,7 @@ actor HFTokenizer {
         let originalTokenCount: Int
     }
 
-    private struct TokenizerJSON: Decodable {
+    fileprivate struct TokenizerJSON: Decodable {
         struct AddedToken: Decodable {
             let id: Int
             let content: String
