@@ -1,5 +1,4 @@
 import SwiftUI
-import FoundationModels
 
 struct ModelManagerView: View {
     let orchestrator: AIOrchestrator
@@ -37,15 +36,18 @@ struct ModelManagerView: View {
 
     private var embeddingModelCard: some View {
         let dl = orchestrator.modelDownload
+        let embeddingID = orchestrator.modelRegistry.activeEmbeddingModelID
+        let model = orchestrator.modelRegistry.entry(for: embeddingID)
+        let modelName = model?.displayName ?? embeddingID
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(ModelDownloadService.canonicalEmbeddingModelLabel())
+                    Text(modelName)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
 
-                    Text("Semantic code search over your repository via CoreML (\(ModelDownloadService.canonicalEmbeddingModelID()))")
+                    Text("Semantic code search over your repository via CoreML (\(embeddingID))")
                         .font(.caption)
                         .foregroundStyle(Theme.dimText)
                 }
@@ -96,10 +98,7 @@ struct ModelManagerView: View {
                 if !dl.isModelReady && !dl.isDownloading {
                     Button("Download Model") {
                         Task {
-                            await orchestrator.modelDownload.download()
-                            if orchestrator.modelDownload.isModelReady {
-                                try? await orchestrator.embeddingService.load()
-                            }
+                            await orchestrator.downloadActiveEmbeddingModel()
                         }
                     }
                     .font(.caption.weight(.medium))
@@ -110,7 +109,7 @@ struct ModelManagerView: View {
 
                 if dl.isModelReady {
                     Button("Delete") {
-                        orchestrator.modelDownload.deleteDownloadedModels()
+                        Task { await orchestrator.deleteActiveEmbeddingModel() }
                     }
                     .font(.caption.weight(.medium))
                     .buttonStyle(.bordered)
@@ -160,7 +159,7 @@ struct ModelManagerView: View {
                 Spacer()
 
                 if #available(iOS 26.0, *) {
-                    FoundationModelStatusBadge()
+                    FoundationModelStatusBadge(orchestrator: orchestrator)
                 } else {
                     Text("Requires iOS 26")
                         .font(.caption2)
@@ -186,8 +185,11 @@ struct ModelManagerView: View {
 
 @available(iOS 26.0, *)
 private struct FoundationModelStatusBadge: View {
+    let orchestrator: AIOrchestrator
+
     var body: some View {
-        let available = SystemLanguageModel.default.isAvailable
+        let generationID = orchestrator.modelRegistry.activeGenerationModelID
+        let available = orchestrator.modelRegistry.isReady(modelID: generationID)
         Text(available ? "Available" : "Unavailable")
             .font(.caption2.weight(.semibold))
             .foregroundStyle(available ? Theme.accent : .red)

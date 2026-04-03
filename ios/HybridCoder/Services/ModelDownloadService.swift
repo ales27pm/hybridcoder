@@ -7,81 +7,71 @@ final class ModelDownloadService {
     private(set) var isDownloading: Bool = false
     private(set) var downloadProgress: Double = 0
     private(set) var downloadError: String?
-    private(set) var isModelReady: Bool = false
 
-    private static let embeddingModelsDir = BundledEmbeddingAssets.embeddingModelsFolder
-    private static let modelDirName = BundledEmbeddingAssets.modelDirectoryName
-    private static let tokenizerDirName = BundledEmbeddingAssets.tokenizerDirectoryName
-    private static let canonicalModelID = "microsoft/codebert-base"
-    private static let canonicalModelLabel = "CodeBERT (microsoft/codebert-base)"
+    private let registry: ModelRegistry
 
-    private static let modelFiles: [(remote: String, local: String)] = [
-        ("model.mlmodelc/model.mil", "model.mlmodelc/model.mil"),
-        ("model.mlmodelc/coremldata.bin", "model.mlmodelc/coremldata.bin"),
-        ("model.mlmodelc/metadata.json", "model.mlmodelc/metadata.json"),
-        ("model.mlmodelc/analytics/coremldata.bin", "model.mlmodelc/analytics/coremldata.bin")
-    ]
-
-    private static let tokenizerFiles: [(remote: String, local: String)] = [
-        ("tokenizer.json", "tokenizer.json"),
-        ("tokenizer_config.json", "tokenizer_config.json"),
-        ("special_tokens_map.json", "special_tokens_map.json"),
-        ("vocab.json", "vocab.json"),
-        ("merges.txt", "merges.txt")
-    ]
-
-    private static let huggingFaceBaseURL = "https://huggingface.co/nickmuchi/codebert-base-coreml/resolve/main"
-
-    nonisolated static var downloadedModelsRoot: URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        return docs.appendingPathComponent(embeddingModelsDir)
+    init(registry: ModelRegistry) {
+        self.registry = registry
+        refreshInstallState(modelID: registry.activeEmbeddingModelID)
     }
 
-    nonisolated static var downloadedModelDir: URL {
-        downloadedModelsRoot.appendingPathComponent(modelDirName)
+    var activeEmbeddingModelID: String {
+        registry.activeEmbeddingModelID
     }
 
-    nonisolated static var downloadedTokenizerDir: URL {
-        downloadedModelsRoot.appendingPathComponent(tokenizerDirName)
+    var isModelReady: Bool {
+        registry.entry(for: activeEmbeddingModelID)?.installState == .installed
     }
 
-    init() {
-        isModelReady = Self.validateDownloadedAssets()
+    func refreshInstallState(modelID: String) {
+        let isReady = Self.validateDownloadedAssets(modelID: modelID, registry: registry)
+        registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
     }
 
     func downloadIfNeeded() async {
-        if Self.validateDownloadedAssets() {
-            isModelReady = true
+        if isModelReady {
             return
         }
-        await download()
+        await download(modelID: activeEmbeddingModelID)
     }
 
-    func download() async {
+    func download(modelID: String? = nil) async {
+        let modelID = modelID ?? activeEmbeddingModelID
         guard !isDownloading else { return }
+        guard let entry = registry.entry(for: modelID) else { return }
+
         isDownloading = true
         downloadProgress = 0
         downloadError = nil
+        registry.setInstallState(for: modelID, .downloading(progress: 0))
 
         do {
             let fm = FileManager.default
-            try fm.createDirectory(at: Self.downloadedModelDir.appendingPathComponent("model.mlmodelc/analytics"), withIntermediateDirectories: true)
-            try fm.createDirectory(at: Self.downloadedTokenizerDir, withIntermediateDirectories: true)
+            let modelDir = registry.downloadedModelDirectory(for: modelID)
+            let tokenizerDir = registry.downloadedTokenizerDirectory(for: modelID)
 
-            let allFiles = Self.modelFiles.map { (Self.downloadedModelDir, $0) }
-                + Self.tokenizerFiles.map { (Self.downloadedTokenizerDir, $0) }
+            try fm.createDirectory(at: modelDir.appendingPathComponent("model.mlmodelc/analytics"), withIntermediateDirectories: true)
+            try fm.createDirectory(at: tokenizerDir, withIntermediateDirectories: true)
+
+            let modelFiles = entry.files.filter { $0.localPath.contains("model.mlmodelc") }
+            let tokenizerFiles = entry.files.filter { !$0.localPath.contains("model.mlmodelc") }
+            let allFiles = modelFiles.map { (modelDir, $0) } + tokenizerFiles.map { (tokenizerDir, $0) }
+
             let totalCount = Double(allFiles.count)
             var completed = 0.0
 
-            for (baseDir, filePair) in allFiles {
+            for (baseDir, file) in allFiles {
                 try Task.checkCancellation()
+                guard let remoteBaseURL = entry.remoteBaseURL else {
+                    throw DownloadError.modelNotDownloaded("Model \(entry.displayName) does not support remote downloads.")
+                }
 
-                let remoteURL = URL(string: "\(Self.huggingFaceBaseURL)/\(filePair.remote)")!
-                let localURL = baseDir.appendingPathComponent(filePair.local)
+                let remoteURL = URL(string: "\(remoteBaseURL)/\(file.remotePath)")!
+                let localURL = baseDir.appendingPathComponent(file.localPath)
 
                 if fm.fileExists(atPath: localURL.path) {
                     completed += 1
-                    downloadProgress = completed / totalCount
+                    updateProgress(completed: completed, total: totalCount, modelID: modelID)
                     continue
                 }
 
@@ -90,7 +80,7 @@ final class ModelDownloadService {
                 guard let httpResponse = response as? HTTPURLResponse,
                       (200...299).contains(httpResponse.statusCode) else {
                     let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-                    throw DownloadError.httpError(code, filePair.remote)
+                    throw DownloadError.httpError(code, file.remotePath)
                 }
 
                 let parentDir = localURL.deletingLastPathComponent()
@@ -104,65 +94,71 @@ final class ModelDownloadService {
                 try fm.moveItem(at: tempURL, to: localURL)
 
                 completed += 1
-                downloadProgress = completed / totalCount
+                updateProgress(completed: completed, total: totalCount, modelID: modelID)
             }
 
-            try Self.validateDownloadedAssetsOrThrow()
-            isModelReady = true
+            try Self.validateDownloadedAssetsOrThrow(modelID: modelID, registry: registry)
+            registry.setInstallState(for: modelID, .installed)
         } catch is CancellationError {
             downloadError = "Download was cancelled."
+            registry.setInstallState(for: modelID, .notInstalled)
         } catch let error as DownloadError {
             downloadError = error.localizedDescription
-            isModelReady = false
+            registry.setInstallState(for: modelID, .notInstalled)
         } catch {
             downloadError = "Download failed: \(error.localizedDescription)"
-            isModelReady = false
+            registry.setInstallState(for: modelID, .notInstalled)
         }
 
         isDownloading = false
     }
 
-    func deleteDownloadedModels() {
+    func deleteDownloadedModels(modelID: String? = nil) {
+        let modelID = modelID ?? activeEmbeddingModelID
         let fm = FileManager.default
-        try? fm.removeItem(at: Self.downloadedModelsRoot)
-        isModelReady = false
+        let modelDir = registry.downloadedModelDirectory(for: modelID)
+        let tokenizerDir = registry.downloadedTokenizerDirectory(for: modelID)
+        try? fm.removeItem(at: modelDir)
+        try? fm.removeItem(at: tokenizerDir)
+
+        registry.setInstallState(for: modelID, .notInstalled)
+        registry.setLoadState(for: modelID, .unloaded)
         downloadProgress = 0
         downloadError = nil
     }
 
-    nonisolated static func validateDownloadedAssets() -> Bool {
-        (try? validateDownloadedAssetsOrThrow()) != nil
+    private func updateProgress(completed: Double, total: Double, modelID: String) {
+        let progress = completed / max(total, 1)
+        downloadProgress = progress
+        registry.setInstallState(for: modelID, .downloading(progress: progress))
     }
 
-    nonisolated static func canonicalEmbeddingModelLabel() -> String {
-        canonicalModelLabel
+    static func validateDownloadedAssets(modelID: String, registry: ModelRegistry) -> Bool {
+        (try? validateDownloadedAssetsOrThrow(modelID: modelID, registry: registry)) != nil
     }
 
-    nonisolated static func canonicalEmbeddingModelID() -> String {
-        canonicalModelID
-    }
-
-    nonisolated private static func validateDownloadedAssetsOrThrow() throws {
+    private static func validateDownloadedAssetsOrThrow(modelID: String, registry: ModelRegistry) throws {
         let fm = FileManager.default
 
-        let modelDir = downloadedModelDir
+        let modelDir = registry.downloadedModelDirectory(for: modelID)
         let compiledModel = modelDir.appendingPathComponent("model.mlmodelc")
         guard fm.fileExists(atPath: compiledModel.path) else {
             throw DownloadError.fileCorrupt("model.mlmodelc")
         }
 
-        let tokenizerDir = downloadedTokenizerDir
-        for expectedFile in tokenizerFiles.map(\.local) {
+        let tokenizerDir = registry.downloadedTokenizerDirectory(for: modelID)
+        let tokenizerFiles = ["tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "vocab.json", "merges.txt"]
+        for expectedFile in tokenizerFiles {
             let path = tokenizerDir.appendingPathComponent(expectedFile).path
             guard fm.fileExists(atPath: path) else {
                 throw DownloadError.fileCorrupt(expectedFile)
             }
         }
 
-        try validateArtifactMetadata(modelDir: modelDir, tokenizerDir: tokenizerDir)
+        try validateArtifactMetadata(modelID: modelID, modelDir: modelDir, tokenizerDir: tokenizerDir)
     }
 
-    nonisolated private static func validateArtifactMetadata(modelDir: URL, tokenizerDir: URL) throws {
+    private static func validateArtifactMetadata(modelID: String, modelDir: URL, tokenizerDir: URL) throws {
         let tokenizerConfigURL = tokenizerDir.appendingPathComponent("tokenizer_config.json")
         let tokenizerConfig = try loadJSONDictionary(from: tokenizerConfigURL, source: "tokenizer_config.json")
 
@@ -170,10 +166,10 @@ final class ModelDownloadService {
             from: tokenizerConfig,
             keys: ["name_or_path", "_name_or_path", "model_id", "tokenizer_name", "tokenizer_id"]
         )
-        guard tokenizerIDCandidates.contains(where: matchesCanonicalModelIdentifier(_:)) else {
+        guard tokenizerIDCandidates.contains(where: { matchesModelIdentifier($0, expected: modelID) }) else {
             throw DownloadError.metadataMismatch(
                 file: "tokenizer_config.json",
-                expected: canonicalModelID,
+                expected: modelID,
                 found: tokenizerIDCandidates.joined(separator: ", ")
             )
         }
@@ -187,23 +183,22 @@ final class ModelDownloadService {
             from: modelMetadata,
             keys: ["model_id", "source_model", "hf_model_id", "_name_or_path", "name_or_path"]
         )
-        guard modelIDCandidates.contains(where: matchesCanonicalModelIdentifier(_:)) else {
+        guard modelIDCandidates.contains(where: { matchesModelIdentifier($0, expected: modelID) }) else {
             throw DownloadError.metadataMismatch(
                 file: "model.mlmodelc/metadata.json",
-                expected: canonicalModelID,
+                expected: modelID,
                 found: modelIDCandidates.joined(separator: ", ")
             )
         }
     }
 
-    nonisolated private static func matchesCanonicalModelIdentifier(_ value: String) -> Bool {
+    private static func matchesModelIdentifier(_ value: String, expected: String) -> Bool {
         let normalized = value.lowercased()
-        return normalized == canonicalModelID.lowercased()
-            || normalized.contains("codebert")
-            || normalized.contains("microsoft/codebert-base")
+        let expectedNormalized = expected.lowercased()
+        return normalized == expectedNormalized || normalized.contains(expectedNormalized) || normalized.contains("codebert")
     }
 
-    nonisolated private static func loadJSONDictionary(from url: URL, source: String) throws -> [String: Any] {
+    private static func loadJSONDictionary(from url: URL, source: String) throws -> [String: Any] {
         do {
             let data = try Data(contentsOf: url)
             let json = try JSONSerialization.jsonObject(with: data)
@@ -218,10 +213,7 @@ final class ModelDownloadService {
         }
     }
 
-    nonisolated private static func collectStringValues(
-        from dictionary: [String: Any],
-        keys: [String]
-    ) -> [String] {
+    private static func collectStringValues(from dictionary: [String: Any], keys: [String]) -> [String] {
         var values: [String] = []
         for key in keys {
             if let value = dictionary[key] as? String, !value.isEmpty {
@@ -229,33 +221,6 @@ final class ModelDownloadService {
             }
         }
         return values
-    }
-
-    nonisolated static func locateModelAsset() throws -> URL {
-        let fm = FileManager.default
-
-        let downloadedModel = downloadedModelDir.appendingPathComponent("model.mlmodelc")
-        if fm.fileExists(atPath: downloadedModel.path) {
-            return downloadedModel
-        }
-
-        throw DownloadError.modelNotDownloaded(
-            "Embedding model not found at \(downloadedModel.path). Download \(canonicalModelLabel) from Model Manager before using semantic search."
-        )
-    }
-
-    nonisolated static func locateTokenizerAsset() throws -> URL {
-        let fm = FileManager.default
-
-        let downloadedTokenizer = downloadedTokenizerDir
-        let tokenizerJSON = downloadedTokenizer.appendingPathComponent("tokenizer.json")
-        if fm.fileExists(atPath: tokenizerJSON.path) {
-            return downloadedTokenizer
-        }
-
-        throw DownloadError.modelNotDownloaded(
-            "Tokenizer assets not found at \(downloadedTokenizer.path). Download \(canonicalModelLabel) from Model Manager before using semantic search."
-        )
     }
 
     nonisolated enum DownloadError: Error, LocalizedError, Sendable {

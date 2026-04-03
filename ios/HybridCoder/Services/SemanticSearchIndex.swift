@@ -80,7 +80,7 @@ actor SemanticSearchIndex {
         languageCounts = langCounts
 
         let modelID = await embeddingService.modelInfo?.inputNames.joined(separator: "+")
-            ?? ModelDownloadService.canonicalEmbeddingModelID()
+            ?? "microsoft/codebert-base"
         let total = allChunks.count
         var embedded = 0
 

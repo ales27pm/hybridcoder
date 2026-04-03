@@ -3,6 +3,9 @@ import CoreML
 
 actor CoreMLEmbeddingService {
 
+    private let modelID: String
+    private let registry: ModelRegistry
+
     nonisolated enum EmbeddingError: Error, LocalizedError, Sendable {
         case modelNotLoaded
         case tokenizerNotLoaded
@@ -38,6 +41,11 @@ actor CoreMLEmbeddingService {
     private var tokenizerLoaded: Bool = false
     private var cachedModelInfo: ModelInfo?
 
+    init(modelID: String, registry: ModelRegistry) {
+        self.modelID = modelID
+        self.registry = registry
+    }
+
     private let maxSequenceLength = 512
     private let embeddingDimension = 768
 
@@ -50,38 +58,57 @@ actor CoreMLEmbeddingService {
     }
 
     func load() async throws {
-        let modelURL = try ModelDownloadService.locateModelAsset()
-        let tokenizerURL = try ModelDownloadService.locateTokenizerAsset()
-
-        let config = MLModelConfiguration()
-        config.computeUnits = .cpuAndNeuralEngine
-
-        let loadedModel = try await MLModel.load(contentsOf: modelURL, configuration: config)
-        self.model = loadedModel
-
-        try await tokenizer.load(from: tokenizerURL)
-        tokenizerLoaded = true
-
-        let inputNames = loadedModel.modelDescription.inputDescriptionsByName.keys.sorted()
-        let outputNames = loadedModel.modelDescription.outputDescriptionsByName.keys.sorted()
-
-        var detectedDimension = embeddingDimension
-        for (_, desc) in loadedModel.modelDescription.outputDescriptionsByName {
-            if let constraint = desc.multiArrayConstraint {
-                let shape = constraint.shape.map { $0.intValue }
-                if let last = shape.last, last > 1 {
-                    detectedDimension = last
-                    break
-                }
-            }
+        await MainActor.run {
+            registry.setLoadState(for: modelID, .loading)
         }
 
-        cachedModelInfo = ModelInfo(
-            inputNames: Array(inputNames),
-            outputNames: Array(outputNames),
-            embeddingDimension: detectedDimension,
-            maxSequenceLength: maxSequenceLength
-        )
+        let modelURL = await MainActor.run {
+            registry.downloadedModelDirectory(for: modelID).appendingPathComponent("model.mlmodelc")
+        }
+        let tokenizerURL = await MainActor.run {
+            registry.downloadedTokenizerDirectory(for: modelID)
+        }
+
+        do {
+            let config = MLModelConfiguration()
+            config.computeUnits = .cpuAndNeuralEngine
+
+            let loadedModel = try await MLModel.load(contentsOf: modelURL, configuration: config)
+            self.model = loadedModel
+
+            try await tokenizer.load(from: tokenizerURL)
+            tokenizerLoaded = true
+
+            let inputNames = loadedModel.modelDescription.inputDescriptionsByName.keys.sorted()
+            let outputNames = loadedModel.modelDescription.outputDescriptionsByName.keys.sorted()
+
+            var detectedDimension = embeddingDimension
+            for (_, desc) in loadedModel.modelDescription.outputDescriptionsByName {
+                if let constraint = desc.multiArrayConstraint {
+                    let shape = constraint.shape.map { $0.intValue }
+                    if let last = shape.last, last > 1 {
+                        detectedDimension = last
+                        break
+                    }
+                }
+            }
+
+            cachedModelInfo = ModelInfo(
+                inputNames: Array(inputNames),
+                outputNames: Array(outputNames),
+                embeddingDimension: detectedDimension,
+                maxSequenceLength: maxSequenceLength
+            )
+
+            await MainActor.run {
+                registry.setLoadState(for: modelID, .loaded)
+            }
+        } catch {
+            await MainActor.run {
+                registry.setLoadState(for: modelID, .failed(error.localizedDescription))
+            }
+            throw error
+        }
     }
 
     func embed(text: String) async throws -> [Float] {
@@ -120,10 +147,13 @@ actor CoreMLEmbeddingService {
         return results
     }
 
-    func unload() {
+    func unload() async {
         model = nil
         tokenizerLoaded = false
         cachedModelInfo = nil
+        await MainActor.run {
+            registry.setLoadState(for: modelID, .unloaded)
+        }
     }
 
     // MARK: - Model I/O
