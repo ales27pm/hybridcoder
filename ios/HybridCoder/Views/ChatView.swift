@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ChatView: View {
     @Bindable var viewModel: ChatViewModel
-    let indexService: CodeIndexService
+    let orchestrator: AIOrchestrator
     let repositoryURL: URL?
     var onImportRepo: () -> Void = {}
     var onReindex: () -> Void = {}
@@ -42,7 +42,7 @@ struct ChatView: View {
                 .foregroundStyle(Theme.dimText)
                 .multilineTextAlignment(.center)
 
-            if indexService.indexedFiles.isEmpty {
+            if !orchestrator.isRepoLoaded {
                 VStack(spacing: 10) {
                     Button {
                         onImportRepo()
@@ -61,9 +61,11 @@ struct ChatView: View {
                 .padding(.top, 8)
             } else {
                 VStack(spacing: 6) {
-                    Label("\(indexService.indexedFiles.count) files indexed", systemImage: "checkmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(Theme.accent.opacity(0.6))
+                    if let stats = orchestrator.indexStats {
+                        Label("\(stats.indexedFiles) files · \(stats.embeddedChunks) chunks indexed", systemImage: "checkmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(Theme.accent.opacity(0.6))
+                    }
 
                     Text("Type a question below to begin.")
                         .font(.caption2)
@@ -134,11 +136,9 @@ struct ChatView: View {
 
                 Spacer()
 
-                if plan.pendingCount > 0, let url = repositoryURL {
+                if plan.pendingCount > 0 {
                     Button {
-                        for op in plan.operations where op.status == .pending {
-                            viewModel.applyPatch(op.id, rootURL: url)
-                        }
+                        Task { await viewModel.applyPendingPatch() }
                     } label: {
                         Text("Apply All")
                             .font(.caption2.weight(.semibold))
@@ -146,6 +146,15 @@ struct ChatView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.accent)
                     .controlSize(.mini)
+
+                    Button {
+                        viewModel.dismissPatchPlan()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption2)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.dimText)
                 }
             }
             .padding(.horizontal, 12)

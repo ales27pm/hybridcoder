@@ -12,12 +12,9 @@ final class AppViewModel {
     var showSettings: Bool = false
     var importError: String?
 
+    let orchestrator: AIOrchestrator
     let bookmarkService: BookmarkService
-    let fileSystemService: FileSystemService
-    let codeIndexService: CodeIndexService
     let modelDownloadService: ModelDownloadService
-    let patchService: PatchService
-    let coreMLService: CoreMLCodeService
     let chatViewModel: ChatViewModel
 
     enum SidebarSection: Hashable {
@@ -28,24 +25,14 @@ final class AppViewModel {
     }
 
     init() {
+        let orchestrator = AIOrchestrator()
         let bookmark = BookmarkService()
-        let fileSystem = FileSystemService()
-        let codeIndex = CodeIndexService()
         let modelDownload = ModelDownloadService()
-        let patch = PatchService()
-        let coreML = CoreMLCodeService(downloadService: modelDownload)
-        let chat = ChatViewModel(
-            codeIndexService: codeIndex,
-            patchService: patch,
-            coreMLService: coreML
-        )
+        let chat = ChatViewModel(orchestrator: orchestrator)
 
+        self.orchestrator = orchestrator
         self.bookmarkService = bookmark
-        self.fileSystemService = fileSystem
-        self.codeIndexService = codeIndex
         self.modelDownloadService = modelDownload
-        self.patchService = patch
-        self.coreMLService = coreML
         self.chatViewModel = chat
     }
 
@@ -61,17 +48,20 @@ final class AppViewModel {
 
         importError = nil
         activeRepositoryURL = url
-        fileTree = fileSystemService.buildFileTree(at: url)
 
         Task {
-            await codeIndexService.indexRepository(at: url)
+            fileTree = await orchestrator.repoAccess.buildFileTree(at: url)
+
+            try? await orchestrator.importRepo(url: url)
+
+            let stats = orchestrator.indexStats
             let updated = Repository(
                 id: repository.id,
                 name: repository.name,
                 bookmarkData: repository.bookmarkData,
                 lastOpened: Date(),
-                fileCount: codeIndexService.indexedFiles.count,
-                indexedCount: codeIndexService.indexedFiles.count
+                fileCount: orchestrator.repoFiles.count,
+                indexedCount: stats?.indexedFiles ?? 0
             )
             bookmarkService.updateRepository(updated)
         }
@@ -99,6 +89,9 @@ final class AppViewModel {
     }
 
     func closeRepository() {
+        Task {
+            await orchestrator.closeRepo()
+        }
         if let url = activeRepositoryURL {
             url.stopAccessingSecurityScopedResource()
         }
@@ -106,12 +99,23 @@ final class AppViewModel {
         fileTree = nil
         selectedFile = nil
         selectedSection = .chat
-        codeIndexService.clearIndex()
         importError = nil
+    }
+
+    func reindexRepository() {
+        guard activeRepositoryURL != nil else { return }
+        Task {
+            await orchestrator.rebuildIndex()
+        }
     }
 
     func initialize() {
         modelDownloadService.checkDownloadedModels()
+
+        Task {
+            await orchestrator.warmUp()
+        }
+
         if let lastRepo = bookmarkService.repositories.sorted(by: { $0.lastOpened > $1.lastOpened }).first {
             openRepository(lastRepo)
         }

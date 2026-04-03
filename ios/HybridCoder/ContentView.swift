@@ -19,9 +19,9 @@ struct ContentView: View {
 
                             if viewModel.activeRepositoryURL != nil {
                                 Button("Reindex", systemImage: "arrow.triangle.2.circlepath") {
-                                    reindexRepository()
+                                    viewModel.reindexRepository()
                                 }
-                                .disabled(viewModel.codeIndexService.isIndexing)
+                                .disabled(viewModel.orchestrator.isIndexing)
                             }
 
                             Divider()
@@ -69,7 +69,7 @@ struct ContentView: View {
         .sheet(isPresented: $viewModel.showSettings) {
             SettingsView(
                 bookmarkService: viewModel.bookmarkService,
-                codeIndexService: viewModel.codeIndexService,
+                orchestrator: viewModel.orchestrator,
                 onOpenRepository: { repo in viewModel.openRepository(repo) },
                 onCloseRepository: { viewModel.closeRepository() }
             )
@@ -88,7 +88,7 @@ struct ContentView: View {
                 importErrorBanner(error)
             }
 
-            if viewModel.codeIndexService.isIndexing {
+            if viewModel.orchestrator.isIndexing {
                 indexingBanner
             }
 
@@ -160,8 +160,9 @@ struct ContentView: View {
 
     private var indexStatusPill: some View {
         HStack(spacing: 5) {
-            let fileCount = viewModel.codeIndexService.indexedFiles.count
-            let isIndexing = viewModel.codeIndexService.isIndexing
+            let stats = viewModel.orchestrator.indexStats
+            let isIndexing = viewModel.orchestrator.isIndexing
+            let chunkCount = stats?.embeddedChunks ?? 0
 
             if isIndexing {
                 Image(systemName: "arrow.triangle.2.circlepath")
@@ -169,12 +170,12 @@ struct ContentView: View {
                     .foregroundStyle(Theme.accent)
                     .symbolEffect(.rotate, isActive: true)
             } else {
-                Image(systemName: fileCount > 0 ? "magnifyingglass" : "xmark.circle")
+                Image(systemName: chunkCount > 0 ? "magnifyingglass" : "xmark.circle")
                     .font(.system(size: 9))
-                    .foregroundStyle(fileCount > 0 ? Theme.accent.opacity(0.6) : Theme.dimText)
+                    .foregroundStyle(chunkCount > 0 ? Theme.accent.opacity(0.6) : Theme.dimText)
             }
 
-            Text(isIndexing ? "Indexing…" : (fileCount > 0 ? "\(fileCount) indexed" : "Not indexed"))
+            Text(isIndexing ? "Indexing…" : (chunkCount > 0 ? "\(chunkCount) chunks" : "Not indexed"))
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(Theme.dimText)
         }
@@ -233,17 +234,22 @@ struct ContentView: View {
 
     private var indexingBanner: some View {
         VStack(spacing: 4) {
-            ProgressView(value: viewModel.codeIndexService.indexProgress)
+            let progress: Double = {
+                guard let p = viewModel.orchestrator.indexingProgress, p.total > 0 else { return 0 }
+                return Double(p.completed) / Double(p.total)
+            }()
+
+            ProgressView(value: progress)
                 .tint(Theme.accent)
 
             HStack {
-                Text("Scanning files…")
+                Text("Indexing files…")
                     .font(.caption2)
                     .foregroundStyle(Theme.dimText)
 
                 Spacer()
 
-                Text("\(Int(viewModel.codeIndexService.indexProgress * 100))%")
+                Text("\(Int(progress * 100))%")
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(Theme.accent)
             }
@@ -301,7 +307,7 @@ struct ContentView: View {
                 sidebarTab(
                     icon: "doc.badge.gearshape",
                     label: "Patches",
-                    badge: viewModel.patchService.pendingPatches.count,
+                    badge: viewModel.chatViewModel.pendingPatchPlan?.pendingCount ?? 0,
                     isActive: {
                         if case .patches = viewModel.selectedSection { return true }
                         return false
@@ -364,10 +370,10 @@ struct ContentView: View {
         case .chat:
             ChatView(
                 viewModel: viewModel.chatViewModel,
-                indexService: viewModel.codeIndexService,
+                orchestrator: viewModel.orchestrator,
                 repositoryURL: viewModel.activeRepositoryURL,
                 onImportRepo: { viewModel.isImportingFolder = true },
-                onReindex: { reindexRepository() }
+                onReindex: { viewModel.reindexRepository() }
             )
             .navigationTitle("Chat")
             .navigationBarTitleDisplayMode(.inline)
@@ -376,9 +382,9 @@ struct ContentView: View {
                     Menu {
                         if viewModel.activeRepositoryURL != nil {
                             Button("Reindex Repository", systemImage: "arrow.triangle.2.circlepath") {
-                                reindexRepository()
+                                viewModel.reindexRepository()
                             }
-                            .disabled(viewModel.codeIndexService.isIndexing)
+                            .disabled(viewModel.orchestrator.isIndexing)
                         }
 
                         if !viewModel.chatViewModel.messages.isEmpty {
@@ -396,41 +402,23 @@ struct ContentView: View {
         case .fileViewer(let node):
             FileViewerView(
                 file: node,
-                fileSystemService: viewModel.fileSystemService
+                repoAccess: viewModel.orchestrator.repoAccess
             )
             .navigationTitle(node.name)
             .navigationBarTitleDisplayMode(.inline)
 
         case .patches:
             PatchListView(
-                patchService: viewModel.patchService,
+                orchestrator: viewModel.orchestrator,
                 repositoryURL: viewModel.activeRepositoryURL
             )
             .navigationTitle("Patches")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    if !viewModel.patchService.patches.isEmpty {
-                        Button("Clear All", role: .destructive) {
-                            viewModel.patchService.clearPatches()
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                    }
-                }
-            }
 
         case .models:
             ModelManagerView(downloadService: viewModel.modelDownloadService)
                 .navigationTitle("Models")
                 .navigationBarTitleDisplayMode(.inline)
-        }
-    }
-
-    private func reindexRepository() {
-        guard let url = viewModel.activeRepositoryURL else { return }
-        Task {
-            await viewModel.codeIndexService.indexRepository(at: url)
         }
     }
 }

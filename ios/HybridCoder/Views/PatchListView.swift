@@ -1,15 +1,16 @@
 import SwiftUI
 
 struct PatchListView: View {
-    let patchService: PatchService
+    let orchestrator: AIOrchestrator
     let repositoryURL: URL?
     @State private var errorMessage: String?
     @State private var showError: Bool = false
-    @State private var previewingPatch: PatchPreview?
+    @State private var previewingOperation: OperationPreview?
+    @State private var patchPlans: [PatchPlan] = []
 
     var body: some View {
         VStack(spacing: 0) {
-            if patchService.patches.isEmpty {
+            if patchPlans.isEmpty {
                 ContentUnavailableView(
                     "No Patches",
                     systemImage: "doc.badge.gearshape",
@@ -27,11 +28,15 @@ struct PatchListView: View {
                 Text(errorMessage)
             }
         }
-        .sheet(item: $previewingPatch) { preview in
-            PatchPreviewView(
+        .sheet(item: $previewingOperation) { preview in
+            OperationPreviewSheet(
                 preview: preview,
-                onApply: { applyPatch(preview.patch.id) },
-                onReject: { rejectPatch(preview.patch.id) }
+                onApply: {
+                    Task { await applySingleOperation(preview) }
+                },
+                onReject: {
+                    rejectOperation(preview)
+                }
             )
             .presentationDetents([.large])
             .presentationContentInteraction(.scrolls)
@@ -41,42 +46,8 @@ struct PatchListView: View {
     private var patchList: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
-                let pending = patchService.patches.filter { $0.status == .pending }
-                let applied = patchService.patches.filter { $0.status == .applied }
-                let rejected = patchService.patches.filter { $0.status == .rejected }
-                let failed = patchService.patches.filter { $0.status == .failed }
-
-                if !pending.isEmpty {
-                    sectionHeader("Pending", count: pending.count, color: .orange)
-                    ForEach(pending) { patch in
-                        PatchCard(
-                            patch: patch,
-                            onPreview: { showPreview(for: patch) },
-                            onApply: { showPreview(for: patch) },
-                            onReject: { rejectPatch(patch.id) }
-                        )
-                    }
-                }
-
-                if !applied.isEmpty {
-                    sectionHeader("Applied", count: applied.count, color: Theme.accent)
-                    ForEach(applied) { patch in
-                        PatchCard(patch: patch, onPreview: nil, onApply: nil, onReject: nil)
-                    }
-                }
-
-                if !rejected.isEmpty {
-                    sectionHeader("Rejected", count: rejected.count, color: .red)
-                    ForEach(rejected) { patch in
-                        PatchCard(patch: patch, onPreview: nil, onApply: nil, onReject: nil)
-                    }
-                }
-
-                if !failed.isEmpty {
-                    sectionHeader("Failed", count: failed.count, color: .red)
-                    ForEach(failed) { patch in
-                        PatchCard(patch: patch, onPreview: nil, onApply: nil, onReject: nil)
-                    }
+                ForEach(patchPlans) { plan in
+                    planSection(plan)
                 }
             }
             .padding(16)
@@ -84,53 +55,107 @@ struct PatchListView: View {
         .background(Theme.surfaceBg)
     }
 
-    private func sectionHeader(_ title: String, count: Int, color: Color) -> some View {
-        HStack {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(color)
-            Text("(\(count))")
-                .font(.caption)
-                .foregroundStyle(Theme.dimText)
-            Spacer()
+    private func planSection(_ plan: PatchPlan) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(plan.summary)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+
+                Spacer()
+
+                Text("\(plan.pendingCount) pending")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.dimText)
+            }
+
+            ForEach(plan.operations) { op in
+                OperationCard(
+                    operation: op,
+                    onPreview: { showPreview(for: op, in: plan) },
+                    onReject: nil
+                )
+            }
         }
-        .padding(.top, 8)
     }
 
-    private func showPreview(for patch: Patch) {
+    private func showPreview(for op: PatchOperation, in plan: PatchPlan) {
         guard let url = repositoryURL else {
             errorMessage = "No repository is open."
             showError = true
             return
         }
-        if let preview = patchService.generatePreview(for: patch.id, rootURL: url) {
-            previewingPatch = preview
+
+        let fileURL = url.appending(path: op.filePath)
+        Task {
+            let content = await orchestrator.repoAccess.readUTF8(at: fileURL) ?? ""
+            let patch = Patch(
+                id: op.id,
+                filePath: op.filePath,
+                oldText: op.searchText,
+                newText: op.replaceText,
+                description: op.description
+            )
+            let patchPreview = PatchPreview.generate(for: patch, fileContent: content)
+            previewingOperation = OperationPreview(
+                planID: plan.id,
+                operationID: op.id,
+                patchPreview: patchPreview
+            )
         }
     }
 
-    private func applyPatch(_ id: UUID) {
-        guard let url = repositoryURL else {
-            errorMessage = "No repository is open."
-            showError = true
-            return
-        }
+    private func applySingleOperation(_ preview: OperationPreview) async {
+        guard let planIndex = patchPlans.firstIndex(where: { $0.id == preview.planID }) else { return }
+        let plan = patchPlans[planIndex]
+
         do {
-            try patchService.applyPatch(id, rootURL: url)
+            let result = try await orchestrator.applyPatch(plan)
+            patchPlans[planIndex] = result.updatedPlan
         } catch {
             errorMessage = error.localizedDescription
             showError = true
         }
     }
 
-    private func rejectPatch(_ id: UUID) {
-        patchService.rejectPatch(id)
+    private func rejectOperation(_ preview: OperationPreview) {
+        guard let planIndex = patchPlans.firstIndex(where: { $0.id == preview.planID }) else { return }
+        patchPlans[planIndex] = patchPlans[planIndex].withUpdatedOperation(preview.operationID, status: .rejected)
     }
 }
 
-private struct PatchCard: View {
-    let patch: Patch
+struct OperationPreview: Identifiable {
+    let id = UUID()
+    let planID: UUID
+    let operationID: UUID
+    let patchPreview: PatchPreview
+}
+
+private struct OperationPreviewSheet: View {
+    let preview: OperationPreview
+    let onApply: () -> Void
+    let onReject: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        PatchPreviewView(
+            preview: preview.patchPreview,
+            onApply: {
+                onApply()
+                dismiss()
+            },
+            onReject: {
+                onReject()
+                dismiss()
+            }
+        )
+    }
+}
+
+private struct OperationCard: View {
+    let operation: PatchOperation
     let onPreview: (() -> Void)?
-    let onApply: (() -> Void)?
     let onReject: (() -> Void)?
 
     var body: some View {
@@ -140,14 +165,14 @@ private struct PatchCard: View {
                     .font(.caption2)
                     .foregroundStyle(statusColor)
 
-                Text(patch.filePath)
+                Text(operation.filePath)
                     .font(.system(.caption, design: .monospaced).weight(.medium))
                     .foregroundStyle(.white)
                     .lineLimit(1)
 
                 Spacer()
 
-                Text(patch.status.rawValue.capitalized)
+                Text(operation.status.rawValue.capitalized)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(statusColor)
                     .padding(.horizontal, 8)
@@ -155,18 +180,18 @@ private struct PatchCard: View {
                     .background(statusColor.opacity(0.15), in: .capsule)
             }
 
-            if !patch.description.isEmpty {
-                Text(patch.description)
+            if !operation.description.isEmpty {
+                Text(operation.description)
                     .font(.caption)
                     .foregroundStyle(Theme.dimText)
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                diffBlock(prefix: "−", text: patch.oldText, color: .red)
-                diffBlock(prefix: "+", text: patch.newText, color: Theme.accent)
+                diffBlock(prefix: "−", text: operation.searchText, color: .red)
+                diffBlock(prefix: "+", text: operation.replaceText, color: Theme.accent)
             }
 
-            if onApply != nil || onReject != nil || onPreview != nil {
+            if operation.status == .pending {
                 HStack(spacing: 10) {
                     if let onReject {
                         Button("Reject", role: .destructive) { onReject() }
@@ -187,7 +212,6 @@ private struct PatchCard: View {
                         .buttonStyle(.borderedProminent)
                         .tint(.orange)
                         .controlSize(.small)
-                        .sensoryFeedback(.selection, trigger: patch.id)
                     }
                 }
             }
@@ -219,7 +243,7 @@ private struct PatchCard: View {
     }
 
     private var statusIcon: String {
-        switch patch.status {
+        switch operation.status {
         case .pending: return "clock"
         case .applied: return "checkmark.circle.fill"
         case .rejected: return "xmark.circle.fill"
@@ -228,7 +252,7 @@ private struct PatchCard: View {
     }
 
     private var statusColor: Color {
-        switch patch.status {
+        switch operation.status {
         case .pending: return .orange
         case .applied: return Theme.accent
         case .rejected: return .red

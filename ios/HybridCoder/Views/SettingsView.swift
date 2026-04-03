@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     let bookmarkService: BookmarkService
-    let codeIndexService: CodeIndexService
+    let orchestrator: AIOrchestrator
     let onOpenRepository: (Repository) -> Void
     let onCloseRepository: () -> Void
     @Environment(\.dismiss) private var dismiss
@@ -73,15 +73,19 @@ struct SettingsView: View {
                 Text("Indexed Files")
                     .font(.subheadline)
                 Spacer()
-                Text("\(codeIndexService.indexedFiles.count)")
+                Text("\(orchestrator.indexStats?.indexedFiles ?? 0)")
                     .font(.system(.subheadline, design: .monospaced))
                     .foregroundStyle(Theme.accent)
             }
 
-            Button("Clear Index") {
-                codeIndexService.clearIndex()
+            HStack {
+                Text("Embedded Chunks")
+                    .font(.subheadline)
+                Spacer()
+                Text("\(orchestrator.indexStats?.embeddedChunks ?? 0)")
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
             }
-            .foregroundStyle(.red)
 
             Button("Close Repository") {
                 onCloseRepository()

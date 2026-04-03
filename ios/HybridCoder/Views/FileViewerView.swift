@@ -2,7 +2,7 @@ import SwiftUI
 
 struct FileViewerView: View {
     let file: FileNode
-    let fileSystemService: FileSystemService
+    let repoAccess: RepoAccessService
     @State private var content: String = ""
     @State private var isLoading: Bool = true
 
@@ -28,7 +28,7 @@ struct FileViewerView: View {
         }
         .background(Theme.surfaceBg)
         .task {
-            loadContent()
+            await loadContent()
         }
     }
 
@@ -49,7 +49,7 @@ struct FileViewerView: View {
                 .font(.caption2)
                 .foregroundStyle(Theme.dimText)
 
-            Text(fileSystemService.languageForFile(file.url).uppercased())
+            Text(languageLabel.uppercased())
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(Theme.accent.opacity(0.7))
                 .padding(.horizontal, 6)
@@ -110,8 +110,13 @@ struct FileViewerView: View {
         .padding(.horizontal, 12)
     }
 
-    private func loadContent() {
-        content = fileSystemService.readFileContent(at: file.url) ?? ""
+    private func loadContent() async {
+        let result = await repoAccess.readUTF8(at: file.url)
+        content = result ?? ""
         isLoading = false
+    }
+
+    private var languageLabel: String {
+        RepoFile.detectLanguage(for: file.name)
     }
 }
