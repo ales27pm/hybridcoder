@@ -151,6 +151,15 @@ final class ModelDownloadService {
                     try fm.removeItem(at: localURL)
                 }
                 try fm.moveItem(at: tempURL, to: localURL)
+                if Self.shouldValidateJSONArtifact(localPath: file.localPath),
+                   Self.isInvalidTokenizerOrManifestJSON(at: localURL) {
+                    do {
+                        try fm.removeItem(at: localURL)
+                    } catch {
+                        throw DownloadError.fileCorrupt("Downloaded invalid JSON artifact and failed cleanup: \(file.localPath)")
+                    }
+                    throw DownloadError.fileCorrupt("Downloaded invalid JSON artifact: \(file.localPath)")
+                }
 
                 completed += 1
                 updateProgress(completed: completed, total: totalCount, modelID: modelID)
@@ -216,7 +225,7 @@ final class ModelDownloadService {
         ]
 
         if jsonArtifactNames.contains(name) {
-            return isInvalidJSONFile(at: localURL)
+            return isInvalidTokenizerOrManifestJSON(at: localURL)
         }
 
         // Fallback to model registry local path in case naming changes after move/rename.
@@ -226,13 +235,24 @@ final class ModelDownloadService {
             registryPath.hasSuffix("special_tokens_map.json") ||
             registryPath.hasSuffix("manifest.json") ||
             registryPath.hasSuffix("metadata.json") {
-            return isInvalidJSONFile(at: localURL)
+            return isInvalidTokenizerOrManifestJSON(at: localURL)
         }
 
         return false
     }
 
-    private static func isInvalidJSONFile(at url: URL) -> Bool {
+    private static func shouldValidateJSONArtifact(localPath: String) -> Bool {
+        let normalized = localPath.lowercased()
+        return normalized.hasSuffix("tokenizer.json") ||
+            normalized.hasSuffix("tokenizer_config.json") ||
+            normalized.hasSuffix("special_tokens_map.json") ||
+            normalized.hasSuffix("manifest.json") ||
+            normalized.hasSuffix("metadata.json")
+    }
+
+    /// Validation tailored for tokenizer/manifest-style JSON artifacts:
+    /// accepts only top-level JSON objects or arrays of objects.
+    private static func isInvalidTokenizerOrManifestJSON(at url: URL) -> Bool {
         guard let data = try? Data(contentsOf: url), data.isEmpty == false else {
             return true
         }
@@ -289,11 +309,30 @@ final class ModelDownloadService {
                 !$0.localPath.hasPrefix("model.mlmodelc") &&
                 !$0.localPath.hasPrefix("model.mlpackage")
             }
-            .map(\.localPath)
         for expectedFile in tokenizerFiles {
-            let path = tokenizerDir.appendingPathComponent(expectedFile).path
-            guard fm.fileExists(atPath: path) else {
-                throw DownloadError.fileCorrupt(expectedFile)
+            let url = tokenizerDir.appendingPathComponent(expectedFile.localPath)
+            guard fm.fileExists(atPath: url.path) else {
+                throw DownloadError.fileCorrupt(expectedFile.localPath)
+            }
+            if shouldValidateJSONArtifact(localPath: expectedFile.localPath),
+               isInvalidTokenizerOrManifestJSON(at: url) {
+                try? fm.removeItem(at: url)
+                throw DownloadError.fileCorrupt("Invalid JSON artifact: \(expectedFile.localPath)")
+            }
+        }
+
+        let jsonModelFiles = entry.files.filter {
+            ($0.localPath.hasPrefix("model.mlpackage") || $0.localPath.hasPrefix("model.mlmodelc")) &&
+            shouldValidateJSONArtifact(localPath: $0.localPath)
+        }
+        for expectedFile in jsonModelFiles {
+            let url = modelDir.appendingPathComponent(expectedFile.localPath)
+            guard fm.fileExists(atPath: url.path) else {
+                throw DownloadError.fileCorrupt(expectedFile.localPath)
+            }
+            if isInvalidTokenizerOrManifestJSON(at: url) {
+                try? fm.removeItem(at: url)
+                throw DownloadError.fileCorrupt("Invalid JSON artifact: \(expectedFile.localPath)")
             }
         }
     }

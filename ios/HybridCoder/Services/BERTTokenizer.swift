@@ -56,12 +56,12 @@ actor HFTokenizer {
                 init(from decoder: Decoder) throws {
                     let container = try decoder.singleValueContainer()
                     if let merged = try? container.decode(String.self) {
-                        self.pair = merged
+                        self.pair = Self.normalizedPair(from: merged) ?? ""
                         return
                     }
 
                     if let parts = try? container.decode([String].self), parts.count == 2 {
-                        self.pair = "\(parts[0]) \(parts[1])"
+                        self.pair = Self.normalizedPair(from: "\(parts[0]) \(parts[1])") ?? ""
                         return
                     }
 
@@ -69,6 +69,14 @@ actor HFTokenizer {
                         in: container,
                         debugDescription: "Unsupported merge entry format; expected string or 2-item string array"
                     )
+                }
+
+                private static func normalizedPair(from raw: String) -> String? {
+                    let components = raw
+                        .split(whereSeparator: { $0.isWhitespace })
+                        .map(String.init)
+                    guard components.count == 2 else { return nil }
+                    return components.joined(separator: " ")
                 }
             }
 
@@ -153,6 +161,8 @@ actor HFTokenizer {
         var ranked: [String: Int] = [:]
         ranked.reserveCapacity(merges.count)
         for (idx, merge) in merges.enumerated() {
+            let pairParts = merge.pair.split(separator: " ", omittingEmptySubsequences: true)
+            guard pairParts.count == 2 else { continue }
             ranked[merge.pair] = idx
         }
         guard ranked.isEmpty == false else {
