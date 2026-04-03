@@ -50,7 +50,7 @@ struct ModelManagerView: View {
                     .foregroundStyle(.white)
             }
 
-            Text("CodeBERT download may require authentication. Create a read token on Hugging Face and paste it here.")
+            Text(tokenGuidanceText)
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
 
@@ -234,6 +234,13 @@ struct ModelManagerView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Theme.border, lineWidth: 1)
         )
+    }
+
+    private var tokenGuidanceText: String {
+        if orchestrator.modelDownload.shouldSuggestTokenInput {
+            return "Download access was denied (401/403). Add a Hugging Face read token and retry."
+        }
+        return "Optional for private or gated Hugging Face repositories. Public model downloads usually do not require a token."
     }
 }
 
