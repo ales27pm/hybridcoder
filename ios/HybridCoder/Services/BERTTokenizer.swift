@@ -1,11 +1,15 @@
 import Foundation
 
-actor BERTTokenizer {
+/// Runtime tokenizer for Hugging Face `tokenizer.json` exports backed by ByteLevel-BPE
+/// (the exact tokenizer family used by RoBERTa/CodeBERT).
+actor HFTokenizer {
 
     nonisolated enum TokenizerError: Error, LocalizedError, Sendable {
         case fileNotFound(String)
         case invalidFormat(String)
-        case vocabEmpty
+        case incompatibleTokenizer(String)
+        case missingComponent(String)
+        case notLoaded
 
         nonisolated var errorDescription: String? {
             switch self {
@@ -13,18 +17,14 @@ actor BERTTokenizer {
                 return "Tokenizer file not found: \(path)"
             case .invalidFormat(let detail):
                 return "Invalid tokenizer format: \(detail)"
-            case .vocabEmpty:
-                return "Vocabulary is empty after loading."
+            case .incompatibleTokenizer(let detail):
+                return "Tokenizer is incompatible with HF ByteLevel-BPE runtime: \(detail)"
+            case .missingComponent(let detail):
+                return "Tokenizer is missing required components: \(detail)"
+            case .notLoaded:
+                return "Tokenizer encode called before load()."
             }
         }
-    }
-
-    nonisolated struct TokenizerConfig: Sendable {
-        let clsTokenID: Int
-        let sepTokenID: Int
-        let padTokenID: Int
-        let unkTokenID: Int
-        let maxLength: Int
     }
 
     nonisolated struct EncodedInput: Sendable {
@@ -34,92 +34,188 @@ actor BERTTokenizer {
         let originalTokenCount: Int
     }
 
-    private var vocab: [String: Int] = [:]
-    private var config: TokenizerConfig?
-    private var isLoaded: Bool = false
+    private struct TokenizerJSON: Decodable {
+        struct AddedToken: Decodable {
+            let id: Int
+            let content: String
+            let special: Bool?
+        }
+        struct PreTokenizer: Decodable {
+            let type: String
+            let add_prefix_space: Bool?
+        }
+        struct PostProcessor: Decodable {
+            let type: String
+            let sep: [JSONValue]?
+            let cls: [JSONValue]?
+        }
+        struct Model: Decodable {
+            let type: String
+            let vocab: [String: Int]
+            let merges: [String]?
+            let unk_token: String?
+        }
 
-    private static let defaultClsToken = "[CLS]"
-    private static let defaultSepToken = "[SEP]"
-    private static let defaultPadToken = "[PAD]"
-    private static let defaultUnkToken = "[UNK]"
+        let added_tokens: [AddedToken]?
+        let pre_tokenizer: PreTokenizer?
+        let post_processor: PostProcessor?
+        let model: Model
+    }
+
+    private enum JSONValue: Decodable {
+        case string(String)
+        case int(Int)
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let intValue = try? container.decode(Int.self) {
+                self = .int(intValue)
+                return
+            }
+            if let stringValue = try? container.decode(String.self) {
+                self = .string(stringValue)
+                return
+            }
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported JSON value")
+        }
+
+        var intValue: Int? {
+            if case .int(let v) = self { return v }
+            return nil
+        }
+
+        var stringValue: String? {
+            if case .string(let v) = self { return v }
+            return nil
+        }
+    }
+
+    private static let byteLevelPattern = "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+"
+
+    private let maxLength = 512
+
+    private var isLoaded = false
+    private var addPrefixSpace = false
+
+    private var vocab: [String: Int] = [:]
+    private var mergesRank: [String: Int] = [:]
+    private var bpeCache: [String: [String]] = [:]
+
+    private var clsTokenID: Int = 0
+    private var sepTokenID: Int = 2
+    private var padTokenID: Int = 1
+    private var unkTokenID: Int = 3
+    private var unkToken: String = "<unk>"
+
+    private let byteEncoder: [UInt8: Character] = HFTokenizer.makeByteToUnicodeMap()
+    private lazy var tokenRegex = try? NSRegularExpression(pattern: Self.byteLevelPattern, options: [])
 
     var loaded: Bool { isLoaded }
 
     func load(from directory: URL) async throws {
         let fm = FileManager.default
+        let tokenizerURL = directory.appendingPathComponent("tokenizer.json")
 
-        let tokenizerJsonURL = directory.appendingPathComponent("tokenizer.json")
-        let vocabURL = directory.appendingPathComponent("vocab.txt")
-        let vocabJsonURL = directory.appendingPathComponent("vocab.json")
-
-        if fm.fileExists(atPath: tokenizerJsonURL.path) {
-            try loadFromTokenizerJSON(tokenizerJsonURL)
-        } else if fm.fileExists(atPath: vocabURL.path) {
-            try loadFromVocabTxt(vocabURL)
-        } else if fm.fileExists(atPath: vocabJsonURL.path) {
-            try loadFromVocabJSON(vocabJsonURL)
-        } else {
-            throw TokenizerError.fileNotFound("No tokenizer.json, vocab.txt, or vocab.json found in \(directory.lastPathComponent)")
+        guard fm.fileExists(atPath: tokenizerURL.path) else {
+            throw TokenizerError.fileNotFound(tokenizerURL.path)
         }
 
-        guard !vocab.isEmpty else { throw TokenizerError.vocabEmpty }
+        let data = try Data(contentsOf: tokenizerURL)
+        let decoded: TokenizerJSON
+        do {
+            decoded = try JSONDecoder().decode(TokenizerJSON.self, from: data)
+        } catch {
+            throw TokenizerError.invalidFormat("tokenizer.json decode failed: \(error.localizedDescription)")
+        }
 
-        let clsID = vocab[Self.defaultClsToken] ?? 101
-        let sepID = vocab[Self.defaultSepToken] ?? 102
-        let padID = vocab[Self.defaultPadToken] ?? 0
-        let unkID = vocab[Self.defaultUnkToken] ?? 100
+        guard decoded.model.type.uppercased() == "BPE" else {
+            throw TokenizerError.incompatibleTokenizer("Expected model.type=BPE, got \(decoded.model.type)")
+        }
 
-        config = TokenizerConfig(
-            clsTokenID: clsID,
-            sepTokenID: sepID,
-            padTokenID: padID,
-            unkTokenID: unkID,
-            maxLength: 512
-        )
+        let preType = decoded.pre_tokenizer?.type.lowercased() ?? ""
+        guard preType == "bytelevel" else {
+            throw TokenizerError.incompatibleTokenizer("Expected pre_tokenizer.type=ByteLevel, got \(preType)")
+        }
+        self.addPrefixSpace = decoded.pre_tokenizer?.add_prefix_space ?? false
 
+        if let postType = decoded.post_processor?.type, postType.lowercased().contains("roberta") == false {
+            throw TokenizerError.incompatibleTokenizer("Expected Roberta post-processor, got \(postType)")
+        }
+
+        guard decoded.model.vocab.isEmpty == false else {
+            throw TokenizerError.missingComponent("model.vocab is empty")
+        }
+        self.vocab = decoded.model.vocab
+
+        let merges = decoded.model.merges ?? []
+        guard merges.isEmpty == false else {
+            throw TokenizerError.missingComponent("model.merges is empty")
+        }
+
+        var ranked: [String: Int] = [:]
+        ranked.reserveCapacity(merges.count)
+        for (idx, line) in merges.enumerated() {
+            let parts = line.split(separator: " ")
+            guard parts.count == 2 else { continue }
+            ranked["\(parts[0]) \(parts[1])"] = idx
+        }
+        guard ranked.isEmpty == false else {
+            throw TokenizerError.invalidFormat("No valid merge pairs parsed from model.merges")
+        }
+        self.mergesRank = ranked
+
+        self.unkToken = decoded.model.unk_token ?? "<unk>"
+
+        guard let clsID = vocab["<s>"] else { throw TokenizerError.missingComponent("<s> missing in vocab") }
+        guard let sepID = vocab["</s>"] else { throw TokenizerError.missingComponent("</s> missing in vocab") }
+        guard let padID = vocab["<pad>"] else { throw TokenizerError.missingComponent("<pad> missing in vocab") }
+
+        self.clsTokenID = clsID
+        self.sepTokenID = sepID
+        self.padTokenID = padID
+        self.unkTokenID = vocab[unkToken] ?? vocab["<unk>"] ?? 3
+
+        if let added = decoded.added_tokens {
+            for token in added where token.special == true {
+                vocab[token.content] = token.id
+            }
+        }
+
+        guard tokenRegex != nil else {
+            throw TokenizerError.invalidFormat("Failed to compile ByteLevel pre-tokenizer regex")
+        }
+
+        bpeCache.removeAll(keepingCapacity: true)
         isLoaded = true
     }
 
-    func encode(text: String) -> EncodedInput {
-        guard let config, isLoaded else {
-            return EncodedInput(inputIDs: [], attentionMask: [], tokenTypeIDs: [], originalTokenCount: 0)
+    func encode(text: String) throws -> EncodedInput {
+        guard isLoaded else { throw TokenizerError.notLoaded }
+
+        let input = addPrefixSpace && text.hasPrefix(" ") == false ? " " + text : text
+        let pieces = preTokenize(input)
+
+        var tokens: [String] = ["<s>"]
+        for piece in pieces {
+            let mapped = mapBytesToUnicode(piece)
+            let bpe = applyBPE(mapped)
+            tokens.append(contentsOf: bpe)
+        }
+        tokens.append("</s>")
+
+        if tokens.count > maxLength {
+            tokens = Array(tokens.prefix(maxLength - 1)) + ["</s>"]
         }
 
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            let ids = [config.clsTokenID, config.sepTokenID]
-            let padCount = config.maxLength - ids.count
-            return EncodedInput(
-                inputIDs: ids + Array(repeating: config.padTokenID, count: padCount),
-                attentionMask: [1, 1] + Array(repeating: 0, count: padCount),
-                tokenTypeIDs: Array(repeating: 0, count: config.maxLength),
-                originalTokenCount: 2
-            )
-        }
-
-        let tokens = tokenize(trimmed)
-        let maxContentLen = config.maxLength - 2
-        let truncated = Array(tokens.prefix(maxContentLen))
-
-        var inputIDs = [config.clsTokenID]
-        for token in truncated {
-            inputIDs.append(vocab[token] ?? config.unkTokenID)
-        }
-        inputIDs.append(config.sepTokenID)
-
+        var inputIDs = tokens.map { vocab[$0] ?? unkTokenID }
         let realLen = inputIDs.count
-        let padCount = config.maxLength - realLen
 
-        if padCount > 0 {
-            inputIDs.append(contentsOf: Array(repeating: config.padTokenID, count: padCount))
+        if realLen < maxLength {
+            inputIDs += Array(repeating: padTokenID, count: maxLength - realLen)
         }
 
-        var attentionMask = Array(repeating: 1, count: realLen)
-        if padCount > 0 {
-            attentionMask.append(contentsOf: Array(repeating: 0, count: padCount))
-        }
-
-        let tokenTypeIDs = Array(repeating: 0, count: config.maxLength)
+        let attentionMask = Array(repeating: 1, count: realLen) + Array(repeating: 0, count: max(0, maxLength - realLen))
+        let tokenTypeIDs = Array(repeating: 0, count: maxLength)
 
         return EncodedInput(
             inputIDs: inputIDs,
@@ -129,166 +225,110 @@ actor BERTTokenizer {
         )
     }
 
-    // MARK: - WordPiece Tokenization
-
-    private func tokenize(_ text: String) -> [String] {
-        let basicTokens = basicTokenize(text)
-        var wordPieceTokens: [String] = []
-        for token in basicTokens {
-            let subTokens = wordPieceTokenize(token)
-            wordPieceTokens.append(contentsOf: subTokens)
+    private func preTokenize(_ text: String) -> [String] {
+        guard let tokenRegex else { return [] }
+        let range = NSRange(location: 0, length: text.utf16.count)
+        let matches = tokenRegex.matches(in: text, options: [], range: range)
+        return matches.compactMap { match in
+            guard let r = Range(match.range, in: text) else { return nil }
+            return String(text[r])
         }
-        return wordPieceTokens
     }
 
-    private func basicTokenize(_ text: String) -> [String] {
-        let cleaned = text.lowercased().map { ch -> String in
-            if ch.isWhitespace { return " " }
-            if isPunctuation(ch) { return " \(ch) " }
-            if shouldStripChar(ch) { return "" }
-            return String(ch)
-        }.joined()
-
-        return cleaned.split(separator: " ").map(String.init).filter { !$0.isEmpty }
+    private func mapBytesToUnicode(_ text: String) -> String {
+        var chars: [Character] = []
+        chars.reserveCapacity(text.utf8.count)
+        for b in text.utf8 {
+            chars.append(byteEncoder[b] ?? "�")
+        }
+        return String(chars)
     }
 
-    private func wordPieceTokenize(_ token: String) -> [String] {
-        let unkToken = Self.defaultUnkToken
-        guard !token.isEmpty else { return [] }
-
-        let chars = Array(token)
-        if chars.count > 200 {
-            return [unkToken]
+    private func applyBPE(_ token: String) -> [String] {
+        if let cached = bpeCache[token] {
+            return cached
         }
 
-        var tokens: [String] = []
-        var start = 0
+        var word = token.map { String($0) }
+        if word.count <= 1 {
+            bpeCache[token] = word
+            return word
+        }
 
-        while start < chars.count {
-            var end = chars.count
-            var found: String?
+        while true {
+            let pairs = adjacentPairs(word)
+            if pairs.isEmpty { break }
 
-            while start < end {
-                let substr: String
-                if start > 0 {
-                    substr = "##" + String(chars[start..<end])
+            var bestPair: String?
+            var bestRank = Int.max
+
+            for pair in pairs {
+                if let rank = mergesRank[pair], rank < bestRank {
+                    bestRank = rank
+                    bestPair = pair
+                }
+            }
+
+            guard let pair = bestPair else { break }
+            let parts = pair.split(separator: " ", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { break }
+
+            let first = parts[0]
+            let second = parts[1]
+
+            var newWord: [String] = []
+            newWord.reserveCapacity(word.count)
+
+            var i = 0
+            while i < word.count {
+                if i < word.count - 1, word[i] == first, word[i + 1] == second {
+                    newWord.append(first + second)
+                    i += 2
                 } else {
-                    substr = String(chars[start..<end])
-                }
-
-                if vocab[substr] != nil {
-                    found = substr
-                    break
-                }
-                end -= 1
-            }
-
-            if let found {
-                tokens.append(found)
-                start = end
-            } else {
-                tokens.append(unkToken)
-                start += 1
-            }
-        }
-
-        return tokens
-    }
-
-    private func isPunctuation(_ ch: Character) -> Bool {
-        guard let scalar = ch.unicodeScalars.first else { return false }
-        let v = scalar.value
-        if (v >= 33 && v <= 47) || (v >= 58 && v <= 64) ||
-            (v >= 91 && v <= 96) || (v >= 123 && v <= 126) {
-            return true
-        }
-        return ch.isPunctuation
-    }
-
-    private func shouldStripChar(_ ch: Character) -> Bool {
-        guard let scalar = ch.unicodeScalars.first else { return false }
-        let v = scalar.value
-        return v == 0 || v == 0xFFFD || (v >= 1 && v <= 31 && v != 9 && v != 10 && v != 13)
-    }
-
-    // MARK: - Vocab Loading
-
-    private func loadFromTokenizerJSON(_ url: URL) throws {
-        let data = try Data(contentsOf: url)
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw TokenizerError.invalidFormat("tokenizer.json is not a valid JSON object")
-        }
-
-        if let model = json["model"] as? [String: Any],
-           let vocabDict = model["vocab"] as? [String: Int] {
-            self.vocab = vocabDict
-            mergeAddedTokens(from: json)
-            return
-        }
-
-        if let model = json["model"] as? [String: Any],
-           let vocabDict = model["vocab"] as? [String: NSNumber] {
-            var converted: [String: Int] = [:]
-            for (key, val) in vocabDict {
-                converted[key] = val.intValue
-            }
-            self.vocab = converted
-            mergeAddedTokens(from: json)
-            return
-        }
-
-        if let vocabDict = json["vocab"] as? [String: Int] {
-            self.vocab = vocabDict
-            mergeAddedTokens(from: json)
-            return
-        }
-
-        var builtVocab: [String: Int] = [:]
-        if let addedTokens = json["added_tokens"] as? [[String: Any]] {
-            for entry in addedTokens {
-                if let content = entry["content"] as? String,
-                   let id = entry["id"] as? Int {
-                    builtVocab[content] = id
+                    newWord.append(word[i])
+                    i += 1
                 }
             }
+
+            word = newWord
+            if word.count == 1 { break }
         }
 
-        if !builtVocab.isEmpty {
-            self.vocab = builtVocab
-            return
-        }
-
-        throw TokenizerError.invalidFormat("Could not extract vocabulary from tokenizer.json")
+        bpeCache[token] = word
+        return word
     }
 
-    private func mergeAddedTokens(from json: [String: Any]) {
-        guard let addedTokens = json["added_tokens"] as? [[String: Any]] else { return }
-        for entry in addedTokens {
-            if let content = entry["content"] as? String,
-               let id = entry["id"] as? Int {
-                vocab[content] = id
+    private func adjacentPairs(_ word: [String]) -> Set<String> {
+        guard word.count > 1 else { return [] }
+        var pairs: Set<String> = []
+        pairs.reserveCapacity(word.count - 1)
+        for i in 0..<(word.count - 1) {
+            pairs.insert("\(word[i]) \(word[i + 1])")
+        }
+        return pairs
+    }
+
+    private static func makeByteToUnicodeMap() -> [UInt8: Character] {
+        var bs: [Int] = Array(33...126) + Array(161...172) + Array(174...255)
+        var cs = bs
+        var n = 0
+
+        for b in 0...255 where bs.contains(b) == false {
+            bs.append(b)
+            cs.append(256 + n)
+            n += 1
+        }
+
+        var table: [UInt8: Character] = [:]
+        table.reserveCapacity(256)
+        for (b, c) in zip(bs, cs) {
+            if let scalar = UnicodeScalar(c) {
+                table[UInt8(b)] = Character(scalar)
             }
         }
-    }
-
-    private func loadFromVocabTxt(_ url: URL) throws {
-        let content = try String(contentsOf: url, encoding: .utf8)
-        let lines = content.components(separatedBy: .newlines)
-        var loadedVocab: [String: Int] = [:]
-        for (index, line) in lines.enumerated() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if !trimmed.isEmpty {
-                loadedVocab[trimmed] = index
-            }
-        }
-        self.vocab = loadedVocab
-    }
-
-    private func loadFromVocabJSON(_ url: URL) throws {
-        let data = try Data(contentsOf: url)
-        guard let dict = try JSONSerialization.jsonObject(with: data) as? [String: Int] else {
-            throw TokenizerError.invalidFormat("vocab.json is not a valid {token: id} dictionary")
-        }
-        self.vocab = dict
+        return table
     }
 }
+
+@available(*, deprecated, renamed: "HFTokenizer", message: "BERTTokenizer is deprecated. Use HFTokenizer for tokenizer.json-compatible runtimes.")
+typealias BERTTokenizer = HFTokenizer

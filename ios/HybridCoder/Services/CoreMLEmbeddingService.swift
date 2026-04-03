@@ -34,7 +34,7 @@ actor CoreMLEmbeddingService {
     }
 
     private var model: MLModel?
-    private let tokenizer = BERTTokenizer()
+    private let tokenizer = HFTokenizer()
     private var tokenizerLoaded: Bool = false
     private var cachedModelInfo: ModelInfo?
 
@@ -88,7 +88,7 @@ actor CoreMLEmbeddingService {
         guard let model else { throw EmbeddingError.modelNotLoaded }
         guard tokenizerLoaded else { throw EmbeddingError.tokenizerNotLoaded }
 
-        let encoded = await tokenizer.encode(text: text)
+        let encoded = try await tokenizer.encode(text: text)
         guard !encoded.inputIDs.isEmpty else {
             throw EmbeddingError.inferenceFailure("Tokenizer produced empty input")
         }
