@@ -135,17 +135,17 @@ actor HFTokenizer {
         }
 
         let preTokenizer = decoded.pre_tokenizer
-        let preType = preTokenizer?.type.lowercased() ?? ""
+        let preTokenizerTypes = preTokenizer?.flattenedTypes(path: "pre_tokenizer").joined(separator: ", ") ?? "none"
         let hasByteLevelPreTokenizer = preTokenizer?.contains(type: "bytelevel") ?? false
         guard hasByteLevelPreTokenizer else {
-            throw TokenizerError.incompatibleTokenizer("Expected ByteLevel pre-tokenizer, got \(preType)")
+            throw TokenizerError.incompatibleTokenizer("Expected ByteLevel pre-tokenizer, got \(preTokenizerTypes)")
         }
         self.addPrefixSpace = preTokenizer?.addPrefixSpaceValue() ?? false
 
         if let post = decoded.post_processor,
            post.containsAny(types: ["roberta", "bytelevel", "template"]) == false {
-            let postType = post.type.lowercased()
-            throw TokenizerError.incompatibleTokenizer("Expected a supported post-processor (Roberta/ByteLevel/Template), got \(postType)")
+            let postTypes = post.flattenedTypes(path: "post_processor").joined(separator: ", ")
+            throw TokenizerError.incompatibleTokenizer("Expected a supported post-processor (Roberta/ByteLevel/Template), got \(postTypes)")
         }
 
         guard decoded.model.vocab.isEmpty == false else {
@@ -347,6 +347,14 @@ private extension HFTokenizer.TokenizerJSON.PreTokenizer {
         if let add_prefix_space { return add_prefix_space }
         return pretokenizers?.first(where: { $0.contains(type: "bytelevel") })?.addPrefixSpaceValue() ?? false
     }
+
+    func flattenedTypes(path: String) -> [String] {
+        var values = ["\(path)=\(type)"]
+        for (index, tokenizer) in (pretokenizers ?? []).enumerated() {
+            values.append(contentsOf: tokenizer.flattenedTypes(path: "\(path).pretokenizers[\(index)]"))
+        }
+        return values
+    }
 }
 
 private extension HFTokenizer.TokenizerJSON.PostProcessor {
@@ -356,6 +364,14 @@ private extension HFTokenizer.TokenizerJSON.PostProcessor {
             return true
         }
         return processors?.contains(where: { $0.containsAny(types: targets) }) ?? false
+    }
+
+    func flattenedTypes(path: String) -> [String] {
+        var values = ["\(path)=\(type)"]
+        for (index, processor) in (processors ?? []).enumerated() {
+            values.append(contentsOf: processor.flattenedTypes(path: "\(path).processors[\(index)]"))
+        }
+        return values
     }
 }
 

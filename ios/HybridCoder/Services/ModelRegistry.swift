@@ -55,7 +55,7 @@ final class ModelRegistry {
 
     init() {
         let embeddingID = "microsoft/codebert-base"
-        let qwenEmbeddingID = "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit"
+        let qwenGenerationID = "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit"
         let generationID = "apple/foundation-language-model"
 
         let embeddingFiles: [ModelFile] = [
@@ -66,7 +66,7 @@ final class ModelRegistry {
             ModelFile(remotePath: "tokenizer_config.json", localPath: "tokenizer_config.json"),
             ModelFile(remotePath: "special_tokens_map.json", localPath: "special_tokens_map.json")
         ]
-        let qwenEmbeddingFiles: [ModelFile] = [
+        let qwenGenerationFiles: [ModelFile] = [
             ModelFile(remotePath: "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/metadata.json", localPath: "metadata.json"),
             ModelFile(remotePath: "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/model.mil", localPath: "model.mil"),
             ModelFile(remotePath: "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/coremldata.bin", localPath: "coremldata.bin"),
@@ -87,13 +87,13 @@ final class ModelRegistry {
                 installState: .notInstalled,
                 loadState: .unloaded
             ),
-            qwenEmbeddingID: Entry(
-                id: qwenEmbeddingID,
+            qwenGenerationID: Entry(
+                id: qwenGenerationID,
                 displayName: "Qwen2.5 Coder 1.5B Instruct 4bit (CoreML)",
-                capability: .embedding,
+                capability: .generation,
                 provider: .huggingFace,
                 remoteBaseURL: "https://huggingface.co/finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit/resolve/main",
-                files: qwenEmbeddingFiles,
+                files: qwenGenerationFiles,
                 isAvailable: true,
                 installState: .notInstalled,
                 loadState: .unloaded
