@@ -50,11 +50,11 @@ final class ModelDownloadService {
             let modelDir = registry.downloadedModelDirectory(for: modelID)
             let tokenizerDir = registry.downloadedTokenizerDirectory(for: modelID)
 
-            try fm.createDirectory(at: modelDir.appendingPathComponent("model.mlmodelc/analytics"), withIntermediateDirectories: true)
+            try fm.createDirectory(at: modelDir, withIntermediateDirectories: true)
             try fm.createDirectory(at: tokenizerDir, withIntermediateDirectories: true)
 
-            let modelFiles = entry.files.filter { $0.localPath.contains("model.mlmodelc") }
-            let tokenizerFiles = entry.files.filter { !$0.localPath.contains("model.mlmodelc") }
+            let modelFiles = entry.files.filter { $0.localPath.contains("model.mlmodelc") || $0.localPath.contains("model.mlpackage") }
+            let tokenizerFiles = entry.files.filter { !$0.localPath.contains("model.mlmodelc") && !$0.localPath.contains("model.mlpackage") }
             let allFiles = modelFiles.map { (modelDir, $0) } + tokenizerFiles.map { (tokenizerDir, $0) }
 
             let totalCount = Double(allFiles.count)
@@ -142,93 +142,25 @@ final class ModelDownloadService {
 
         let modelDir = registry.downloadedModelDirectory(for: modelID)
         let compiledModel = modelDir.appendingPathComponent("model.mlmodelc")
-        guard fm.fileExists(atPath: compiledModel.path) else {
-            throw DownloadError.fileCorrupt("model.mlmodelc")
+        let packageModel = modelDir.appendingPathComponent("model.mlpackage")
+        guard fm.fileExists(atPath: compiledModel.path) || fm.fileExists(atPath: packageModel.path) else {
+            throw DownloadError.fileCorrupt("model.mlmodelc or model.mlpackage")
         }
 
         let tokenizerDir = registry.downloadedTokenizerDirectory(for: modelID)
-        let tokenizerFiles = ["tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "vocab.json", "merges.txt"]
+        let tokenizerFiles = ["tokenizer.json", "tokenizer_config.json", "special_tokens_map.json"]
         for expectedFile in tokenizerFiles {
             let path = tokenizerDir.appendingPathComponent(expectedFile).path
             guard fm.fileExists(atPath: path) else {
                 throw DownloadError.fileCorrupt(expectedFile)
             }
         }
-
-        try validateArtifactMetadata(modelID: modelID, modelDir: modelDir, tokenizerDir: tokenizerDir)
-    }
-
-    private static func validateArtifactMetadata(modelID: String, modelDir: URL, tokenizerDir: URL) throws {
-        let tokenizerConfigURL = tokenizerDir.appendingPathComponent("tokenizer_config.json")
-        let tokenizerConfig = try loadJSONDictionary(from: tokenizerConfigURL, source: "tokenizer_config.json")
-
-        let tokenizerIDCandidates = collectStringValues(
-            from: tokenizerConfig,
-            keys: ["name_or_path", "_name_or_path", "model_id", "tokenizer_name", "tokenizer_id"]
-        )
-        guard tokenizerIDCandidates.contains(where: { matchesModelIdentifier($0, expected: modelID) }) else {
-            throw DownloadError.metadataMismatch(
-                file: "tokenizer_config.json",
-                expected: modelID,
-                found: tokenizerIDCandidates.joined(separator: ", ")
-            )
-        }
-
-        let modelMetadataURL = modelDir
-            .appendingPathComponent("model.mlmodelc")
-            .appendingPathComponent("metadata.json")
-        let modelMetadata = try loadJSONDictionary(from: modelMetadataURL, source: "model.mlmodelc/metadata.json")
-
-        let modelIDCandidates = collectStringValues(
-            from: modelMetadata,
-            keys: ["model_id", "source_model", "hf_model_id", "_name_or_path", "name_or_path"]
-        )
-        guard modelIDCandidates.contains(where: { matchesModelIdentifier($0, expected: modelID) }) else {
-            throw DownloadError.metadataMismatch(
-                file: "model.mlmodelc/metadata.json",
-                expected: modelID,
-                found: modelIDCandidates.joined(separator: ", ")
-            )
-        }
-    }
-
-    private static func matchesModelIdentifier(_ value: String, expected: String) -> Bool {
-        let normalized = value.lowercased()
-        let expectedNormalized = expected.lowercased()
-        return normalized == expectedNormalized || normalized.contains(expectedNormalized) || normalized.contains("codebert")
-    }
-
-    private static func loadJSONDictionary(from url: URL, source: String) throws -> [String: Any] {
-        do {
-            let data = try Data(contentsOf: url)
-            let json = try JSONSerialization.jsonObject(with: data)
-            guard let dictionary = json as? [String: Any] else {
-                throw DownloadError.fileCorrupt(source)
-            }
-            return dictionary
-        } catch let error as DownloadError {
-            throw error
-        } catch {
-            throw DownloadError.metadataUnreadable(source, error.localizedDescription)
-        }
-    }
-
-    private static func collectStringValues(from dictionary: [String: Any], keys: [String]) -> [String] {
-        var values: [String] = []
-        for key in keys {
-            if let value = dictionary[key] as? String, !value.isEmpty {
-                values.append(value)
-            }
-        }
-        return values
     }
 
     nonisolated enum DownloadError: Error, LocalizedError, Sendable {
         case modelNotDownloaded(String)
         case httpError(Int, String)
         case fileCorrupt(String)
-        case metadataMismatch(file: String, expected: String, found: String)
-        case metadataUnreadable(String, String)
 
         nonisolated var errorDescription: String? {
             switch self {
@@ -238,11 +170,6 @@ final class ModelDownloadService {
                 return "HTTP \(code) downloading \(file). Check your network connection and try again."
             case .fileCorrupt(let file):
                 return "Downloaded file '\(file)' appears corrupt. Delete and re-download."
-            case .metadataMismatch(let file, let expected, let found):
-                let foundText = found.isEmpty ? "missing model identifier fields" : found
-                return "Metadata mismatch in '\(file)'. Expected '\(expected)', found '\(foundText)'."
-            case .metadataUnreadable(let file, let reason):
-                return "Unable to parse '\(file)' for validation: \(reason)"
             }
         }
     }

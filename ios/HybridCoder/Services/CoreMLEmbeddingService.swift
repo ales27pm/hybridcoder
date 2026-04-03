@@ -63,7 +63,11 @@ actor CoreMLEmbeddingService {
         }
 
         let modelURL = await MainActor.run {
-            registry.downloadedModelDirectory(for: modelID).appendingPathComponent("model.mlmodelc")
+            let base = registry.downloadedModelDirectory(for: modelID)
+            let compiled = base.appendingPathComponent("model.mlmodelc")
+            let package = base.appendingPathComponent("model.mlpackage")
+            let fm = FileManager.default
+            return fm.fileExists(atPath: compiled.path) ? compiled : package
         }
         let tokenizerURL = await MainActor.run {
             registry.downloadedTokenizerDirectory(for: modelID)
