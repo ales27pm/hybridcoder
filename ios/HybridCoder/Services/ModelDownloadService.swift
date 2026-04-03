@@ -82,13 +82,18 @@ final class ModelDownloadService {
             try fm.createDirectory(at: tokenizerDir, withIntermediateDirectories: true)
 
             let modelPackageFiles = entry.files.filter { $0.localPath.hasPrefix("model.mlpackage") }
+            let modelCompiledFiles = entry.files.filter { $0.localPath.hasPrefix("model.mlmodelc") }
             let tokenizerFiles = entry.files.filter {
                 !$0.localPath.hasPrefix("model.mlmodelc") &&
                 !$0.localPath.hasPrefix("model.mlpackage")
             }
-            let allFiles = modelPackageFiles.map { (modelDir, $0) } + tokenizerFiles.map { (tokenizerDir, $0) }
+            let allFiles =
+                modelPackageFiles.map { (modelDir, $0) } +
+                modelCompiledFiles.map { (modelDir, $0) } +
+                tokenizerFiles.map { (tokenizerDir, $0) }
 
-            let totalCount = Double(allFiles.count + 1) // +1 for compile step
+            let shouldCompileModel = !modelPackageFiles.isEmpty
+            let totalCount = Double(allFiles.count + (shouldCompileModel ? 1 : 0))
             var completed = 0.0
 
             for (baseDir, file) in allFiles {
@@ -142,11 +147,13 @@ final class ModelDownloadService {
             }
 
             try Self.validateDownloadedAssetsPreCompileOrThrow(modelID: modelID, registry: registry)
-            let packageModel = modelDir.appendingPathComponent("model.mlpackage")
-            let compiledDestination = modelDir.appendingPathComponent("model.mlmodelc")
-            try await Self.compileModelPackage(packageModel: packageModel, compiledDestination: compiledDestination)
-            completed += 1
-            updateProgress(completed: completed, total: totalCount, modelID: modelID)
+            if shouldCompileModel {
+                let packageModel = modelDir.appendingPathComponent("model.mlpackage")
+                let compiledDestination = modelDir.appendingPathComponent("model.mlmodelc")
+                try await Self.compileModelPackage(packageModel: packageModel, compiledDestination: compiledDestination)
+                completed += 1
+                updateProgress(completed: completed, total: totalCount, modelID: modelID)
+            }
             try Self.validateDownloadedAssetsPostCompileOrThrow(modelID: modelID, registry: registry)
             registry.setInstallState(for: modelID, .installed)
         } catch is CancellationError {
@@ -199,8 +206,22 @@ final class ModelDownloadService {
 
         let modelDir = registry.downloadedModelDirectory(for: modelID)
         let packageModel = modelDir.appendingPathComponent("model.mlpackage")
-        guard fm.fileExists(atPath: packageModel.path) else {
-            throw DownloadError.fileCorrupt("model.mlpackage")
+        let compiledModel = modelDir.appendingPathComponent("model.mlmodelc")
+        let hasPackageModel = fm.fileExists(atPath: packageModel.path)
+        let hasCompiledModel = fm.fileExists(atPath: compiledModel.path)
+
+        guard hasPackageModel || hasCompiledModel else {
+            throw DownloadError.fileCorrupt("Expected model.mlpackage or model.mlmodelc")
+        }
+
+        let modelFiles = entry.files
+            .filter { $0.localPath.hasPrefix("model.mlpackage") || $0.localPath.hasPrefix("model.mlmodelc") }
+            .map(\.localPath)
+        for expectedFile in modelFiles {
+            let path = modelDir.appendingPathComponent(expectedFile).path
+            guard fm.fileExists(atPath: path) else {
+                throw DownloadError.fileCorrupt(expectedFile)
+            }
         }
 
         let tokenizerDir = registry.downloadedTokenizerDirectory(for: modelID)
