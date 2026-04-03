@@ -14,7 +14,6 @@ final class AppViewModel {
 
     let orchestrator: AIOrchestrator
     let bookmarkService: BookmarkService
-    let modelDownloadService: ModelDownloadService
     let chatViewModel: ChatViewModel
 
     enum SidebarSection: Hashable {
@@ -27,12 +26,10 @@ final class AppViewModel {
     init() {
         let orchestrator = AIOrchestrator()
         let bookmark = BookmarkService()
-        let modelDownload = ModelDownloadService()
         let chat = ChatViewModel(orchestrator: orchestrator)
 
         self.orchestrator = orchestrator
         self.bookmarkService = bookmark
-        self.modelDownloadService = modelDownload
         self.chatViewModel = chat
     }
 
@@ -110,8 +107,6 @@ final class AppViewModel {
     }
 
     func initialize() {
-        modelDownloadService.checkDownloadedModels()
-
         Task {
             await orchestrator.warmUp()
         }

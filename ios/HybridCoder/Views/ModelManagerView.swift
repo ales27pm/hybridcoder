@@ -2,26 +2,15 @@ import SwiftUI
 import FoundationModels
 
 struct ModelManagerView: View {
-    let downloadService: ModelDownloadService
-    @State private var qwenURLString: String = ""
-    @State private var codeBERTURLString: String = ""
+    let orchestrator: AIOrchestrator
 
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 headerSection
-
-                ForEach(downloadService.models) { model in
-                    ModelCard(
-                        model: model,
-                        urlString: binding(for: model.id),
-                        onDownload: { downloadModel(model.id) },
-                        onCancel: { downloadService.cancelDownload(model.id) },
-                        onDelete: { downloadService.deleteModel(model.id) }
-                    )
-                }
-
-                foundationModelStatus
+                qwenModelCard
+                embeddingModelCard
+                foundationModelCard
             }
             .padding(16)
         }
@@ -40,14 +29,172 @@ struct ModelManagerView: View {
                     .foregroundStyle(.white)
             }
 
-            Text("Download CoreML models for local code generation and semantic search. All inference runs on-device.")
+            Text("All inference runs locally. Qwen downloads automatically from HuggingFace on first use via MLX.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var foundationModelStatus: some View {
+    private var qwenModelCard: some View {
+        let qwen = orchestrator.qwen
+
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Qwen2.5-Coder 1.5B")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+
+                    Text("Code generation, explanations, and patch planning via MLX")
+                        .font(.caption)
+                        .foregroundStyle(Theme.dimText)
+                }
+
+                Spacer()
+
+                qwenStatusBadge
+            }
+
+            if qwen.isLoading {
+                VStack(spacing: 4) {
+                    ProgressView(value: qwen.loadProgress)
+                        .tint(Theme.accent)
+
+                    HStack {
+                        Text("Loading model…")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.dimText)
+                        Spacer()
+                        Text("\(Int(qwen.loadProgress * 100))%")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(Theme.accent)
+                    }
+                }
+            }
+
+            if let error = qwen.loadError {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(.red.opacity(0.8))
+            }
+
+            HStack {
+                Text("~1.2 GB · MLX runtime")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.dimText)
+
+                Spacer()
+
+                if qwen.isLoaded {
+                    if qwen.tokensPerSecond > 0 {
+                        Text("\(String(format: "%.1f", qwen.tokensPerSecond)) tok/s")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(Theme.accent)
+                    }
+                } else if !qwen.isLoading {
+                    Button("Load Model") {
+                        Task { await orchestrator.qwen.warmUp() }
+                    }
+                    .font(.caption.weight(.medium))
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+                    .controlSize(.small)
+                }
+
+                if qwen.isLoaded {
+                    Button("Unload") {
+                        orchestrator.qwen.unload()
+                    }
+                    .font(.caption.weight(.medium))
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+        .padding(14)
+        .background(Theme.cardBg, in: .rect(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Theme.border, lineWidth: 1)
+        )
+    }
+
+    private var qwenStatusBadge: some View {
+        let qwen = orchestrator.qwen
+        let (text, color): (String, Color) = {
+            if qwen.isLoaded { return ("Ready", Theme.accent) }
+            if qwen.isLoading { return ("Loading", .orange) }
+            if qwen.loadError != nil { return ("Error", .red) }
+            return ("Not Loaded", Theme.dimText)
+        }()
+
+        return Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.15), in: .capsule)
+    }
+
+    private var embeddingModelCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("CodeBERT Embeddings")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+
+                    Text("Semantic code search over your repository via CoreML")
+                        .font(.caption)
+                        .foregroundStyle(Theme.dimText)
+                }
+
+                Spacer()
+
+                embeddingStatusBadge
+            }
+
+            HStack {
+                Text("Bundled · CoreML runtime")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.dimText)
+
+                Spacer()
+
+                if let stats = orchestrator.indexStats {
+                    Text("\(stats.embeddedChunks) chunks indexed")
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+        }
+        .padding(14)
+        .background(Theme.cardBg, in: .rect(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Theme.border, lineWidth: 1)
+        )
+    }
+
+    private var embeddingStatusBadge: some View {
+        let hasIndex = (orchestrator.indexStats?.embeddedChunks ?? 0) > 0
+        let isIndexing = orchestrator.isIndexing
+        let (text, color): (String, Color) = {
+            if isIndexing { return ("Indexing", .orange) }
+            if hasIndex { return ("Ready", Theme.accent) }
+            return ("No Index", Theme.dimText)
+        }()
+
+        return Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.15), in: .capsule)
+    }
+
+    private var foundationModelCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "brain.head.profile")
@@ -83,27 +230,6 @@ struct ModelManagerView: View {
                 .stroke(Theme.border, lineWidth: 1)
         )
     }
-
-    private func binding(for modelId: String) -> Binding<String> {
-        switch modelId {
-        case "qwen2.5-coder-1.5b": return $qwenURLString
-        case "codebert-base": return $codeBERTURLString
-        default: return .constant("")
-        }
-    }
-
-    private func downloadModel(_ modelId: String) {
-        let urlString: String
-        switch modelId {
-        case "qwen2.5-coder-1.5b": urlString = qwenURLString
-        case "codebert-base": urlString = codeBERTURLString
-        default: return
-        }
-
-        guard let url = URL(string: urlString), !urlString.isEmpty else { return }
-        downloadService.setDownloadURL(for: modelId, url: url)
-        Task { await downloadService.downloadModel(modelId) }
-    }
 }
 
 @available(iOS 26.0, *)
@@ -116,127 +242,5 @@ private struct FoundationModelStatusBadge: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background((available ? Theme.accent : .red).opacity(0.15), in: .capsule)
-    }
-}
-
-private struct ModelCard: View {
-    let model: ModelInfo
-    @Binding var urlString: String
-    let onDownload: () -> Void
-    let onCancel: () -> Void
-    let onDelete: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(model.name)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
-
-                    Text(model.description)
-                        .font(.caption)
-                        .foregroundStyle(Theme.dimText)
-                }
-
-                Spacer()
-
-                statusBadge
-            }
-
-            if model.status == .notDownloaded || model.status == .failed {
-                VStack(alignment: .leading, spacing: 4) {
-                    TextField("Model download URL…", text: $urlString)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .background(Theme.inputBg, in: .rect(cornerRadius: 8))
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-
-                    if model.status == .failed {
-                        Text("Download failed. Check the URL and try again.")
-                            .font(.caption2)
-                            .foregroundStyle(.red.opacity(0.8))
-                    }
-                }
-            }
-
-            if model.status == .downloading || model.status == .extracting {
-                VStack(spacing: 4) {
-                    ProgressView(value: model.progress)
-                        .tint(Theme.accent)
-
-                    HStack {
-                        Text(model.status == .extracting ? "Extracting…" : "Downloading…")
-                            .font(.caption2)
-                            .foregroundStyle(Theme.dimText)
-                        Spacer()
-                        Text("\(Int(model.progress * 100))%")
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(Theme.accent)
-                    }
-                }
-            }
-
-            HStack(spacing: 10) {
-                Text(model.sizeDescription)
-                    .font(.caption2)
-                    .foregroundStyle(Theme.dimText)
-
-                Spacer()
-
-                switch model.status {
-                case .notDownloaded, .failed:
-                    Button("Download") { onDownload() }
-                        .font(.caption.weight(.medium))
-                        .buttonStyle(.borderedProminent)
-                        .tint(Theme.accent)
-                        .controlSize(.small)
-                        .disabled(urlString.isEmpty)
-
-                case .downloading:
-                    Button("Cancel") { onCancel() }
-                        .font(.caption.weight(.medium))
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-
-                case .downloaded:
-                    Button("Delete", role: .destructive) { onDelete() }
-                        .font(.caption.weight(.medium))
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-
-                case .extracting:
-                    EmptyView()
-                }
-            }
-        }
-        .padding(14)
-        .background(Theme.cardBg, in: .rect(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Theme.border, lineWidth: 1)
-        )
-    }
-
-    private var statusBadge: some View {
-        let (text, color): (String, Color) = {
-            switch model.status {
-            case .notDownloaded: return ("Not Downloaded", Theme.dimText)
-            case .downloading: return ("Downloading", .orange)
-            case .extracting: return ("Extracting", .orange)
-            case .downloaded: return ("Ready", Theme.accent)
-            case .failed: return ("Failed", .red)
-            }
-        }()
-
-        return Text(text)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(color.opacity(0.15), in: .capsule)
     }
 }

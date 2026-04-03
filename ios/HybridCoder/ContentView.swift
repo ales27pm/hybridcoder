@@ -416,7 +416,7 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.inline)
 
         case .models:
-            ModelManagerView(downloadService: viewModel.modelDownloadService)
+            ModelManagerView(orchestrator: viewModel.orchestrator)
                 .navigationTitle("Models")
                 .navigationBarTitleDisplayMode(.inline)
         }
