@@ -47,14 +47,34 @@ actor HFTokenizer {
         }
         struct PostProcessor: Decodable {
             let type: String
-            let sep: [JSONValue]?
-            let cls: [JSONValue]?
             let processors: [PostProcessor]?
         }
         struct Model: Decodable {
+            struct MergeEntry: Decodable {
+                let pair: String
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.singleValueContainer()
+                    if let merged = try? container.decode(String.self) {
+                        self.pair = merged
+                        return
+                    }
+
+                    if let parts = try? container.decode([String].self), parts.count == 2 {
+                        self.pair = "\(parts[0]) \(parts[1])"
+                        return
+                    }
+
+                    throw DecodingError.dataCorruptedError(
+                        in: container,
+                        debugDescription: "Unsupported merge entry format; expected string or 2-item string array"
+                    )
+                }
+            }
+
             let type: String
             let vocab: [String: Int]
-            let merges: [String]?
+            let merges: [MergeEntry]?
             let unk_token: String?
         }
 
@@ -62,34 +82,6 @@ actor HFTokenizer {
         let pre_tokenizer: PreTokenizer?
         let post_processor: PostProcessor?
         let model: Model
-    }
-
-    fileprivate enum JSONValue: Decodable {
-        case string(String)
-        case int(Int)
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.singleValueContainer()
-            if let intValue = try? container.decode(Int.self) {
-                self = .int(intValue)
-                return
-            }
-            if let stringValue = try? container.decode(String.self) {
-                self = .string(stringValue)
-                return
-            }
-            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported JSON value")
-        }
-
-        var intValue: Int? {
-            if case .int(let v) = self { return v }
-            return nil
-        }
-
-        var stringValue: String? {
-            if case .string(let v) = self { return v }
-            return nil
-        }
     }
 
     private static let byteLevelPattern = "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+"
@@ -160,10 +152,8 @@ actor HFTokenizer {
 
         var ranked: [String: Int] = [:]
         ranked.reserveCapacity(merges.count)
-        for (idx, line) in merges.enumerated() {
-            let parts = line.split(separator: " ")
-            guard parts.count == 2 else { continue }
-            ranked["\(parts[0]) \(parts[1])"] = idx
+        for (idx, merge) in merges.enumerated() {
+            ranked[merge.pair] = idx
         }
         guard ranked.isEmpty == false else {
             throw TokenizerError.invalidFormat("No valid merge pairs parsed from model.merges")

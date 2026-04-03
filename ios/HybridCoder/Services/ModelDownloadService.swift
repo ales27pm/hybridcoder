@@ -106,9 +106,13 @@ final class ModelDownloadService {
                 let localURL = baseDir.appendingPathComponent(file.localPath)
 
                 if fm.fileExists(atPath: localURL.path) {
-                    completed += 1
-                    updateProgress(completed: completed, total: totalCount, modelID: modelID)
-                    continue
+                    if Self.shouldRedownloadExistingFile(localURL: localURL, modelFile: file) {
+                        try? fm.removeItem(at: localURL)
+                    } else {
+                        completed += 1
+                        updateProgress(completed: completed, total: totalCount, modelID: modelID)
+                        continue
+                    }
                 }
 
                 var request = URLRequest(url: remoteURL)
@@ -191,6 +195,36 @@ final class ModelDownloadService {
         let progress = completed / max(total, 1)
         downloadProgress = progress
         registry.setInstallState(for: modelID, .downloading(progress: progress))
+    }
+
+    private static func shouldRedownloadExistingFile(localURL: URL, modelFile: ModelRegistry.ModelFile) -> Bool {
+        // Guard against stale/corrupt cached tokenizer files (for example HTML error pages)
+        // that can cause tokenizer decode failures while still passing existence checks.
+        if modelFile.localPath.hasSuffix("tokenizer.json") || modelFile.localPath.hasSuffix("tokenizer_config.json") || modelFile.localPath.hasSuffix("special_tokens_map.json") {
+            return isInvalidJSONFile(at: localURL)
+        }
+
+        if modelFile.localPath.hasSuffix("Manifest.json") || modelFile.localPath.hasSuffix("metadata.json") {
+            return isInvalidJSONFile(at: localURL)
+        }
+
+        return false
+    }
+
+    private static func isInvalidJSONFile(at url: URL) -> Bool {
+        guard let data = try? Data(contentsOf: url), data.isEmpty == false else {
+            return true
+        }
+
+        if let prefix = String(data: data.prefix(64), encoding: .utf8)?.lowercased(), prefix.contains("<html") {
+            return true
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) else {
+            return true
+        }
+
+        return !(json is [String: Any] || json is [[String: Any]])
     }
 
     static func validateDownloadedAssets(modelID: String, registry: ModelRegistry) -> Bool {
