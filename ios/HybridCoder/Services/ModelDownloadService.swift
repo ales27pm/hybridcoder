@@ -22,7 +22,10 @@ final class ModelDownloadService {
 
     init(registry: ModelRegistry) {
         self.registry = registry
-        refreshInstallState(modelID: registry.activeEmbeddingModelID)
+        Task { [weak self] in
+            guard let self else { return }
+            await self.refreshInstallState(modelID: registry.activeEmbeddingModelID)
+        }
     }
 
     var activeEmbeddingModelID: String {
@@ -50,8 +53,8 @@ final class ModelDownloadService {
         downloadError = nil
     }
 
-    func refreshInstallState(modelID: String) {
-        let isReady = Self.validateDownloadedAssets(modelID: modelID, registry: registry)
+    func refreshInstallState(modelID: String) async {
+        let isReady = await Self.validateDownloadedAssets(modelID: modelID, registry: registry)
         registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
     }
 
@@ -106,7 +109,9 @@ final class ModelDownloadService {
                 let localURL = baseDir.appendingPathComponent(file.localPath)
 
                 if fm.fileExists(atPath: localURL.path) {
-                    if Self.shouldRedownloadExistingFile(localURL: localURL, modelFile: file) {
+                    let shouldRedownload = Self.shouldRedownloadExistingFile(localURL: localURL, modelFile: file) &&
+                        await Self.isInvalidTokenizerOrManifestJSON(at: localURL)
+                    if shouldRedownload {
                         do {
                             try fm.removeItem(at: localURL)
                             logger.warning("Removed invalid cached model artifact path=\(localURL.path, privacy: .private)")
@@ -152,7 +157,7 @@ final class ModelDownloadService {
                 }
                 try fm.moveItem(at: tempURL, to: localURL)
                 if Self.shouldValidateJSONArtifact(localPath: file.localPath),
-                   Self.isInvalidTokenizerOrManifestJSON(at: localURL) {
+                   await Self.isInvalidTokenizerOrManifestJSON(at: localURL) {
                     do {
                         try fm.removeItem(at: localURL)
                     } catch {
@@ -165,7 +170,7 @@ final class ModelDownloadService {
                 updateProgress(completed: completed, total: totalCount, modelID: modelID)
             }
 
-            try Self.validateDownloadedAssetsPreCompileOrThrow(modelID: modelID, registry: registry)
+            try await Self.validateDownloadedAssetsPreCompileOrThrow(modelID: modelID, registry: registry)
             if shouldCompileModel {
                 let packageModel = modelDir.appendingPathComponent("model.mlpackage")
                 let compiledDestination = modelDir.appendingPathComponent("model.mlmodelc")
@@ -173,7 +178,7 @@ final class ModelDownloadService {
                 completed += 1
                 updateProgress(completed: completed, total: totalCount, modelID: modelID)
             }
-            try Self.validateDownloadedAssetsPostCompileOrThrow(modelID: modelID, registry: registry)
+            try await Self.validateDownloadedAssetsPostCompileOrThrow(modelID: modelID, registry: registry)
             registry.setInstallState(for: modelID, .installed)
         } catch is CancellationError {
             downloadError = "Download was cancelled."
@@ -224,9 +229,7 @@ final class ModelDownloadService {
             "metadata.json"
         ]
 
-        if jsonArtifactNames.contains(name) {
-            return isInvalidTokenizerOrManifestJSON(at: localURL)
-        }
+        if jsonArtifactNames.contains(name) { return true }
 
         // Fallback to model registry local path in case naming changes after move/rename.
         let registryPath = modelFile.localPath.lowercased()
@@ -234,9 +237,7 @@ final class ModelDownloadService {
             registryPath.hasSuffix("tokenizer_config.json") ||
             registryPath.hasSuffix("special_tokens_map.json") ||
             registryPath.hasSuffix("manifest.json") ||
-            registryPath.hasSuffix("metadata.json") {
-            return isInvalidTokenizerOrManifestJSON(at: localURL)
-        }
+            registryPath.hasSuffix("metadata.json") { return true }
 
         return false
     }
@@ -252,32 +253,39 @@ final class ModelDownloadService {
 
     /// Validation tailored for tokenizer/manifest-style JSON artifacts:
     /// accepts only top-level JSON objects or arrays of objects.
-    private static func isInvalidTokenizerOrManifestJSON(at url: URL) -> Bool {
-        guard let data = try? Data(contentsOf: url), data.isEmpty == false else {
-            return true
-        }
-
-        let htmlProbeLength = min(data.count, 1024)
-        if htmlProbeLength > 0,
-           let prefix = String(data: data.prefix(htmlProbeLength), encoding: .utf8)?.lowercased() {
-            if prefix.contains("<html") || prefix.contains("<!doctype html") {
+    private static func isInvalidTokenizerOrManifestJSON(at url: URL) async -> Bool {
+        await Task.detached(priority: .utility) {
+            guard let data = try? Data(contentsOf: url), data.isEmpty == false else {
                 return true
             }
-        }
 
-        guard let json = try? JSONSerialization.jsonObject(with: data) else {
+            let htmlProbeLength = min(data.count, 1024)
+            if htmlProbeLength > 0,
+               let prefix = String(data: data.prefix(htmlProbeLength), encoding: .utf8)?.lowercased() {
+                if prefix.contains("<html") || prefix.contains("<!doctype html") {
+                    return true
+                }
+            }
+
+            guard let json = try? JSONSerialization.jsonObject(with: data) else {
+                return true
+            }
+
+            return !(json is [String: Any] || json is [[String: Any]])
+        }.value
+    }
+
+    static func validateDownloadedAssets(modelID: String, registry: ModelRegistry) async -> Bool {
+        do {
+            try await validateDownloadedAssetsPreCompileOrThrow(modelID: modelID, registry: registry)
+            try await validateDownloadedAssetsPostCompileOrThrow(modelID: modelID, registry: registry)
             return true
+        } catch {
+            return false
         }
-
-        return !(json is [String: Any] || json is [[String: Any]])
     }
 
-    static func validateDownloadedAssets(modelID: String, registry: ModelRegistry) -> Bool {
-        (try? validateDownloadedAssetsPreCompileOrThrow(modelID: modelID, registry: registry)) != nil &&
-        (try? validateDownloadedAssetsPostCompileOrThrow(modelID: modelID, registry: registry)) != nil
-    }
-
-    private static func validateDownloadedAssetsPreCompileOrThrow(modelID: String, registry: ModelRegistry) throws {
+    private static func validateDownloadedAssetsPreCompileOrThrow(modelID: String, registry: ModelRegistry) async throws {
         let fm = FileManager.default
         guard let entry = registry.entry(for: modelID) else {
             throw DownloadError.fileCorrupt("Missing model registry entry for \(modelID)")
@@ -315,7 +323,7 @@ final class ModelDownloadService {
                 throw DownloadError.fileCorrupt(expectedFile.localPath)
             }
             if shouldValidateJSONArtifact(localPath: expectedFile.localPath),
-               isInvalidTokenizerOrManifestJSON(at: url) {
+               await isInvalidTokenizerOrManifestJSON(at: url) {
                 try? fm.removeItem(at: url)
                 throw DownloadError.fileCorrupt("Invalid JSON artifact: \(expectedFile.localPath)")
             }
@@ -330,14 +338,14 @@ final class ModelDownloadService {
             guard fm.fileExists(atPath: url.path) else {
                 throw DownloadError.fileCorrupt(expectedFile.localPath)
             }
-            if isInvalidTokenizerOrManifestJSON(at: url) {
+            if await isInvalidTokenizerOrManifestJSON(at: url) {
                 try? fm.removeItem(at: url)
                 throw DownloadError.fileCorrupt("Invalid JSON artifact: \(expectedFile.localPath)")
             }
         }
     }
 
-    private static func validateDownloadedAssetsPostCompileOrThrow(modelID: String, registry: ModelRegistry) throws {
+    private static func validateDownloadedAssetsPostCompileOrThrow(modelID: String, registry: ModelRegistry) async throws {
         let fm = FileManager.default
         let modelDir = registry.downloadedModelDirectory(for: modelID)
         let compiledModel = modelDir.appendingPathComponent("model.mlmodelc")

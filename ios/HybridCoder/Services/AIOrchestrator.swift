@@ -38,7 +38,9 @@ final class AIOrchestrator {
         self.embeddingService = CoreMLEmbeddingService(modelID: registry.activeEmbeddingModelID, registry: registry)
         self.modelDownload = ModelDownloadService(registry: registry)
         self.contextPolicyLoader = ContextPolicyLoader()
-        refreshRegistryInstallState()
+        Task { [weak self] in
+            await self?.refreshRegistryInstallState()
+        }
     }
 
     var foundationModelStatus: String {
@@ -110,8 +112,8 @@ final class AIOrchestrator {
         modelDownload.deleteDownloadedModels(modelID: modelRegistry.activeEmbeddingModelID)
     }
 
-    func refreshRegistryInstallState() {
-        modelDownload.refreshInstallState(modelID: modelRegistry.activeEmbeddingModelID)
+    func refreshRegistryInstallState() async {
+        await modelDownload.refreshInstallState(modelID: modelRegistry.activeEmbeddingModelID)
     }
 
     func importRepo(url: URL) async throws {
