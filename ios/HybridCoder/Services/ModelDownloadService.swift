@@ -1,4 +1,5 @@
 import Foundation
+import CoreML
 
 @Observable
 @MainActor
@@ -69,11 +70,11 @@ final class ModelDownloadService {
             try fm.createDirectory(at: modelDir, withIntermediateDirectories: true)
             try fm.createDirectory(at: tokenizerDir, withIntermediateDirectories: true)
 
-            let modelFiles = entry.files.filter { $0.localPath.contains("model.mlmodelc") || $0.localPath.contains("model.mlpackage") }
-            let tokenizerFiles = entry.files.filter { !$0.localPath.contains("model.mlmodelc") && !$0.localPath.contains("model.mlpackage") }
-            let allFiles = modelFiles.map { (modelDir, $0) } + tokenizerFiles.map { (tokenizerDir, $0) }
+            let modelPackageFiles = entry.files.filter { $0.localPath == "model.mlpackage" }
+            let tokenizerFiles = entry.files.filter { !$0.localPath.contains("model.mlmodelc") && $0.localPath != "model.mlpackage" }
+            let allFiles = modelPackageFiles.map { (modelDir, $0) } + tokenizerFiles.map { (tokenizerDir, $0) }
 
-            let totalCount = Double(allFiles.count)
+            let totalCount = Double(allFiles.count + 1) // +1 for compile step
             var completed = 0.0
 
             for (baseDir, file) in allFiles {
@@ -121,7 +122,11 @@ final class ModelDownloadService {
                 updateProgress(completed: completed, total: totalCount, modelID: modelID)
             }
 
-            try Self.validateDownloadedAssetsOrThrow(modelID: modelID, registry: registry)
+            try Self.validateDownloadedAssetsPreCompileOrThrow(modelID: modelID, registry: registry)
+            try Self.compileModelPackage(modelID: modelID, registry: registry)
+            completed += 1
+            updateProgress(completed: completed, total: totalCount, modelID: modelID)
+            try Self.validateDownloadedAssetsPostCompileOrThrow(modelID: modelID, registry: registry)
             registry.setInstallState(for: modelID, .installed)
         } catch is CancellationError {
             downloadError = "Download was cancelled."
@@ -158,25 +163,25 @@ final class ModelDownloadService {
     }
 
     static func validateDownloadedAssets(modelID: String, registry: ModelRegistry) -> Bool {
-        (try? validateDownloadedAssetsOrThrow(modelID: modelID, registry: registry)) != nil
+        (try? validateDownloadedAssetsPreCompileOrThrow(modelID: modelID, registry: registry)) != nil &&
+        (try? validateDownloadedAssetsPostCompileOrThrow(modelID: modelID, registry: registry)) != nil
     }
 
-    private static func validateDownloadedAssetsOrThrow(modelID: String, registry: ModelRegistry) throws {
+    private static func validateDownloadedAssetsPreCompileOrThrow(modelID: String, registry: ModelRegistry) throws {
         let fm = FileManager.default
         guard let entry = registry.entry(for: modelID) else {
             throw DownloadError.fileCorrupt("Missing model registry entry for \(modelID)")
         }
 
         let modelDir = registry.downloadedModelDirectory(for: modelID)
-        let compiledModel = modelDir.appendingPathComponent("model.mlmodelc")
         let packageModel = modelDir.appendingPathComponent("model.mlpackage")
-        guard fm.fileExists(atPath: compiledModel.path) || fm.fileExists(atPath: packageModel.path) else {
-            throw DownloadError.fileCorrupt("model.mlmodelc or model.mlpackage")
+        guard fm.fileExists(atPath: packageModel.path) else {
+            throw DownloadError.fileCorrupt("model.mlpackage")
         }
 
         let tokenizerDir = registry.downloadedTokenizerDirectory(for: modelID)
         let tokenizerFiles = entry.files
-            .filter { !$0.localPath.contains("model.mlmodelc") && !$0.localPath.contains("model.mlpackage") }
+            .filter { !$0.localPath.contains("model.mlmodelc") && $0.localPath != "model.mlpackage" }
             .map(\.localPath)
         for expectedFile in tokenizerFiles {
             let path = tokenizerDir.appendingPathComponent(expectedFile).path
@@ -184,6 +189,36 @@ final class ModelDownloadService {
                 throw DownloadError.fileCorrupt(expectedFile)
             }
         }
+    }
+
+    private static func validateDownloadedAssetsPostCompileOrThrow(modelID: String, registry: ModelRegistry) throws {
+        let fm = FileManager.default
+        let modelDir = registry.downloadedModelDirectory(for: modelID)
+        let compiledModel = modelDir.appendingPathComponent("model.mlmodelc")
+
+        guard fm.fileExists(atPath: compiledModel.path) else {
+            throw DownloadError.fileCorrupt("model.mlmodelc")
+        }
+
+        do {
+            _ = try MLModel(contentsOf: compiledModel)
+        } catch {
+            throw DownloadError.fileCorrupt("model.mlmodelc (unloadable)")
+        }
+    }
+
+    private static func compileModelPackage(modelID: String, registry: ModelRegistry) throws {
+        let fm = FileManager.default
+        let modelDir = registry.downloadedModelDirectory(for: modelID)
+        let packageModel = modelDir.appendingPathComponent("model.mlpackage")
+        let compiledDestination = modelDir.appendingPathComponent("model.mlmodelc")
+
+        let compiledOutput = try MLModel.compileModel(at: packageModel)
+
+        if fm.fileExists(atPath: compiledDestination.path) {
+            try fm.removeItem(at: compiledDestination)
+        }
+        try fm.moveItem(at: compiledOutput, to: compiledDestination)
     }
 
     nonisolated enum DownloadError: Error, LocalizedError, Sendable {
