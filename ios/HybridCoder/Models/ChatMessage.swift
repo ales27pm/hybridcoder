@@ -6,7 +6,7 @@ nonisolated struct ChatMessage: Identifiable, Sendable {
     var content: String
     let timestamp: Date
     var codeBlocks: [CodeBlock]
-    var patches: [Patch]
+    var patchPlanID: UUID?
 
     nonisolated enum Role: String, Sendable {
         case user
@@ -20,13 +20,13 @@ nonisolated struct ChatMessage: Identifiable, Sendable {
         content: String,
         timestamp: Date = Date(),
         codeBlocks: [CodeBlock] = [],
-        patches: [Patch] = []
+        patchPlanID: UUID? = nil
     ) {
         self.id = id
         self.role = role
         self.content = content
         self.timestamp = timestamp
         self.codeBlocks = codeBlocks
-        self.patches = patches
+        self.patchPlanID = patchPlanID
     }
 }

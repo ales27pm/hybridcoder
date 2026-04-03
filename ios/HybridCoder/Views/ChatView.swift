@@ -16,7 +16,7 @@ struct ChatView: View {
                 messageList
             }
 
-            if let plan = viewModel.pendingPatchPlan {
+            if let plan = viewModel.activePatchPlan {
                 patchPlanBanner(plan)
             }
 
@@ -138,7 +138,7 @@ struct ChatView: View {
 
                 if plan.pendingCount > 0 {
                     Button {
-                        Task { await viewModel.applyPendingPatch() }
+                        Task { await viewModel.applyAllPending(in: plan.id) }
                     } label: {
                         Text("Apply All")
                             .font(.caption2.weight(.semibold))
@@ -148,7 +148,7 @@ struct ChatView: View {
                     .controlSize(.mini)
 
                     Button {
-                        viewModel.dismissPatchPlan()
+                        viewModel.dismissPlan(plan.id)
                     } label: {
                         Image(systemName: "xmark")
                             .font(.caption2)

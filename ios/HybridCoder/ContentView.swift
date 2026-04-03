@@ -307,7 +307,7 @@ struct ContentView: View {
                 sidebarTab(
                     icon: "doc.badge.gearshape",
                     label: "Patches",
-                    badge: viewModel.chatViewModel.pendingPatchPlan?.pendingCount ?? 0,
+                    badge: viewModel.chatViewModel.totalPendingPatches,
                     isActive: {
                         if case .patches = viewModel.selectedSection { return true }
                         return false
@@ -409,8 +409,7 @@ struct ContentView: View {
 
         case .patches:
             PatchListView(
-                orchestrator: viewModel.orchestrator,
-                repositoryURL: viewModel.activeRepositoryURL
+                chatViewModel: viewModel.chatViewModel
             )
             .navigationTitle("Patches")
             .navigationBarTitleDisplayMode(.inline)

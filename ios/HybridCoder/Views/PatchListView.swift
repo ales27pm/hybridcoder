@@ -1,16 +1,14 @@
 import SwiftUI
 
 struct PatchListView: View {
-    let orchestrator: AIOrchestrator
-    let repositoryURL: URL?
+    @Bindable var chatViewModel: ChatViewModel
     @State private var errorMessage: String?
     @State private var showError: Bool = false
     @State private var previewingOperation: OperationPreview?
-    @State private var patchPlans: [PatchPlan] = []
 
     var body: some View {
         VStack(spacing: 0) {
-            if patchPlans.isEmpty {
+            if chatViewModel.patchPlans.isEmpty {
                 ContentUnavailableView(
                     "No Patches",
                     systemImage: "doc.badge.gearshape",
@@ -29,13 +27,15 @@ struct PatchListView: View {
             }
         }
         .sheet(item: $previewingOperation) { preview in
-            OperationPreviewSheet(
-                preview: preview,
+            PatchPreviewView(
+                preview: preview.patchPreview,
                 onApply: {
-                    Task { await applySingleOperation(preview) }
+                    Task {
+                        await chatViewModel.applySingleOperation(preview.operationID, in: preview.planID)
+                    }
                 },
                 onReject: {
-                    rejectOperation(preview)
+                    chatViewModel.rejectOperation(preview.operationID, in: preview.planID)
                 }
             )
             .presentationDetents([.large])
@@ -46,7 +46,7 @@ struct PatchListView: View {
     private var patchList: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
-                ForEach(patchPlans) { plan in
+                ForEach(chatViewModel.patchPlans) { plan in
                     planSection(plan)
                 }
             }
@@ -65,6 +65,18 @@ struct PatchListView: View {
 
                 Spacer()
 
+                if plan.pendingCount > 0 {
+                    Button {
+                        Task { await chatViewModel.applyAllPending(in: plan.id) }
+                    } label: {
+                        Text("Apply All")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+                    .controlSize(.mini)
+                }
+
                 Text("\(plan.pendingCount) pending")
                     .font(.caption2)
                     .foregroundStyle(Theme.dimText)
@@ -74,54 +86,27 @@ struct PatchListView: View {
                 OperationCard(
                     operation: op,
                     onPreview: { showPreview(for: op, in: plan) },
-                    onReject: nil
+                    onReject: op.status == .pending ? {
+                        chatViewModel.rejectOperation(op.id, in: plan.id)
+                    } : nil
                 )
             }
         }
     }
 
     private func showPreview(for op: PatchOperation, in plan: PatchPlan) {
-        guard let url = repositoryURL else {
-            errorMessage = "No repository is open."
-            showError = true
-            return
-        }
-
-        let fileURL = url.appending(path: op.filePath)
         Task {
-            let content = await orchestrator.repoAccess.readUTF8(at: fileURL) ?? ""
-            let patch = Patch(
-                id: op.id,
-                filePath: op.filePath,
-                oldText: op.searchText,
-                newText: op.replaceText,
-                description: op.description
-            )
-            let patchPreview = PatchPreview.generate(for: patch, fileContent: content)
+            guard let preview = await chatViewModel.previewOperation(op, in: plan) else {
+                errorMessage = "No repository is open."
+                showError = true
+                return
+            }
             previewingOperation = OperationPreview(
                 planID: plan.id,
                 operationID: op.id,
-                patchPreview: patchPreview
+                patchPreview: preview
             )
         }
-    }
-
-    private func applySingleOperation(_ preview: OperationPreview) async {
-        guard let planIndex = patchPlans.firstIndex(where: { $0.id == preview.planID }) else { return }
-        let plan = patchPlans[planIndex]
-
-        do {
-            let result = try await orchestrator.applyPatch(plan)
-            patchPlans[planIndex] = result.updatedPlan
-        } catch {
-            errorMessage = error.localizedDescription
-            showError = true
-        }
-    }
-
-    private func rejectOperation(_ preview: OperationPreview) {
-        guard let planIndex = patchPlans.firstIndex(where: { $0.id == preview.planID }) else { return }
-        patchPlans[planIndex] = patchPlans[planIndex].withUpdatedOperation(preview.operationID, status: .rejected)
     }
 }
 
@@ -130,27 +115,6 @@ struct OperationPreview: Identifiable {
     let planID: UUID
     let operationID: UUID
     let patchPreview: PatchPreview
-}
-
-private struct OperationPreviewSheet: View {
-    let preview: OperationPreview
-    let onApply: () -> Void
-    let onReject: () -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        PatchPreviewView(
-            preview: preview.patchPreview,
-            onApply: {
-                onApply()
-                dismiss()
-            },
-            onReject: {
-                onReject()
-                dismiss()
-            }
-        )
-    }
 }
 
 private struct OperationCard: View {

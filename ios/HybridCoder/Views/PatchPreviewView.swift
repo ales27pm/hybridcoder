@@ -62,7 +62,7 @@ struct PatchPreviewView: View {
                 .font(.subheadline)
                 .foregroundStyle(Theme.accent)
 
-            Text(preview.patch.filePath)
+            Text(preview.operation.filePath)
                 .font(.system(.subheadline, design: .monospaced).weight(.medium))
                 .foregroundStyle(.white)
                 .lineLimit(2)
@@ -176,8 +176,8 @@ struct PatchPreviewView: View {
 
     private var rawFallback: some View {
         VStack(alignment: .leading, spacing: 12) {
-            diffBlock(prefix: "−", text: preview.patch.oldText, color: .red)
-            diffBlock(prefix: "+", text: preview.patch.newText, color: Theme.accent)
+            diffBlock(prefix: "−", text: preview.operation.searchText, color: .red)
+            diffBlock(prefix: "+", text: preview.operation.replaceText, color: Theme.accent)
         }
     }
 

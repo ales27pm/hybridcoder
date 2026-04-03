@@ -25,7 +25,7 @@ struct MessageBubble: View {
                     }
                 }
 
-                if !message.patches.isEmpty {
+                if message.patchPlanID != nil {
                     patchSummaryStrip
                 }
 
@@ -114,7 +114,7 @@ struct MessageBubble: View {
         HStack(spacing: 4) {
             Image(systemName: "doc.badge.gearshape")
                 .font(.caption2)
-            Text("\(message.patches.count) patch\(message.patches.count == 1 ? "" : "es") proposed")
+            Text("Patch proposed — review in Patches tab")
                 .font(.caption2)
         }
         .foregroundStyle(Theme.accent.opacity(0.7))

@@ -8,9 +8,17 @@ final class ChatViewModel {
     private(set) var messages: [ChatMessage] = []
     var inputText: String = ""
     private(set) var isStreaming: Bool = false
-    private(set) var pendingPatchPlan: PatchPlan?
+    private(set) var patchPlans: [PatchPlan] = []
     private(set) var lastPatchResult: PatchEngine.PatchResult?
     private(set) var errorMessage: String?
+
+    var activePatchPlan: PatchPlan? {
+        patchPlans.first { $0.pendingCount > 0 }
+    }
+
+    var totalPendingPatches: Int {
+        patchPlans.reduce(0) { $0 + $1.pendingCount }
+    }
 
     var semanticStatus: String {
         if orchestrator.isIndexing {
@@ -51,28 +59,17 @@ final class ChatViewModel {
         do {
             let response = try await orchestrator.processQuery(trimmed)
 
-            var content = response.text
-            var codeBlocks: [CodeBlock] = response.codeBlocks
-            var patches: [Patch] = []
-
+            var planID: UUID?
             if let plan = response.patchPlan {
-                pendingPatchPlan = plan
-                patches = plan.operations.map { op in
-                    Patch(
-                        id: op.id,
-                        filePath: op.filePath,
-                        oldText: op.searchText,
-                        newText: op.replaceText,
-                        description: op.description
-                    )
-                }
+                patchPlans.append(plan)
+                planID = plan.id
             }
 
             messages.append(ChatMessage(
                 role: .assistant,
-                content: content,
-                codeBlocks: codeBlocks,
-                patches: patches
+                content: response.text,
+                codeBlocks: response.codeBlocks,
+                patchPlanID: planID
             ))
         } catch {
             let fallback = "Could not process your request: \(error.localizedDescription)"
@@ -83,17 +80,58 @@ final class ChatViewModel {
         isStreaming = false
     }
 
-    func applyPendingPatch() async {
-        guard let plan = pendingPatchPlan else { return }
+    func previewOperation(_ operation: PatchOperation, in plan: PatchPlan) async -> PatchPreview? {
+        guard let repoURL = orchestrator.repoRoot else { return nil }
+        let fileURL = repoURL.appending(path: operation.filePath)
+        let content = await orchestrator.repoAccess.readUTF8(at: fileURL) ?? ""
+        return PatchPreview.generate(for: operation, fileContent: content)
+    }
+
+    func applySingleOperation(_ operationID: UUID, in planID: UUID) async {
+        guard let planIndex = patchPlans.firstIndex(where: { $0.id == planID }) else { return }
+        let plan = patchPlans[planIndex]
+
+        let singlePlan = PatchPlan(
+            id: plan.id,
+            summary: plan.summary,
+            operations: plan.operations.map { op in
+                PatchOperation(
+                    id: op.id,
+                    filePath: op.filePath,
+                    searchText: op.searchText,
+                    replaceText: op.replaceText,
+                    description: op.description,
+                    status: op.id == operationID ? .pending : .rejected
+                )
+            },
+            createdAt: plan.createdAt
+        )
+
+        do {
+            let result = try await orchestrator.applyPatch(singlePlan)
+            lastPatchResult = result
+
+            var updatedPlan = patchPlans[planIndex]
+            for op in result.updatedPlan.operations where op.id == operationID {
+                updatedPlan = updatedPlan.withUpdatedOperation(operationID, status: op.status)
+            }
+            patchPlans[planIndex] = updatedPlan
+
+            appendSystemMessage("Applied patch to \(plan.operations.first { $0.id == operationID }?.filePath ?? "file")")
+        } catch {
+            appendSystemMessage("Patch failed: \(error.localizedDescription)")
+        }
+    }
+
+    func applyAllPending(in planID: UUID) async {
+        guard let planIndex = patchPlans.firstIndex(where: { $0.id == planID }) else { return }
         isStreaming = true
 
         do {
-            let result = try await orchestrator.applyPatch(plan)
+            let result = try await orchestrator.applyPatch(patchPlans[planIndex])
             lastPatchResult = result
-            pendingPatchPlan = result.updatedPlan
-
-            let summary = result.summary
-            appendSystemMessage("Patch result: \(summary)")
+            patchPlans[planIndex] = result.updatedPlan
+            appendSystemMessage("Patch result: \(result.summary)")
         } catch {
             appendSystemMessage("Patch failed: \(error.localizedDescription)")
         }
@@ -101,16 +139,20 @@ final class ChatViewModel {
         isStreaming = false
     }
 
-    func dismissPatchPlan() {
-        pendingPatchPlan = nil
-        lastPatchResult = nil
+    func rejectOperation(_ operationID: UUID, in planID: UUID) {
+        guard let planIndex = patchPlans.firstIndex(where: { $0.id == planID }) else { return }
+        patchPlans[planIndex] = patchPlans[planIndex].withUpdatedOperation(operationID, status: .rejected)
+    }
+
+    func dismissPlan(_ planID: UUID) {
+        patchPlans.removeAll { $0.id == planID }
     }
 
     func clearChat() {
         messages.removeAll()
         inputText = ""
         errorMessage = nil
-        pendingPatchPlan = nil
+        patchPlans.removeAll()
         lastPatchResult = nil
     }
 
