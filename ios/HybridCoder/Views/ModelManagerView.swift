@@ -138,7 +138,9 @@ struct ModelManagerView: View {
     }
 
     private var embeddingModelCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let dl = orchestrator.modelDownload
+
+        return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("CodeBERT Embeddings")
@@ -155,17 +157,66 @@ struct ModelManagerView: View {
                 embeddingStatusBadge
             }
 
+            if dl.isDownloading {
+                VStack(spacing: 4) {
+                    ProgressView(value: dl.downloadProgress)
+                        .tint(Theme.accent)
+
+                    HStack {
+                        Text("Downloading model…")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.dimText)
+                        Spacer()
+                        Text("\(Int(dl.downloadProgress * 100))%")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(Theme.accent)
+                    }
+                }
+            }
+
+            if let error = dl.downloadError {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(.red.opacity(0.8))
+            }
+
             HStack {
-                Text("Bundled · CoreML runtime")
+                Text(dl.isModelReady ? "Downloaded · CoreML runtime" : "Not downloaded")
                     .font(.caption2)
                     .foregroundStyle(Theme.dimText)
 
                 Spacer()
 
-                if let stats = orchestrator.indexStats {
+                if let stats = orchestrator.indexStats, stats.embeddedChunks > 0 {
                     Text("\(stats.embeddedChunks) chunks indexed")
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundStyle(Theme.accent)
+                }
+            }
+
+            HStack {
+                if !dl.isModelReady && !dl.isDownloading {
+                    Button("Download Model") {
+                        Task {
+                            await orchestrator.modelDownload.download()
+                            if orchestrator.modelDownload.isModelReady {
+                                try? await orchestrator.embeddingService.load()
+                            }
+                        }
+                    }
+                    .font(.caption.weight(.medium))
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+                    .controlSize(.small)
+                }
+
+                if dl.isModelReady {
+                    Button("Delete") {
+                        orchestrator.modelDownload.deleteDownloadedModels()
+                    }
+                    .font(.caption.weight(.medium))
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
             }
         }
@@ -178,12 +229,15 @@ struct ModelManagerView: View {
     }
 
     private var embeddingStatusBadge: some View {
+        let dl = orchestrator.modelDownload
         let hasIndex = (orchestrator.indexStats?.embeddedChunks ?? 0) > 0
         let isIndexing = orchestrator.isIndexing
         let (text, color): (String, Color) = {
+            if dl.isDownloading { return ("Downloading", .orange) }
             if isIndexing { return ("Indexing", .orange) }
+            if !dl.isModelReady { return ("Not Downloaded", .red) }
             if hasIndex { return ("Ready", Theme.accent) }
-            return ("No Index", Theme.dimText)
+            return ("Downloaded", Theme.accent.opacity(0.6)) 
         }()
 
         return Text(text)

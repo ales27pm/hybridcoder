@@ -6,6 +6,7 @@ final class AIOrchestrator {
     let repoAccess = RepoAccessService()
     let embeddingService = CoreMLEmbeddingService()
     let qwen = QwenCoderService()
+    let modelDownload = ModelDownloadService()
 
     private(set) var searchIndex: SemanticSearchIndex?
     private(set) var patchEngine: PatchEngine?
@@ -44,10 +45,14 @@ final class AIOrchestrator {
         isWarmingUp = true
         warmUpError = nil
 
-        do {
-            try await embeddingService.load()
-        } catch {
-            warmUpError = "Embedding model: \(error.localizedDescription)"
+        if modelDownload.isModelReady {
+            do {
+                try await embeddingService.load()
+            } catch {
+                warmUpError = "Embedding model: \(error.localizedDescription)"
+            }
+        } else {
+            warmUpError = "Embedding model not downloaded. Go to Models to download it."
         }
 
         searchIndex = SemanticSearchIndex(embeddingService: embeddingService)

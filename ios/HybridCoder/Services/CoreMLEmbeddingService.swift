@@ -50,8 +50,8 @@ actor CoreMLEmbeddingService {
     }
 
     func load() async throws {
-        let modelURL = try BundledEmbeddingAssets.locateModelAsset()
-        let tokenizerURL = try BundledEmbeddingAssets.locateTokenizerAssets()
+        let modelURL = try ModelDownloadService.locateModelAsset()
+        let tokenizerURL = try ModelDownloadService.locateTokenizerAsset()
 
         let config = MLModelConfiguration()
         config.computeUnits = .cpuAndNeuralEngine
