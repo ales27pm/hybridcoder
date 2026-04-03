@@ -34,6 +34,24 @@
 		105FC5932E9EAD3200EA8BCF /* HybridCoderUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HybridCoderUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		105FC57C2E9EAD3100EA8BCF /* HybridCoder */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = HybridCoder;
+			sourceTree = "<group>";
+		};
+		105FC58C2E9EAD3200EA8BCF /* HybridCoderTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = HybridCoderTests;
+			sourceTree = "<group>";
+		};
+		105FC5962E9EAD3200EA8BCF /* HybridCoderUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = HybridCoderUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
 /* Begin PBXFrameworksBuildPhase section */
 		105FC5772E9EAD3100EA8BCF /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
@@ -59,24 +77,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
-
-/* Begin PBXFileSystemSynchronizedRootGroup section */
-		105FC57C2E9EAD3100EA8BCF /* HybridCoder */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = HybridCoder;
-			sourceTree = "<group>";
-		};
-		105FC58C2E9EAD3200EA8BCF /* HybridCoderTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = HybridCoderTests;
-			sourceTree = "<group>";
-		};
-		105FC5962E9EAD3200EA8BCF /* HybridCoderUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = HybridCoderUITests;
-			sourceTree = "<group>";
-		};
-/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXGroup section */
 		105FC5712E9EAD3100EA8BCF = {
@@ -196,6 +196,7 @@
 				};
 			};
 			buildConfigurationList = 105FC5752E9EAD3100EA8BCF /* Build configuration list for PBXProject "HybridCoder" */;
+			compatibilityVersion = "Xcode 3.2";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -204,6 +205,9 @@
 			);
 			mainGroup = 105FC5712E9EAD3100EA8BCF;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				XXBC1E769A2DF28D2A7E4DXX /* XCRemoteSwiftPackageReference "mlx-swift-lm.git" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 105FC57B2E9EAD3100EA8BCF /* Products */;
 			projectDirPath = "";
@@ -212,9 +216,6 @@
 				105FC5792E9EAD3100EA8BCF /* HybridCoder */,
 				105FC5882E9EAD3200EA8BCF /* HybridCoderTests */,
 				105FC5922E9EAD3200EA8BCF /* HybridCoderUITests */,
-			);
-			packageReferences = (
-				XXBC1E769A2DF28D2A7E4DXX /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
 			);
 		};
 /* End PBXProject section */
@@ -423,7 +424,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.rork.v61pq749bi1mbeslqmtbp;
+				PRODUCT_BUNDLE_IDENTIFIER = com.27pm.hybridcoder;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -456,7 +457,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.rork.v61pq749bi1mbeslqmtbp;
+				PRODUCT_BUNDLE_IDENTIFIER = com.27pm.hybridcoder;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -478,7 +479,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.rork.v61pq749bi1mbeslqmtbp.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.27pm.hybridcoder.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -500,7 +501,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.rork.v61pq749bi1mbeslqmtbp.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.27pm.hybridcoder.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -520,7 +521,7 @@
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.rork.v61pq749bi1mbeslqmtbp.uitests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.27pm.hybridcoder.uitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -540,7 +541,7 @@
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.rork.v61pq749bi1mbeslqmtbp.uitests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.27pm.hybridcoder.uitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -594,7 +595,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		XXBC1E769A2DF28D2A7E4DXX /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
+		XXBC1E769A2DF28D2A7E4DXX /* XCRemoteSwiftPackageReference "mlx-swift-lm.git" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm.git";
 			requirement = {
@@ -607,12 +608,12 @@
 /* Begin XCSwiftPackageProductDependency section */
 		XX86650B1B1BEDF656D5BCXX /* MLXLMCommon */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = XXBC1E769A2DF28D2A7E4DXX /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			package = XXBC1E769A2DF28D2A7E4DXX /* XCRemoteSwiftPackageReference "mlx-swift-lm.git" */;
 			productName = MLXLMCommon;
 		};
 		XX993CE2E12473C9220AE1XX /* MLXLLM */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = XXBC1E769A2DF28D2A7E4DXX /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			package = XXBC1E769A2DF28D2A7E4DXX /* XCRemoteSwiftPackageReference "mlx-swift-lm.git" */;
 			productName = MLXLLM;
 		};
 /* End XCSwiftPackageProductDependency section */
