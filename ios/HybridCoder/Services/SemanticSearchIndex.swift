@@ -129,6 +129,8 @@ actor SemanticSearchIndex {
                 do {
                     let input = formatChunkForEmbedding(chunk)
                     vector = try await embeddingService.embed(text: input)
+                } catch is CancellationError {
+                    throw CancellationError()
                 } catch {
                     throw IndexError.embeddingFailed("\(chunk.filePath):\(chunk.startLine) — \(error.localizedDescription)")
                 }
@@ -168,6 +170,11 @@ actor SemanticSearchIndex {
         } catch {
             if let store {
                 try? store.rollbackTransaction()
+            }
+
+            if error is CancellationError {
+                logger.info("Index rebuild cancelled.")
+                throw error
             }
 
             if shouldPersist {
