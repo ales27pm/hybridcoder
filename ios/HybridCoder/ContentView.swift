@@ -74,10 +74,12 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Sidebar
+
     @ViewBuilder
     private var sidebarContent: some View {
         VStack(spacing: 0) {
-            statusBar
+            statusHeader
 
             if viewModel.codeIndexService.isIndexing {
                 indexingBanner
@@ -107,15 +109,25 @@ struct ContentView: View {
         .background(Theme.sidebarBg)
     }
 
-    private var statusBar: some View {
+    // MARK: - Status Header
+
+    private var statusHeader: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                repoStatusPill
-                Spacer()
-                indexStatusPill
+            VStack(spacing: 8) {
+                HStack(spacing: 10) {
+                    repoStatusPill
+                    Spacer()
+                    indexStatusPill
+                }
+
+                HStack(spacing: 12) {
+                    foundationStatusLabel
+                    Spacer()
+                    semanticStatusLabel
+                }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
             .background(Theme.cardBg)
 
             Divider().overlay(Theme.border)
@@ -157,11 +169,37 @@ struct ContentView: View {
                     .foregroundStyle(fileCount > 0 ? Theme.accent.opacity(0.6) : Theme.dimText)
             }
 
-            Text(isIndexing ? "Indexing..." : (fileCount > 0 ? "\(fileCount) indexed" : "Not indexed"))
+            Text(isIndexing ? "Indexing…" : (fileCount > 0 ? "\(fileCount) indexed" : "Not indexed"))
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(Theme.dimText)
         }
     }
+
+    private var foundationStatusLabel: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "brain")
+                .font(.system(size: 8))
+
+            Text(viewModel.chatViewModel.foundationModelStatus)
+                .font(.system(size: 9, design: .monospaced))
+                .lineLimit(1)
+        }
+        .foregroundStyle(Theme.dimText)
+    }
+
+    private var semanticStatusLabel: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "waveform.badge.magnifyingglass")
+                .font(.system(size: 8))
+
+            Text(viewModel.chatViewModel.semanticStatus)
+                .font(.system(size: 9, design: .monospaced))
+                .lineLimit(1)
+        }
+        .foregroundStyle(Theme.dimText)
+    }
+
+    // MARK: - Indexing Banner
 
     private var indexingBanner: some View {
         VStack(spacing: 4) {
@@ -169,7 +207,7 @@ struct ContentView: View {
                 .tint(Theme.accent)
 
             HStack {
-                Text("Scanning files...")
+                Text("Scanning files…")
                     .font(.caption2)
                     .foregroundStyle(Theme.dimText)
 
@@ -184,6 +222,8 @@ struct ContentView: View {
         .padding(.vertical, 8)
         .background(Theme.codeBg)
     }
+
+    // MARK: - Empty State
 
     private var emptyRepositoryState: some View {
         VStack(spacing: 16) {
@@ -216,6 +256,8 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity)
     }
+
+    // MARK: - Sidebar Footer
 
     private var sidebarFooter: some View {
         VStack(spacing: 0) {
@@ -290,13 +332,18 @@ struct ContentView: View {
         .sensoryFeedback(.selection, trigger: isActive)
     }
 
+    // MARK: - Detail
+
     @ViewBuilder
     private var detailContent: some View {
         switch viewModel.selectedSection {
         case .chat:
             ChatView(
                 viewModel: viewModel.chatViewModel,
-                indexService: viewModel.codeIndexService
+                indexService: viewModel.codeIndexService,
+                repositoryURL: viewModel.activeRepositoryURL,
+                onImportRepo: { viewModel.isImportingFolder = true },
+                onReindex: { reindexRepository() }
             )
             .navigationTitle("Chat")
             .navigationBarTitleDisplayMode(.inline)

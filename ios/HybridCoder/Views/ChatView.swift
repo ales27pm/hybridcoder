@@ -3,7 +3,9 @@ import SwiftUI
 struct ChatView: View {
     @Bindable var viewModel: ChatViewModel
     let indexService: CodeIndexService
-    @State private var scrollProxy: ScrollViewProxy?
+    let repositoryURL: URL?
+    var onImportRepo: () -> Void = {}
+    var onReindex: () -> Void = {}
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -12,6 +14,10 @@ struct ChatView: View {
                 emptyState
             } else {
                 messageList
+            }
+
+            if let plan = viewModel.pendingPatchPlan {
+                patchPlanBanner(plan)
             }
 
             inputBar
@@ -37,10 +43,16 @@ struct ChatView: View {
                 .multilineTextAlignment(.center)
 
             if indexService.indexedFiles.isEmpty {
-                Label("Import a repository to get started", systemImage: "folder.badge.plus")
-                    .font(.caption)
-                    .foregroundStyle(Theme.accent.opacity(0.6))
-                    .padding(.top, 8)
+                Button {
+                    onImportRepo()
+                } label: {
+                    Label("Import a repository to get started", systemImage: "folder.badge.plus")
+                        .font(.caption.weight(.medium))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.accent)
+                .controlSize(.small)
+                .padding(.top, 8)
             } else {
                 Label("\(indexService.indexedFiles.count) files indexed", systemImage: "checkmark.circle")
                     .font(.caption)
@@ -67,7 +79,7 @@ struct ChatView: View {
                             ProgressView()
                                 .controlSize(.small)
                                 .tint(Theme.accent)
-                            Text("Thinking...")
+                            Text("Thinking…")
                                 .font(.caption)
                                 .foregroundStyle(Theme.dimText)
                             Spacer()
@@ -88,12 +100,54 @@ struct ChatView: View {
         }
     }
 
+    private func patchPlanBanner(_ plan: PatchPlan) -> some View {
+        VStack(spacing: 0) {
+            Divider().overlay(Theme.border)
+
+            HStack(spacing: 10) {
+                Image(systemName: "doc.badge.gearshape")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(plan.summary)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+
+                    Text("\(plan.pendingCount) pending · \(plan.appliedCount) applied")
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(Theme.dimText)
+                }
+
+                Spacer()
+
+                if plan.pendingCount > 0, let url = repositoryURL {
+                    Button {
+                        for op in plan.operations where op.status == .pending {
+                            viewModel.applyPatch(op.id, rootURL: url)
+                        }
+                    } label: {
+                        Text("Apply All")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+                    .controlSize(.mini)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Theme.codeBg)
+        }
+    }
+
     private var inputBar: some View {
         VStack(spacing: 0) {
             Divider().overlay(Theme.border)
 
             HStack(alignment: .bottom, spacing: 10) {
-                TextField("Ask about your code...", text: $viewModel.inputText, axis: .vertical)
+                TextField("Ask about your code…", text: $viewModel.inputText, axis: .vertical)
                     .lineLimit(1...6)
                     .font(.subheadline)
                     .foregroundStyle(.white)
@@ -124,5 +178,3 @@ struct ChatView: View {
         }
     }
 }
-
-
