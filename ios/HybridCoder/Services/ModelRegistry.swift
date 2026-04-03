@@ -69,7 +69,7 @@ final class ModelRegistry {
             ModelFile(remotePath: "merges.txt", localPath: "merges.txt")
         ]
 
-        entries = [
+        let initialEntries: [String: Entry] = [
             embeddingID: Entry(
                 id: embeddingID,
                 displayName: "CodeBERT (microsoft/codebert-base)",
@@ -95,12 +95,14 @@ final class ModelRegistry {
         ]
 
         let savedEmbeddingModelID = UserDefaults.standard.string(forKey: activeEmbeddingKey) ?? embeddingID
-        let resolvedEmbeddingModelID = entries[savedEmbeddingModelID] == nil ? embeddingID : savedEmbeddingModelID
-        activeEmbeddingModelID = resolvedEmbeddingModelID
+        let resolvedEmbeddingModelID = initialEntries[savedEmbeddingModelID] == nil ? embeddingID : savedEmbeddingModelID
 
         let savedGenerationModelID = UserDefaults.standard.string(forKey: activeGenerationKey) ?? generationID
-        let resolvedGenerationModelID = entries[savedGenerationModelID] == nil ? generationID : savedGenerationModelID
-        activeGenerationModelID = resolvedGenerationModelID
+        let resolvedGenerationModelID = initialEntries[savedGenerationModelID] == nil ? generationID : savedGenerationModelID
+
+        self.entries = initialEntries
+        self.activeEmbeddingModelID = resolvedEmbeddingModelID
+        self.activeGenerationModelID = resolvedGenerationModelID
     }
 
     var allModels: [Entry] {

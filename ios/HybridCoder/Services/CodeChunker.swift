@@ -1,6 +1,6 @@
 import Foundation
 
-nonisolated struct CodeChunker: Sendable {
+struct CodeChunker: Sendable {
 
     struct Config: Sendable {
         var targetLines: Int = 40
@@ -15,7 +15,7 @@ nonisolated struct CodeChunker: Sendable {
         self.config = config
     }
 
-    func chunkFile(_ file: RepoFile, content: String) -> [SourceChunk] {
+    nonisolated func chunkFile(_ file: RepoFile, content: String) -> [SourceChunk] {
         let lines = content.components(separatedBy: "\n")
         guard lines.count >= config.minLines else {
             return singleChunk(file: file, lines: lines)
@@ -59,11 +59,11 @@ nonisolated struct CodeChunker: Sendable {
         return chunks
     }
 
-    func chunkFiles(_ files: [(RepoFile, String)]) -> [SourceChunk] {
+    nonisolated func chunkFiles(_ files: [(RepoFile, String)]) -> [SourceChunk] {
         files.flatMap { chunkFile($0.0, content: $0.1) }
     }
 
-    static func estimateTokens(_ text: String) -> Int {
+    nonisolated static func estimateTokens(_ text: String) -> Int {
         let charCount = text.utf8.count
         return max(1, charCount * 10 / 37)
     }
@@ -71,11 +71,11 @@ nonisolated struct CodeChunker: Sendable {
 
 private extension CodeChunker {
 
-    func estimateTokens(_ text: String) -> Int {
+    nonisolated func estimateTokens(_ text: String) -> Int {
         Self.estimateTokens(text)
     }
 
-    func makeChunk(file: RepoFile, content: String, start: Int, end: Int) -> SourceChunk {
+    nonisolated func makeChunk(file: RepoFile, content: String, start: Int, end: Int) -> SourceChunk {
         SourceChunk(
             fileID: file.id,
             filePath: file.relativePath,
@@ -87,7 +87,7 @@ private extension CodeChunker {
         )
     }
 
-    func findBoundary(lines: [String], from index: Int, target: Int, cursor: Int) -> Int {
+    nonisolated func findBoundary(lines: [String], from index: Int, target: Int, cursor: Int) -> Int {
         let searchRadius = min(6, target / 4)
         let lo = max(cursor + config.minLines - 1, index - searchRadius)
         let hi = min(lines.count - 1, index + searchRadius)
@@ -102,7 +102,7 @@ private extension CodeChunker {
         return index
     }
 
-    func isBoundaryLine(_ line: String) -> Bool {
+    nonisolated func isBoundaryLine(_ line: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty { return true }
         if trimmed == "}" || trimmed == "};" { return true }
@@ -116,7 +116,7 @@ private extension CodeChunker {
         return false
     }
 
-    func singleChunk(file: RepoFile, lines: [String]) -> [SourceChunk] {
+    nonisolated func singleChunk(file: RepoFile, lines: [String]) -> [SourceChunk] {
         let content = lines.joined(separator: "\n")
         guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
         return [makeChunk(file: file, content: content, start: 0, end: max(0, lines.count - 1))]
