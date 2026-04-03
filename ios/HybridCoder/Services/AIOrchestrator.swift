@@ -4,6 +4,10 @@ import OSLog
 @Observable
 @MainActor
 final class AIOrchestrator {
+    private static let downstreamContextCap = 2500
+    private static let minimumCodeContextBudget = 1600
+    private static let maximumPolicyContextBudget = 700
+
     let repoAccess = RepoAccessService()
     let modelRegistry: ModelRegistry
     let embeddingService: CoreMLEmbeddingService
@@ -306,30 +310,82 @@ final class AIOrchestrator {
     }
 
     private func gatherContext(for query: String, route: Route) async -> String {
-        var contextParts: [String] = []
-        let policyText = contextPolicySnapshot.renderForPrompt(maxCharacters: 4000)
-        if !policyText.isEmpty {
-            contextParts.append("<policy_context>\n\(policyText)\n</policy_context>")
-        }
+        var codeContextParts: [String] = []
 
         if let hits = try? await searchCode(query: query, topK: 3) {
             for hit in hits {
                 let header = "--- \(hit.filePath) L\(hit.chunk.startLine)-\(hit.chunk.endLine) ---"
-                contextParts.append("\(header)\n\(hit.chunk.content)")
+                codeContextParts.append("\(header)\n\(hit.chunk.content)")
             }
         }
 
-        if contextParts.isEmpty, repoRoot != nil {
+        if codeContextParts.isEmpty, repoRoot != nil {
             let sample = repoFiles.prefix(5)
             for file in sample {
                 if let content = await repoAccess.readUTF8(at: file.absoluteURL) {
                     let header = "--- \(file.relativePath) ---"
-                    contextParts.append("\(header)\n\(String(content.prefix(500)))")
+                    codeContextParts.append("\(header)\n\(String(content.prefix(500)))")
                 }
             }
         }
 
-        return contextParts.joined(separator: "\n\n")
+        let rawPolicyText = contextPolicySnapshot.renderForPrompt(maxCharacters: 2000)
+        let context = Self.buildPromptContext(
+            rawPolicyText: rawPolicyText,
+            codeParts: codeContextParts,
+            totalLimit: Self.downstreamContextCap,
+            minCodeBudget: Self.minimumCodeContextBudget,
+            maxPolicyBudget: Self.maximumPolicyContextBudget
+        )
+
+        if !context.isEmpty {
+            return context
+        }
+
+        return ""
+    }
+
+    nonisolated static func buildPromptContext(
+        rawPolicyText: String,
+        codeParts: [String],
+        totalLimit: Int,
+        minCodeBudget: Int,
+        maxPolicyBudget: Int
+    ) -> String {
+        guard totalLimit > 0 else { return "" }
+
+        let codeText = codeParts.joined(separator: "\n\n")
+        let hasCode = !codeText.isEmpty
+
+        let allowedPolicyBudget: Int
+        if hasCode {
+            allowedPolicyBudget = max(0, min(maxPolicyBudget, totalLimit - minCodeBudget))
+        } else {
+            allowedPolicyBudget = min(maxPolicyBudget, totalLimit)
+        }
+
+        let policyText = String(rawPolicyText.prefix(allowedPolicyBudget)).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var sections: [String] = []
+        var remaining = totalLimit
+
+        if !policyText.isEmpty {
+            let policySection = "<policy_context>\n\(policyText)\n</policy_context>"
+            let clipped = String(policySection.prefix(remaining)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !clipped.isEmpty {
+                sections.append(clipped)
+                remaining -= clipped.count
+            }
+        }
+
+        if hasCode, remaining > 0 {
+            let clippedCode = String(codeText.prefix(remaining)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !clippedCode.isEmpty {
+                sections.append(clippedCode)
+            }
+        }
+
+        return sections.joined(separator: "\n\n")
     }
 
     private func generateExplanation(query: String, context: String) async throws -> String {
