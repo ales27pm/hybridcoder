@@ -185,7 +185,7 @@ actor SemanticSearchIndex {
                 try? store.rollbackTransaction()
             }
 
-            if shouldPersist {
+            if shouldPersist, !(error is IndexError) {
                 persistenceError = error.localizedDescription
                 logger.error("Index rebuild persistence failed: \(error.localizedDescription, privacy: .private)")
             }
