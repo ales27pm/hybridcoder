@@ -49,23 +49,28 @@ actor SemanticSearchIndex {
         do {
             let store = try SQLiteIndexStore.makeDefault()
             self.store = store
-
-            do {
-                let snapshot = try store.loadSnapshot()
-                self.records = snapshot.records
-                self.chunks = snapshot.chunks
-                self.indexedFilePaths = Set(snapshot.records.map(\.filePath))
-                self.languageCounts = snapshot.languageCounts
-                self.lastIndexedAt = snapshot.lastIndexedAt
-                self.totalFileCount = snapshot.totalFileCount
-            } catch {
-                self.persistenceError = error.localizedDescription
-                logger.error("SQLite index snapshot load failed; continuing with empty in-memory index: \(error.localizedDescription, privacy: .public)")
-            }
         } catch {
             self.store = nil
             self.persistenceError = error.localizedDescription
-            logger.error("SQLite index store unavailable; using in-memory index only: \(error.localizedDescription, privacy: .public)")
+            logger.error("SQLite index store unavailable; using in-memory index only: \(error.localizedDescription, privacy: .private)")
+        }
+    }
+
+    func restorePersistedSnapshotIfAvailable() async {
+        guard let store else { return }
+
+        do {
+            let snapshot = try store.loadSnapshot()
+            records = snapshot.records
+            chunks = snapshot.chunks
+            indexedFilePaths = Set(snapshot.records.map(\.filePath))
+            languageCounts = snapshot.languageCounts
+            lastIndexedAt = snapshot.lastIndexedAt
+            totalFileCount = snapshot.totalFileCount
+            persistenceError = nil
+        } catch {
+            persistenceError = error.localizedDescription
+            logger.error("SQLite index snapshot load failed; continuing with empty in-memory index: \(error.localizedDescription, privacy: .private)")
         }
     }
 
@@ -168,18 +173,21 @@ actor SemanticSearchIndex {
             lastIndexedAt = indexedAt
             totalFileCount = newTotalFileCount
         } catch {
-            if let store {
-                try? store.rollbackTransaction()
-            }
-
             if error is CancellationError {
+                if let store {
+                    try? store.rollbackTransaction()
+                }
                 logger.info("Index rebuild cancelled.")
                 throw error
             }
 
+            if let store {
+                try? store.rollbackTransaction()
+            }
+
             if shouldPersist {
                 persistenceError = error.localizedDescription
-                logger.error("Index rebuild persistence failed: \(error.localizedDescription, privacy: .public)")
+                logger.error("Index rebuild persistence failed: \(error.localizedDescription, privacy: .private)")
             }
             if let indexError = error as? IndexError {
                 throw indexError
@@ -226,20 +234,29 @@ actor SemanticSearchIndex {
     }
 
     func clear() {
-        records.removeAll()
-        chunks.removeAll()
-        indexedFilePaths.removeAll()
-        languageCounts.removeAll()
-        lastIndexedAt = nil
-        totalFileCount = 0
-        guard let store else { return }
+        guard let store else {
+            records.removeAll()
+            chunks.removeAll()
+            indexedFilePaths.removeAll()
+            languageCounts.removeAll()
+            lastIndexedAt = nil
+            totalFileCount = 0
+            persistenceError = nil
+            return
+        }
 
         do {
             try store.clearAllAtomically()
+            records.removeAll()
+            chunks.removeAll()
+            indexedFilePaths.removeAll()
+            languageCounts.removeAll()
+            lastIndexedAt = nil
+            totalFileCount = 0
             persistenceError = nil
         } catch {
             persistenceError = error.localizedDescription
-            logger.error("Failed to clear SQLite index store: \(error.localizedDescription, privacy: .public)")
+            logger.error("Failed to clear SQLite index store: \(error.localizedDescription, privacy: .private)")
         }
     }
 
@@ -259,7 +276,7 @@ actor SemanticSearchIndex {
 }
 
 private final class SQLiteIndexStore {
-    struct Snapshot {
+    struct Snapshot: Sendable {
         let records: [EmbeddingRecord]
         let chunks: [UUID: SourceChunk]
         let totalFileCount: Int
@@ -676,10 +693,11 @@ private final class SQLiteIndexStore {
     private static func decodeVector(_ data: Data) -> [Float] {
         guard !data.isEmpty else { return [] }
         let count = data.count / MemoryLayout<Float>.stride
-        return data.withUnsafeBytes { rawBuffer in
-            let typedBuffer = rawBuffer.bindMemory(to: Float.self)
-            return Array(typedBuffer.prefix(count))
+        var floats = [Float](repeating: 0, count: count)
+        _ = floats.withUnsafeMutableBytes { mutableBuffer in
+            data.copyBytes(to: mutableBuffer)
         }
+        return floats
     }
 }
 

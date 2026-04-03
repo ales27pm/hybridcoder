@@ -86,6 +86,7 @@ final class AIOrchestrator {
 
         if searchIndex == nil {
             searchIndex = SemanticSearchIndex(embeddingService: embeddingService)
+            await searchIndex?.restorePersistedSnapshotIfAvailable()
         }
         if patchEngine == nil {
             patchEngine = PatchEngine(repoAccess: repoAccess)
