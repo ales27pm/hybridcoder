@@ -40,6 +40,21 @@ final class AIOrchestrator {
         return false
     }
 
+    var modelSummary: String {
+        var parts: [String] = []
+        if qwen.isLoaded { parts.append("Qwen ready") }
+        if isFoundationModelAvailable { parts.append("Apple Intelligence ready") }
+        if modelDownload.isModelReady { parts.append("Embeddings ready") }
+        if parts.isEmpty {
+            return "No models loaded"
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    var hasAnyModel: Bool {
+        qwen.isLoaded || isFoundationModelAvailable
+    }
+
     func warmUp() async {
         guard !isWarmingUp else { return }
         isWarmingUp = true

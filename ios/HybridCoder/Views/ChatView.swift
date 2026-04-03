@@ -42,6 +42,20 @@ struct ChatView: View {
                 .foregroundStyle(Theme.dimText)
                 .multilineTextAlignment(.center)
 
+            if let error = orchestrator.warmUpError {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.orange.opacity(0.9))
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+            }
+
             if !orchestrator.isRepoLoaded {
                 VStack(spacing: 10) {
                     Button {
@@ -58,6 +72,18 @@ struct ChatView: View {
                         .font(.caption2)
                         .foregroundStyle(Theme.dimText)
                 }
+                .padding(.top, 8)
+            } else if !orchestrator.hasAnyModel {
+                VStack(spacing: 6) {
+                    Label("No AI model available", systemImage: "exclamationmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Text("Download Qwen from the Models tab, or use a device with Apple Intelligence.")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.dimText)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, 20)
                 .padding(.top, 8)
             } else {
                 VStack(spacing: 6) {

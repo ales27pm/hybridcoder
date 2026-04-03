@@ -88,6 +88,8 @@ struct ContentView: View {
                 importErrorBanner(error)
             }
 
+            warmUpErrorBanner
+
             if viewModel.orchestrator.isIndexing {
                 indexingBanner
             }
@@ -203,6 +205,27 @@ struct ContentView: View {
                 .lineLimit(1)
         }
         .foregroundStyle(Theme.dimText)
+    }
+
+    @ViewBuilder
+    private var warmUpErrorBanner: some View {
+        if let error = viewModel.orchestrator.warmUpError {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(.orange.opacity(0.9))
+                    .lineLimit(2)
+
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.orange.opacity(0.08))
+        }
     }
 
     private func importErrorBanner(_ message: String) -> some View {

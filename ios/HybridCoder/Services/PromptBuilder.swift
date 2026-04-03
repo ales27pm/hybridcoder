@@ -85,39 +85,5 @@ nonisolated enum PromptBuilder: Sendable {
         """
     }
 
-    static func completionSystem() -> String {
-        """
-        You are a code completion engine. Given the code prefix, continue writing the most likely next lines.
 
-        Rules:
-        - Output ONLY the continuation. Do not repeat the prefix.
-        - Stop at a natural boundary (end of function, block, or logical unit).
-        - Match indentation and style of the prefix exactly.
-        """
-    }
-
-    static func completionUser(codePrefix: String, filePath: String, language: String) -> String {
-        """
-        File: \(filePath)
-        Language: \(language)
-
-        \(codePrefix.suffix(2000))
-        """
-    }
-
-    static func contextBlock(files: [(path: String, content: String)], maxTotalChars: Int = 4000) -> String {
-        var result = ""
-        var remaining = maxTotalChars
-
-        for file in files {
-            let header = "--- \(file.path) ---\n"
-            let available = remaining - header.count - 2
-            guard available > 100 else { break }
-            let snippet = String(file.content.prefix(available))
-            result += header + snippet + "\n\n"
-            remaining -= header.count + snippet.count + 2
-        }
-
-        return result
-    }
 }

@@ -26,24 +26,6 @@ nonisolated enum Route: String, Sendable {
     case patchPlanning
     case search
 
-    var displayName: String {
-        switch self {
-        case .explanation: return "Explanation"
-        case .codeGeneration: return "Code Generation"
-        case .patchPlanning: return "Patch Planning"
-        case .search: return "Search"
-        }
-    }
-
-    var systemIcon: String {
-        switch self {
-        case .explanation: return "text.bubble"
-        case .codeGeneration: return "chevron.left.forwardslash.chevron.right"
-        case .patchPlanning: return "doc.badge.gearshape"
-        case .search: return "magnifyingglass"
-        }
-    }
-
     init?(from decision: String) {
         self.init(rawValue: decision)
     }

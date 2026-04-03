@@ -72,17 +72,6 @@ nonisolated enum BundledEmbeddingAssets: Sendable {
         return tokenizerDir
     }
 
-    static func resolveDescriptor() -> EmbeddingModelDescriptor {
-        let modelURL: URL? = try? locateModelAsset()
-        return EmbeddingModelDescriptor.codeBERT.withLocalPath(modelURL ?? URL(fileURLWithPath: "/dev/null"))
-    }
-
-    static func validateAll() throws -> EmbeddingModelDescriptor {
-        let modelURL = try locateModelAsset()
-        let _ = try locateTokenizerAssets()
-        return EmbeddingModelDescriptor.codeBERT.withLocalPath(modelURL)
-    }
-
     private static func findCompiledModel(in directory: URL) throws -> URL {
         let fm = FileManager.default
 
