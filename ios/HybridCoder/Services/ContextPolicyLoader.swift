@@ -64,7 +64,7 @@ final class ContextPolicyLoader {
         let message: String
     }
 
-    private static func loadPolicyFilesSync(
+    nonisolated private static func loadPolicyFilesSync(
         startingAt directoryURL: URL,
         stopAt boundaryURL: URL?,
         fileNames: [String]
@@ -110,7 +110,7 @@ final class ContextPolicyLoader {
         return (ContextPolicySnapshot(files: collected), warnings)
     }
 
-    private static func makeDisplayPath(fileURL: URL, rootURL: URL) -> String {
+    nonisolated private static func makeDisplayPath(fileURL: URL, rootURL: URL) -> String {
         let filePath = fileURL.standardizedFileURL.path
         let rootPath = rootURL.standardizedFileURL.path
 

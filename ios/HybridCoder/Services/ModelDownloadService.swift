@@ -109,8 +109,11 @@ final class ModelDownloadService {
                 let localURL = baseDir.appendingPathComponent(file.localPath)
 
                 if fm.fileExists(atPath: localURL.path) {
-                    let shouldRedownload = Self.shouldRedownloadExistingFile(localURL: localURL, modelFile: file) &&
-                        await Self.isInvalidTokenizerOrManifestJSON(at: localURL)
+                    let requiresValidation = Self.shouldRedownloadExistingFile(localURL: localURL, modelFile: file)
+                    let hasInvalidJSON = requiresValidation
+                        ? await Self.isInvalidTokenizerOrManifestJSON(at: localURL)
+                        : false
+                    let shouldRedownload = requiresValidation && hasInvalidJSON
                     if shouldRedownload {
                         do {
                             try fm.removeItem(at: localURL)
