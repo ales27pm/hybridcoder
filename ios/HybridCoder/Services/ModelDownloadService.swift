@@ -70,8 +70,11 @@ final class ModelDownloadService {
             try fm.createDirectory(at: modelDir, withIntermediateDirectories: true)
             try fm.createDirectory(at: tokenizerDir, withIntermediateDirectories: true)
 
-            let modelPackageFiles = entry.files.filter { $0.localPath == "model.mlpackage" }
-            let tokenizerFiles = entry.files.filter { !$0.localPath.contains("model.mlmodelc") && $0.localPath != "model.mlpackage" }
+            let modelPackageFiles = entry.files.filter { $0.localPath.hasPrefix("model.mlpackage") }
+            let tokenizerFiles = entry.files.filter {
+                !$0.localPath.hasPrefix("model.mlmodelc") &&
+                !$0.localPath.hasPrefix("model.mlpackage")
+            }
             let allFiles = modelPackageFiles.map { (modelDir, $0) } + tokenizerFiles.map { (tokenizerDir, $0) }
 
             let totalCount = Double(allFiles.count + 1) // +1 for compile step
@@ -123,7 +126,9 @@ final class ModelDownloadService {
             }
 
             try Self.validateDownloadedAssetsPreCompileOrThrow(modelID: modelID, registry: registry)
-            try Self.compileModelPackage(modelID: modelID, registry: registry)
+            let packageModel = modelDir.appendingPathComponent("model.mlpackage")
+            let compiledDestination = modelDir.appendingPathComponent("model.mlmodelc")
+            try await Self.compileModelPackage(packageModel: packageModel, compiledDestination: compiledDestination)
             completed += 1
             updateProgress(completed: completed, total: totalCount, modelID: modelID)
             try Self.validateDownloadedAssetsPostCompileOrThrow(modelID: modelID, registry: registry)
@@ -181,7 +186,10 @@ final class ModelDownloadService {
 
         let tokenizerDir = registry.downloadedTokenizerDirectory(for: modelID)
         let tokenizerFiles = entry.files
-            .filter { !$0.localPath.contains("model.mlmodelc") && $0.localPath != "model.mlpackage" }
+            .filter {
+                !$0.localPath.hasPrefix("model.mlmodelc") &&
+                !$0.localPath.hasPrefix("model.mlpackage")
+            }
             .map(\.localPath)
         for expectedFile in tokenizerFiles {
             let path = tokenizerDir.appendingPathComponent(expectedFile).path
@@ -207,18 +215,23 @@ final class ModelDownloadService {
         }
     }
 
-    private static func compileModelPackage(modelID: String, registry: ModelRegistry) throws {
-        let fm = FileManager.default
-        let modelDir = registry.downloadedModelDirectory(for: modelID)
-        let packageModel = modelDir.appendingPathComponent("model.mlpackage")
-        let compiledDestination = modelDir.appendingPathComponent("model.mlmodelc")
+    nonisolated private static func compileModelPackage(packageModel: URL, compiledDestination: URL) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let fm = FileManager.default
+                    let compiledOutput = try MLModel.compileModel(at: packageModel)
 
-        let compiledOutput = try MLModel.compileModel(at: packageModel)
-
-        if fm.fileExists(atPath: compiledDestination.path) {
-            try fm.removeItem(at: compiledDestination)
+                    if fm.fileExists(atPath: compiledDestination.path) {
+                        try fm.removeItem(at: compiledDestination)
+                    }
+                    try fm.moveItem(at: compiledOutput, to: compiledDestination)
+                    continuation.resume(returning: ())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
         }
-        try fm.moveItem(at: compiledOutput, to: compiledDestination)
     }
 
     nonisolated enum DownloadError: Error, LocalizedError, Sendable {
