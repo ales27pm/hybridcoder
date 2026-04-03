@@ -2,17 +2,22 @@ import SwiftUI
 
 struct ModelManagerView: View {
     let orchestrator: AIOrchestrator
+    @State private var huggingFaceToken: String = ""
 
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 headerSection
                 embeddingModelCard
+                huggingFaceTokenCard
                 foundationModelCard
             }
             .padding(16)
         }
         .background(Theme.surfaceBg)
+        .onAppear {
+            huggingFaceToken = orchestrator.modelDownload.huggingFaceToken
+        }
     }
 
     private var headerSection: some View {
@@ -32,6 +37,55 @@ struct ModelManagerView: View {
                 .foregroundStyle(Theme.dimText)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var huggingFaceTokenCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "key.fill")
+                    .font(.caption)
+                    .foregroundStyle(Theme.accent)
+                Text("Hugging Face Access Token")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white)
+            }
+
+            Text("CodeBERT download may require authentication. Create a read token on Hugging Face and paste it here.")
+                .font(.caption)
+                .foregroundStyle(Theme.dimText)
+
+            SecureField("hf_...", text: $huggingFaceToken)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .font(.system(.caption, design: .monospaced))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Theme.inputBg, in: .rect(cornerRadius: 8))
+
+            HStack {
+                Button("Save Token") {
+                    orchestrator.modelDownload.setHuggingFaceToken(huggingFaceToken)
+                }
+                .font(.caption.weight(.medium))
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.accent)
+                .controlSize(.small)
+
+                Button("Clear") {
+                    huggingFaceToken = ""
+                    orchestrator.modelDownload.setHuggingFaceToken("")
+                }
+                .font(.caption.weight(.medium))
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(14)
+        .background(Theme.cardBg, in: .rect(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Theme.border, lineWidth: 1)
+        )
     }
 
     private var embeddingModelCard: some View {

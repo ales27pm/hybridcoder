@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @State private var viewModel = AppViewModel()
     @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
         if viewModel.showOnboarding {
@@ -17,48 +18,54 @@ struct ContentView: View {
     }
 
     private var mainContent: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            sidebarContent
-                .navigationTitle("HybridCoder")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Menu {
-                            Button("Import Folder", systemImage: "folder.badge.plus") {
-                                viewModel.isImportingFolder = true
-                            }
+        Group {
+            if horizontalSizeClass == .compact {
+                compactTabContent
+            } else {
+                NavigationSplitView(columnVisibility: $columnVisibility) {
+                    sidebarContent
+                        .navigationTitle("HybridCoder")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Menu {
+                                    Button("Import Folder", systemImage: "folder.badge.plus") {
+                                        viewModel.isImportingFolder = true
+                                    }
 
-                            if viewModel.activeRepositoryURL != nil {
-                                Button("Reindex", systemImage: "arrow.triangle.2.circlepath") {
-                                    viewModel.reindexRepository()
+                                    if viewModel.activeRepositoryURL != nil {
+                                        Button("Reindex", systemImage: "arrow.triangle.2.circlepath") {
+                                            viewModel.reindexRepository()
+                                        }
+                                        .disabled(viewModel.orchestrator.isIndexing)
+                                    }
+
+                                    Divider()
+
+                                    Button("Models", systemImage: "cpu") {
+                                        viewModel.selectedSection = .models
+                                    }
+
+                                    Button("Settings", systemImage: "gearshape") {
+                                        viewModel.showSettings = true
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis.circle")
+                                        .foregroundStyle(Theme.accent)
                                 }
-                                .disabled(viewModel.orchestrator.isIndexing)
                             }
 
-                            Divider()
-
-                            Button("Models", systemImage: "cpu") {
-                                viewModel.selectedSection = .models
-                            }
-
-                            Button("Settings", systemImage: "gearshape") {
-                                viewModel.showSettings = true
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("Chat", systemImage: "bubble.left.and.text.bubble.right") {
+                                    viewModel.selectedSection = .chat
+                                }
                                 .foregroundStyle(Theme.accent)
+                            }
                         }
-                    }
-
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Chat", systemImage: "bubble.left.and.text.bubble.right") {
-                            viewModel.selectedSection = .chat
-                        }
-                        .foregroundStyle(Theme.accent)
-                    }
+                } detail: {
+                    detailContent
                 }
-        } detail: {
-            detailContent
+            }
         }
         .navigationSplitViewStyle(.balanced)
         .tint(Theme.accent)
@@ -87,6 +94,71 @@ struct ContentView: View {
         }
         .task {
             viewModel.initialize()
+        }
+    }
+
+    private var compactTabContent: some View {
+        TabView(selection: compactTabSelection) {
+            NavigationStack {
+                ChatView(
+                    viewModel: viewModel.chatViewModel,
+                    orchestrator: viewModel.orchestrator,
+                    repositoryURL: viewModel.activeRepositoryURL,
+                    onImportRepo: { viewModel.isImportingFolder = true },
+                    onReindex: { viewModel.reindexRepository() }
+                )
+                .navigationTitle("Chat")
+                .navigationBarTitleDisplayMode(.inline)
+            }
+            .tabItem {
+                Label("Chat", systemImage: "bubble.left.and.text.bubble.right")
+            }
+            .tag(AppViewModel.SidebarSection.chat)
+
+            NavigationStack {
+                PatchListView(chatViewModel: viewModel.chatViewModel)
+                    .navigationTitle("Patches")
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+            .tabItem {
+                Label("Patches", systemImage: "doc.badge.gearshape")
+            }
+            .tag(AppViewModel.SidebarSection.patches)
+
+            NavigationStack {
+                ModelManagerView(orchestrator: viewModel.orchestrator)
+                    .navigationTitle("Models")
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+            .tabItem {
+                Label("Models", systemImage: "cpu")
+            }
+            .tag(AppViewModel.SidebarSection.models)
+        }
+        .onAppear {
+            normalizeCompactSelection()
+        }
+        .onChange(of: viewModel.selectedSection) { _, _ in
+            normalizeCompactSelection()
+        }
+    }
+
+    private var compactTabSelection: Binding<AppViewModel.SidebarSection> {
+        Binding {
+            switch viewModel.selectedSection {
+            case .chat: return .chat
+            case .patches: return .patches
+            case .models: return .models
+            case .fileViewer: return .chat
+            }
+        } set: { newValue in
+            viewModel.selectedSection = newValue
+        }
+    }
+
+    private func normalizeCompactSelection() {
+        if case .fileViewer = viewModel.selectedSection {
+            viewModel.selectedSection = .chat
         }
     }
 
