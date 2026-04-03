@@ -1,6 +1,6 @@
 import Foundation
 
-struct FileNode: Identifiable, Hashable {
+nonisolated struct FileNode: Identifiable, Hashable, Sendable {
     let id: UUID
     let name: String
     let url: URL
