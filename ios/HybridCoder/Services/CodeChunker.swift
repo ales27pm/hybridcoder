@@ -7,12 +7,28 @@ struct CodeChunker: Sendable {
         var overlapLines: Int = 8
         var maxTokensPerChunk: Int = 512
         var minLines: Int = 4
+
+        nonisolated init(
+            targetLines: Int = 40,
+            overlapLines: Int = 8,
+            maxTokensPerChunk: Int = 512,
+            minLines: Int = 4
+        ) {
+            self.targetLines = targetLines
+            self.overlapLines = overlapLines
+            self.maxTokensPerChunk = maxTokensPerChunk
+            self.minLines = minLines
+        }
     }
 
     let config: Config
 
-    nonisolated init(config: Config = Config()) {
+    nonisolated init(config: Config) {
         self.config = config
+    }
+
+    nonisolated init() {
+        self.init(config: Config())
     }
 
     nonisolated func chunkFile(_ file: RepoFile, content: String) -> [SourceChunk] {
