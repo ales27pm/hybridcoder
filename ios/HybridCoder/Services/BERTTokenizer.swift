@@ -143,9 +143,9 @@ actor HFTokenizer {
         self.addPrefixSpace = preTokenizer?.addPrefixSpaceValue() ?? false
 
         if let post = decoded.post_processor,
-           post.containsAny(types: ["roberta", "bytelevel", "template"]) == false {
+           post.containsAny(types: ["roberta"]) == false {
             let postTypes = post.flattenedTypes(path: "post_processor").joined(separator: ", ")
-            throw TokenizerError.incompatibleTokenizer("Expected a supported post-processor (Roberta/ByteLevel/Template), got \(postTypes)")
+            throw TokenizerError.incompatibleTokenizer("Expected Roberta post-processor for current encode path, got \(postTypes)")
         }
 
         guard decoded.model.vocab.isEmpty == false else {

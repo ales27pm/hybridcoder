@@ -67,10 +67,10 @@ final class ModelRegistry {
             ModelFile(remotePath: "special_tokens_map.json", localPath: "special_tokens_map.json")
         ]
         let qwenGenerationFiles: [ModelFile] = [
-            ModelFile(remotePath: "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/metadata.json", localPath: "metadata.json"),
-            ModelFile(remotePath: "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/model.mil", localPath: "model.mil"),
-            ModelFile(remotePath: "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/coremldata.bin", localPath: "coremldata.bin"),
-            ModelFile(remotePath: "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/weights/weight.bin", localPath: "weights/weight.bin"),
+            ModelFile(remotePath: "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/metadata.json", localPath: "model.mlmodelc/metadata.json"),
+            ModelFile(remotePath: "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/model.mil", localPath: "model.mlmodelc/model.mil"),
+            ModelFile(remotePath: "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/coremldata.bin", localPath: "model.mlmodelc/coremldata.bin"),
+            ModelFile(remotePath: "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/weights/weight.bin", localPath: "model.mlmodelc/weights/weight.bin"),
             ModelFile(remotePath: "tokenizer.json", localPath: "tokenizer.json"),
             ModelFile(remotePath: "tokenizer_config.json", localPath: "tokenizer_config.json")
         ]
