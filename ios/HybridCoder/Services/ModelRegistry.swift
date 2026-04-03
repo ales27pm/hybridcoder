@@ -94,11 +94,13 @@ final class ModelRegistry {
             )
         ]
 
-        activeEmbeddingModelID = UserDefaults.standard.string(forKey: activeEmbeddingKey) ?? embeddingID
-        if entries[activeEmbeddingModelID] == nil { activeEmbeddingModelID = embeddingID }
+        let savedEmbeddingModelID = UserDefaults.standard.string(forKey: activeEmbeddingKey) ?? embeddingID
+        let resolvedEmbeddingModelID = entries[savedEmbeddingModelID] == nil ? embeddingID : savedEmbeddingModelID
+        activeEmbeddingModelID = resolvedEmbeddingModelID
 
-        activeGenerationModelID = UserDefaults.standard.string(forKey: activeGenerationKey) ?? generationID
-        if entries[activeGenerationModelID] == nil { activeGenerationModelID = generationID }
+        let savedGenerationModelID = UserDefaults.standard.string(forKey: activeGenerationKey) ?? generationID
+        let resolvedGenerationModelID = entries[savedGenerationModelID] == nil ? generationID : savedGenerationModelID
+        activeGenerationModelID = resolvedGenerationModelID
     }
 
     var allModels: [Entry] {
