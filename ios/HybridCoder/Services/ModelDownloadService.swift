@@ -154,12 +154,12 @@ final class ModelDownloadService {
             registry.setInstallState(for: modelID, .notInstalled)
         } catch let error as DownloadError {
             downloadError = error.localizedDescription
-            shouldSuggestTokenInput = error.isAuthorizationError
-            logger.error("DownloadError modelID=\(modelID, privacy: .public) details=\(error.triageSummary, privacy: .public)")
+            shouldSuggestTokenInput = error.shouldSuggestHuggingFaceTokenInput
+            logger.error("DownloadError modelID=\(modelID, privacy: .public) details=\(error.triageSummary, privacy: .private)")
             registry.setInstallState(for: modelID, .notInstalled)
         } catch {
             downloadError = "Download failed: \(error.localizedDescription)"
-            logger.error("Unexpected download failure modelID=\(modelID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            logger.error("Unexpected download failure modelID=\(modelID, privacy: .public) error=\(error.localizedDescription, privacy: .private)")
             registry.setInstallState(for: modelID, .notInstalled)
         }
 
@@ -265,6 +265,27 @@ final class ModelDownloadService {
             return false
         }
 
+        nonisolated var shouldSuggestHuggingFaceTokenInput: Bool {
+            isAuthorizationError && isHuggingFaceRepository
+        }
+
+        nonisolated var isHuggingFaceRepository: Bool {
+            guard case .httpError(statusCode: _, remotePath: _, modelID: _, repoBaseURL: let repoBaseURL) = self,
+                  let repoBaseURL,
+                  let host = URL(string: repoBaseURL)?.host?.lowercased() else {
+                return false
+            }
+            return host == "huggingface.co" || host.hasSuffix(".huggingface.co")
+        }
+
+        nonisolated var repoHostForDisplay: String? {
+            guard case .httpError(statusCode: _, remotePath: _, modelID: _, repoBaseURL: let repoBaseURL) = self,
+                  let repoBaseURL else {
+                return nil
+            }
+            return URL(string: repoBaseURL)?.host
+        }
+
         nonisolated var triageSummary: String {
             switch self {
             case .modelNotDownloaded(let details):
@@ -285,7 +306,13 @@ final class ModelDownloadService {
                     return "HTTP 404 downloading \(file). The file, repository, or remote path could not be found."
                 }
                 if code == 401 || code == 403 {
-                    return "HTTP \(code) downloading \(file). Authentication failed or access is denied. Add a valid Hugging Face token and retry."
+                    if shouldSuggestHuggingFaceTokenInput {
+                        return "HTTP \(code) downloading \(file). Authentication failed or access is denied. Add a valid Hugging Face token and retry."
+                    }
+                    if let repoHostForDisplay {
+                        return "HTTP \(code) downloading \(file) from \(repoHostForDisplay). Authentication failed or access is denied."
+                    }
+                    return "HTTP \(code) downloading \(file). Authentication failed or access is denied."
                 }
                 if (500...599).contains(code) {
                     return "HTTP \(code) downloading \(file). The server reported a temporary error. Retry in a moment."
