@@ -6,9 +6,7 @@ struct OnboardingView: View {
 
     @State private var phase: SetupPhase = .welcome
     @State private var embeddingComplete: Bool = false
-    @State private var qwenComplete: Bool = false
     @State private var embeddingError: String?
-    @State private var qwenError: String?
     @State private var animateIn: Bool = false
 
     private enum SetupPhase {
@@ -101,9 +99,9 @@ struct OnboardingView: View {
 
             VStack(spacing: 12) {
                 modelRow(
-                    icon: "cpu",
-                    name: "Qwen2.5-Coder 1.5B",
-                    detail: "Code generation · ~1.2 GB via MLX"
+                    icon: "brain.head.profile",
+                    name: "Apple Foundation Models",
+                    detail: "Code generation, explanations, and patch planning"
                 )
 
                 modelRow(
@@ -113,9 +111,9 @@ struct OnboardingView: View {
                 )
 
                 modelRow(
-                    icon: "brain.head.profile",
-                    name: "Apple Foundation Models",
-                    detail: "Routing & explanations · Built-in"
+                    icon: "iphone",
+                    name: "Platform Requirement",
+                    detail: "Requires iOS 26+ for Apple Intelligence"
                 )
             }
             .padding(16)
@@ -189,14 +187,6 @@ struct OnboardingView: View {
                     error: embeddingError
                 )
 
-                downloadCard(
-                    icon: "cpu",
-                    name: "Qwen2.5-Coder 1.5B",
-                    progress: orchestrator.qwen.loadProgress,
-                    isActive: orchestrator.qwen.isLoading,
-                    isDone: qwenComplete,
-                    error: qwenError
-                )
             }
 
             Text("This may take a few minutes depending\non your connection and device.")
@@ -322,7 +312,7 @@ struct OnboardingView: View {
                     .font(.system(size: 24, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
 
-                Text("Some models couldn't be downloaded.\nYou can retry from the Models tab.")
+                Text("The embedding model couldn't be downloaded.\nYou can retry from the Models tab.")
                     .font(.subheadline)
                     .foregroundStyle(Theme.dimText)
                     .multilineTextAlignment(.center)
@@ -355,9 +345,7 @@ struct OnboardingView: View {
 
     private func beginSetup() {
         embeddingError = nil
-        qwenError = nil
         embeddingComplete = false
-        qwenComplete = false
 
         withAnimation(.spring(duration: 0.5)) {
             phase = .downloading
@@ -369,13 +357,10 @@ struct OnboardingView: View {
     }
 
     private func downloadAll() async {
-        async let embeddingTask: () = downloadEmbedding()
-        async let qwenTask: () = downloadQwen()
+        await downloadEmbedding()
 
-        _ = await (embeddingTask, qwenTask)
-
-        let anySuccess = embeddingComplete || qwenComplete
-        let anyFailure = embeddingError != nil || qwenError != nil
+        let anySuccess = embeddingComplete
+        let anyFailure = embeddingError != nil
 
         try? await Task.sleep(for: .milliseconds(600))
 
@@ -402,16 +387,6 @@ struct OnboardingView: View {
             }
         } else {
             embeddingError = orchestrator.modelDownload.downloadError ?? "Download failed"
-        }
-    }
-
-    private func downloadQwen() async {
-        await orchestrator.qwen.warmUp()
-
-        if orchestrator.qwen.isLoaded {
-            withAnimation { qwenComplete = true }
-        } else {
-            qwenError = orchestrator.qwen.loadError ?? "Failed to load model"
         }
     }
 

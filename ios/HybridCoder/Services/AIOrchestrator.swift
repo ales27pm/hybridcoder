@@ -5,7 +5,6 @@ import Foundation
 final class AIOrchestrator {
     let repoAccess = RepoAccessService()
     let embeddingService = CoreMLEmbeddingService()
-    let qwen = QwenCoderService()
     let modelDownload = ModelDownloadService()
 
     private(set) var searchIndex: SemanticSearchIndex?
@@ -42,7 +41,6 @@ final class AIOrchestrator {
 
     var modelSummary: String {
         var parts: [String] = []
-        if qwen.isLoaded { parts.append("Qwen ready") }
         if isFoundationModelAvailable { parts.append("Apple Intelligence ready") }
         if modelDownload.isModelReady { parts.append("Embeddings ready") }
         if parts.isEmpty {
@@ -52,7 +50,7 @@ final class AIOrchestrator {
     }
 
     var hasAnyModel: Bool {
-        qwen.isLoaded || isFoundationModelAvailable
+        isFoundationModelAvailable
     }
 
     func warmUp() async {
@@ -87,14 +85,6 @@ final class AIOrchestrator {
                 fm.refreshStatus()
                 foundationModel = fm
             }
-        }
-
-        if !qwen.isLoaded {
-            await qwen.warmUp()
-        }
-        if let err = qwen.loadError {
-            let combined = [warmUpError, "Qwen: \(err)"].compactMap { $0 }.joined(separator: "; ")
-            warmUpError = combined.isEmpty ? nil : combined
         }
 
         isWarmingUp = false
@@ -211,11 +201,11 @@ final class AIOrchestrator {
 
         switch route {
         case .explanation:
-            let text = try await streamText(query: query, context: context, route: route, preferQwen: false, onPartial: onPartial)
+            let text = try await streamText(query: query, context: context, route: route, onPartial: onPartial)
             return (AssistantResponse(text: text, routeUsed: .explanation), route)
 
         case .codeGeneration:
-            let code = try await streamText(query: query, context: context, route: route, preferQwen: true, onPartial: onPartial)
+            let code = try await streamText(query: query, context: context, route: route, onPartial: onPartial)
             let blocks = extractCodeBlocks(from: code)
             return (AssistantResponse(text: code, codeBlocks: blocks, routeUsed: .codeGeneration), route)
 
@@ -232,45 +222,19 @@ final class AIOrchestrator {
         }
     }
 
-    private func streamText(query: String, context: String, route: Route, preferQwen: Bool, onPartial: @escaping (String) -> Void) async throws -> String {
-        if preferQwen && qwen.isLoaded {
-            let systemPrompt = route == .codeGeneration ? PromptBuilder.codeGenerationSystem() : PromptBuilder.explanationSystem()
-            let userPrompt = route == .codeGeneration
-                ? PromptBuilder.codeGenerationUser(query: query, repoContext: context)
-                : PromptBuilder.explanationUser(query: query, repoContext: context)
-            let result = try await qwen.generateStreaming(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                onChunk: { onPartial($0) }
-            )
-            return result.text
-        }
-
+    private func streamText(query: String, context: String, route: Route, onPartial: @escaping (String) -> Void) async throws -> String {
         if #available(iOS 26.0, *),
            let fm = foundationModel as? FoundationModelService,
            fm.isAvailable {
-            do {
-                var fullText = ""
-                let stream = fm.streamAnswer(query: query, context: context, route: route)
-                for try await chunk in stream {
-                    fullText = chunk
-                    onPartial(chunk)
-                }
-                if !fullText.isEmpty { return fullText }
-            } catch { }
-        }
-
-        if !preferQwen && qwen.isLoaded {
-            let systemPrompt = route == .codeGeneration ? PromptBuilder.codeGenerationSystem() : PromptBuilder.explanationSystem()
-            let userPrompt = route == .codeGeneration
-                ? PromptBuilder.codeGenerationUser(query: query, repoContext: context)
-                : PromptBuilder.explanationUser(query: query, repoContext: context)
-            let result = try await qwen.generateStreaming(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                onChunk: { onPartial($0) }
-            )
-            return result.text
+            var fullText = ""
+            let stream = fm.streamAnswer(query: query, context: context, route: route)
+            for try await chunk in stream {
+                fullText = chunk
+                onPartial(chunk)
+            }
+            if !fullText.isEmpty {
+                return fullText
+            }
         }
 
         throw OrchestratorError.noModelAvailable
@@ -374,18 +338,10 @@ final class AIOrchestrator {
             }
         }
 
-        if qwen.isLoaded {
-            return try await qwen.generateExplanation(prompt: query, context: context)
-        }
-
         throw OrchestratorError.noModelAvailable
     }
 
     private func generateCode(query: String, context: String) async throws -> String {
-        if qwen.isLoaded {
-            return try await qwen.generateCode(prompt: query, context: context)
-        }
-
         if #available(iOS 26.0, *),
            let fm = foundationModel as? FoundationModelService,
            fm.isAvailable {
@@ -402,15 +358,6 @@ final class AIOrchestrator {
             if let plan = try? await fm.generatePatchPlan(query: query, codeContext: context) {
                 return plan
             }
-        }
-
-        if qwen.isLoaded {
-            let result = try await qwen.generatePatchStreaming(
-                prompt: query,
-                context: context,
-                onChunk: { _ in }
-            )
-            return parsePatchPlanFromText(result.text)
         }
 
         throw OrchestratorError.noModelAvailable
@@ -490,7 +437,7 @@ final class AIOrchestrator {
             case .indexNotReady:
                 return "The semantic index is not ready. Import a repository and wait for indexing to complete."
             case .noModelAvailable:
-                return "No AI model is available. Download the Qwen model from the Models tab, or use a device with Apple Intelligence (iOS 26)."
+                return "No AI model is available. Use a device with Apple Intelligence enabled (iOS 26+)."
             }
         }
     }
