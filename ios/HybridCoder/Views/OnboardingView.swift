@@ -106,8 +106,8 @@ struct OnboardingView: View {
 
                 modelRow(
                     icon: "waveform.badge.magnifyingglass",
-                    name: "CodeBERT Embeddings",
-                    detail: "Semantic search · CoreML"
+                    name: ModelDownloadService.canonicalEmbeddingModelLabel(),
+                    detail: "Semantic search · CoreML · \(ModelDownloadService.canonicalEmbeddingModelID())"
                 )
 
                 modelRow(
@@ -180,7 +180,7 @@ struct OnboardingView: View {
             VStack(spacing: 16) {
                 downloadCard(
                     icon: "waveform.badge.magnifyingglass",
-                    name: "CodeBERT Embeddings",
+                    name: ModelDownloadService.canonicalEmbeddingModelLabel(),
                     progress: orchestrator.modelDownload.downloadProgress,
                     isActive: orchestrator.modelDownload.isDownloading,
                     isDone: embeddingComplete,

@@ -41,11 +41,11 @@ struct ModelManagerView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("CodeBERT Embeddings")
+                    Text(ModelDownloadService.canonicalEmbeddingModelLabel())
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
 
-                    Text("Semantic code search over your repository via CoreML")
+                    Text("Semantic code search over your repository via CoreML (\(ModelDownloadService.canonicalEmbeddingModelID()))")
                         .font(.caption)
                         .foregroundStyle(Theme.dimText)
                 }
