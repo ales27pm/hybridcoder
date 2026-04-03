@@ -8,6 +8,7 @@ nonisolated struct SourceChunk: Identifiable, Codable, Sendable {
     let startLine: Int
     let endLine: Int
     let language: String
+    let estimatedTokens: Int
 
     var lineCount: Int { endLine - startLine + 1 }
 
@@ -18,7 +19,8 @@ nonisolated struct SourceChunk: Identifiable, Codable, Sendable {
         content: String,
         startLine: Int,
         endLine: Int,
-        language: String
+        language: String,
+        estimatedTokens: Int = 0
     ) {
         self.id = id
         self.fileID = fileID
@@ -27,27 +29,7 @@ nonisolated struct SourceChunk: Identifiable, Codable, Sendable {
         self.startLine = startLine
         self.endLine = endLine
         self.language = language
+        self.estimatedTokens = estimatedTokens
     }
 
-    static func chunk(file: RepoFile, content: String, maxLines: Int = 50) -> [SourceChunk] {
-        let lines = content.components(separatedBy: .newlines)
-        guard !lines.isEmpty else { return [] }
-
-        var chunks: [SourceChunk] = []
-        var start = 0
-        while start < lines.count {
-            let end = min(start + maxLines - 1, lines.count - 1)
-            let slice = lines[start...end].joined(separator: "\n")
-            chunks.append(SourceChunk(
-                fileID: file.id,
-                filePath: file.relativePath,
-                content: slice,
-                startLine: start + 1,
-                endLine: end + 1,
-                language: file.language
-            ))
-            start = end + 1
-        }
-        return chunks
-    }
 }
