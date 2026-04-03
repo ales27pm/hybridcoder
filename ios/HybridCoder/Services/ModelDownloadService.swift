@@ -3,6 +3,9 @@ import Foundation
 @Observable
 @MainActor
 final class ModelDownloadService {
+    private enum TokenStore {
+        static let huggingFaceTokenKey = "models.huggingface.token"
+    }
 
     private(set) var isDownloading: Bool = false
     private(set) var downloadProgress: Double = 0
@@ -21,6 +24,19 @@ final class ModelDownloadService {
 
     var isModelReady: Bool {
         registry.entry(for: activeEmbeddingModelID)?.installState == .installed
+    }
+
+    var huggingFaceToken: String {
+        UserDefaults.standard.string(forKey: TokenStore.huggingFaceTokenKey) ?? ""
+    }
+
+    func setHuggingFaceToken(_ token: String) {
+        let cleaned = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.isEmpty {
+            UserDefaults.standard.removeObject(forKey: TokenStore.huggingFaceTokenKey)
+        } else {
+            UserDefaults.standard.set(cleaned, forKey: TokenStore.huggingFaceTokenKey)
+        }
     }
 
     func refreshInstallState(modelID: String) {
@@ -75,7 +91,15 @@ final class ModelDownloadService {
                     continue
                 }
 
-                let (tempURL, response) = try await URLSession.shared.download(from: remoteURL)
+                var request = URLRequest(url: remoteURL)
+                if remoteURL.host?.contains("huggingface.co") == true {
+                    let token = huggingFaceToken.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !token.isEmpty {
+                        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                    }
+                }
+
+                let (tempURL, response) = try await URLSession.shared.download(for: request)
 
                 guard let httpResponse = response as? HTTPURLResponse,
                       (200...299).contains(httpResponse.statusCode) else {
@@ -148,7 +172,7 @@ final class ModelDownloadService {
         }
 
         let tokenizerDir = registry.downloadedTokenizerDirectory(for: modelID)
-        let tokenizerFiles = ["tokenizer.json", "tokenizer_config.json", "special_tokens_map.json"]
+        let tokenizerFiles = ["tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "vocab.json", "merges.txt"]
         for expectedFile in tokenizerFiles {
             let path = tokenizerDir.appendingPathComponent(expectedFile).path
             guard fm.fileExists(atPath: path) else {
@@ -167,6 +191,9 @@ final class ModelDownloadService {
             case .modelNotDownloaded(let details):
                 return details
             case .httpError(let code, let file):
+                if code == 401 {
+                    return "HTTP 401 downloading \(file). Add your Hugging Face token in the Models tab and retry."
+                }
                 return "HTTP \(code) downloading \(file). Check your network connection and try again."
             case .fileCorrupt(let file):
                 return "Downloaded file '\(file)' appears corrupt. Delete and re-download."

@@ -58,12 +58,15 @@ final class ModelRegistry {
         let generationID = "apple/foundation-language-model"
 
         let embeddingFiles: [ModelFile] = [
-            ModelFile(remotePath: "model.mlpackage/Manifest.json", localPath: "model.mlpackage/Manifest.json"),
-            ModelFile(remotePath: "model.mlpackage/Data/com.apple.CoreML/model.mlmodel", localPath: "model.mlpackage/Data/com.apple.CoreML/model.mlmodel"),
-            ModelFile(remotePath: "model.mlpackage/Data/com.apple.CoreML/weights/weight.bin", localPath: "model.mlpackage/Data/com.apple.CoreML/weights/weight.bin"),
+            ModelFile(remotePath: "model.mlmodelc/model.mil", localPath: "model.mlmodelc/model.mil"),
+            ModelFile(remotePath: "model.mlmodelc/coremldata.bin", localPath: "model.mlmodelc/coremldata.bin"),
+            ModelFile(remotePath: "model.mlmodelc/metadata.json", localPath: "model.mlmodelc/metadata.json"),
+            ModelFile(remotePath: "model.mlmodelc/analytics/coremldata.bin", localPath: "model.mlmodelc/analytics/coremldata.bin"),
             ModelFile(remotePath: "tokenizer.json", localPath: "tokenizer.json"),
             ModelFile(remotePath: "tokenizer_config.json", localPath: "tokenizer_config.json"),
-            ModelFile(remotePath: "special_tokens_map.json", localPath: "special_tokens_map.json")
+            ModelFile(remotePath: "special_tokens_map.json", localPath: "special_tokens_map.json"),
+            ModelFile(remotePath: "vocab.json", localPath: "vocab.json"),
+            ModelFile(remotePath: "merges.txt", localPath: "merges.txt")
         ]
 
         let initialEntries: [String: Entry] = [
@@ -72,7 +75,7 @@ final class ModelRegistry {
                 displayName: "CodeBERT (microsoft/codebert-base)",
                 capability: .embedding,
                 provider: .huggingFace,
-                remoteBaseURL: "https://huggingface.co/rsvalerio/codebert-base-coreml/resolve/main",
+                remoteBaseURL: "https://huggingface.co/nickmuchi/codebert-base-coreml/resolve/main",
                 files: embeddingFiles,
                 isAvailable: true,
                 installState: .notInstalled,
