@@ -8,10 +8,12 @@ final class AIOrchestrator {
     let modelRegistry: ModelRegistry
     let embeddingService: CoreMLEmbeddingService
     let modelDownload: ModelDownloadService
+    let contextPolicyLoader: ContextPolicyLoader
 
     private(set) var searchIndex: SemanticSearchIndex?
     private(set) var patchEngine: PatchEngine?
     private(set) var foundationModel: AnyObject?
+    private(set) var contextPolicySnapshot: ContextPolicySnapshot = .init(files: [])
 
     private(set) var repoRoot: URL?
     private(set) var repoFiles: [RepoFile] = []
@@ -31,6 +33,7 @@ final class AIOrchestrator {
         self.modelRegistry = registry
         self.embeddingService = CoreMLEmbeddingService(modelID: registry.activeEmbeddingModelID, registry: registry)
         self.modelDownload = ModelDownloadService(registry: registry)
+        self.contextPolicyLoader = ContextPolicyLoader()
         refreshRegistryInstallState()
     }
 
@@ -118,6 +121,7 @@ final class AIOrchestrator {
 
         repoRoot = url
         repoFiles = files
+        contextPolicySnapshot = contextPolicyLoader.loadPolicyFiles(startingAt: url)
 
         await rebuildIndex()
     }
@@ -135,6 +139,7 @@ final class AIOrchestrator {
         let files = await repoAccess.listSourceFiles(in: url)
         repoRoot = url
         repoFiles = files
+        contextPolicySnapshot = contextPolicyLoader.loadPolicyFiles(startingAt: url)
         return true
     }
 
@@ -146,6 +151,7 @@ final class AIOrchestrator {
         repoFiles = []
         indexStats = nil
         indexingProgress = nil
+        contextPolicySnapshot = .init(files: [])
         await searchIndex?.clear()
     }
 
@@ -301,6 +307,10 @@ final class AIOrchestrator {
 
     private func gatherContext(for query: String, route: Route) async -> String {
         var contextParts: [String] = []
+        let policyText = contextPolicySnapshot.renderForPrompt(maxCharacters: 4000)
+        if !policyText.isEmpty {
+            contextParts.append("<policy_context>\n\(policyText)\n</policy_context>")
+        }
 
         if let hits = try? await searchCode(query: query, topK: 3) {
             for hit in hits {
