@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import SQLite3
 
 actor SemanticSearchIndex {
@@ -28,7 +29,8 @@ actor SemanticSearchIndex {
 
     private let embeddingService: CoreMLEmbeddingService
     private let chunker: CodeChunker
-    private let store: SQLiteIndexStore
+    private let store: SQLiteIndexStore?
+    private let logger = Logger(subsystem: "com.hybridcoder.app", category: "SemanticSearchIndex")
 
     private var records: [EmbeddingRecord] = []
     private var chunks: [UUID: SourceChunk] = [:]
@@ -36,6 +38,7 @@ actor SemanticSearchIndex {
     private var languageCounts: [String: Int] = [:]
     private var lastIndexedAt: Date?
     private var totalFileCount: Int = 0
+    private(set) var persistenceError: String?
 
     init(
         embeddingService: CoreMLEmbeddingService,
@@ -43,15 +46,26 @@ actor SemanticSearchIndex {
     ) {
         self.embeddingService = embeddingService
         self.chunker = chunker
-        self.store = SQLiteIndexStore.makeDefault()
+        do {
+            let store = try SQLiteIndexStore.makeDefault()
+            self.store = store
 
-        if let snapshot = try? store.loadSnapshot() {
-            self.records = snapshot.records
-            self.chunks = snapshot.chunks
-            self.indexedFilePaths = Set(snapshot.records.map(\.filePath))
-            self.languageCounts = snapshot.languageCounts
-            self.lastIndexedAt = snapshot.lastIndexedAt
-            self.totalFileCount = snapshot.totalFileCount
+            do {
+                let snapshot = try store.loadSnapshot()
+                self.records = snapshot.records
+                self.chunks = snapshot.chunks
+                self.indexedFilePaths = Set(snapshot.records.map(\.filePath))
+                self.languageCounts = snapshot.languageCounts
+                self.lastIndexedAt = snapshot.lastIndexedAt
+                self.totalFileCount = snapshot.totalFileCount
+            } catch {
+                self.persistenceError = error.localizedDescription
+                logger.error("SQLite index snapshot load failed; continuing with empty in-memory index: \(error.localizedDescription, privacy: .public)")
+            }
+        } catch {
+            self.store = nil
+            self.persistenceError = error.localizedDescription
+            logger.error("SQLite index store unavailable; using in-memory index only: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -76,35 +90,36 @@ actor SemanticSearchIndex {
             throw IndexError.noFilesProvided
         }
 
-        records.removeAll()
-        chunks.removeAll()
-        indexedFilePaths.removeAll()
-        languageCounts.removeAll()
-        totalFileCount = files.count
-
         let allChunks = chunker.chunkFiles(files)
+        let newChunks = Dictionary(uniqueKeysWithValues: allChunks.map { ($0.id, $0) })
 
-        for chunk in allChunks {
-            chunks[chunk.id] = chunk
-        }
-
-        var langCounts: [String: Int] = [:]
+        var newLanguageCounts: [String: Int] = [:]
         for (file, _) in files {
-            langCounts[file.language, default: 0] += 1
+            newLanguageCounts[file.language, default: 0] += 1
         }
-        languageCounts = langCounts
 
         let modelID = await embeddingService.modelInfo?.inputNames.joined(separator: "+")
             ?? "microsoft/codebert-base"
         let total = allChunks.count
+        let newTotalFileCount = files.count
+        var newRecords: [EmbeddingRecord] = []
+        newRecords.reserveCapacity(allChunks.count)
+        var newIndexedFilePaths: Set<String> = []
         var embedded = 0
+        let store = self.store
+        let shouldPersist = store != nil
+        persistenceError = nil
 
         do {
-            try store.beginTransaction()
-            try store.reset()
+            if let store {
+                try store.beginTransaction()
+                try store.reset()
+            }
 
             for chunk in allChunks {
-                try store.persistChunk(chunk)
+                if let store {
+                    try store.persistChunk(chunk)
+                }
             }
 
             for chunk in allChunks {
@@ -124,24 +139,41 @@ actor SemanticSearchIndex {
                     vector: vector,
                     modelIdentifier: modelID
                 )
-                records.append(record)
-                indexedFilePaths.insert(chunk.filePath)
-                try store.persistEmbedding(record)
+                newRecords.append(record)
+                newIndexedFilePaths.insert(chunk.filePath)
+                if let store {
+                    try store.persistEmbedding(record)
+                }
 
                 embedded += 1
                 progress?(embedded, total)
             }
 
             let indexedAt = Date()
+            if let store {
+                try store.persistMetadata(
+                    totalFileCount: newTotalFileCount,
+                    lastIndexedAt: indexedAt,
+                    languageCounts: newLanguageCounts
+                )
+                try store.commitTransaction()
+            }
+
+            records = newRecords
+            chunks = newChunks
+            indexedFilePaths = newIndexedFilePaths
+            languageCounts = newLanguageCounts
             lastIndexedAt = indexedAt
-            try store.persistMetadata(
-                totalFileCount: totalFileCount,
-                lastIndexedAt: indexedAt,
-                languageCounts: languageCounts
-            )
-            try store.commitTransaction()
+            totalFileCount = newTotalFileCount
         } catch {
-            try? store.rollbackTransaction()
+            if let store {
+                try? store.rollbackTransaction()
+            }
+
+            if shouldPersist {
+                persistenceError = error.localizedDescription
+                logger.error("Index rebuild persistence failed: \(error.localizedDescription, privacy: .public)")
+            }
             if let indexError = error as? IndexError {
                 throw indexError
             }
@@ -193,8 +225,15 @@ actor SemanticSearchIndex {
         languageCounts.removeAll()
         lastIndexedAt = nil
         totalFileCount = 0
-        try? store.reset()
-        try? store.persistMetadata(totalFileCount: 0, lastIndexedAt: nil, languageCounts: [:])
+        guard let store else { return }
+
+        do {
+            try store.clearAllAtomically()
+            persistenceError = nil
+        } catch {
+            persistenceError = error.localizedDescription
+            logger.error("Failed to clear SQLite index store: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func formatChunkForEmbedding(_ chunk: SourceChunk) -> String {
@@ -245,9 +284,15 @@ private final class SQLiteIndexStore {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         var handle: OpaquePointer?
-        if sqlite3_open(databaseURL.path, &handle) != SQLITE_OK {
-            let reason = String(cString: sqlite3_errmsg(handle))
-            sqlite3_close(handle)
+        let rc = sqlite3_open(databaseURL.path, &handle)
+        if rc != SQLITE_OK {
+            let reason: String
+            if let handle {
+                reason = String(cString: sqlite3_errmsg(handle))
+                sqlite3_close(handle)
+            } else {
+                reason = "sqlite3_open failed with code \(rc)"
+            }
             throw StoreError.openFailed(reason)
         }
 
@@ -263,7 +308,7 @@ private final class SQLiteIndexStore {
         sqlite3_close(db)
     }
 
-    static func makeDefault() -> SQLiteIndexStore {
+    static func makeDefault() throws -> SQLiteIndexStore {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         let url = appSupport
@@ -272,13 +317,16 @@ private final class SQLiteIndexStore {
 
         do {
             return try SQLiteIndexStore(databaseURL: url)
-        } catch {
+        } catch let primaryError {
             let fallback = FileManager.default.temporaryDirectory
                 .appendingPathComponent("hybridcoder-semantic-index.sqlite", isDirectory: false)
-            return (try? SQLiteIndexStore(databaseURL: fallback))
-                ?? {
-                    fatalError("Unable to initialize SQLite index store: \(error.localizedDescription)")
-                }()
+            do {
+                return try SQLiteIndexStore(databaseURL: fallback)
+            } catch let fallbackError {
+                throw StoreError.openFailed(
+                    "Primary and fallback SQLite store initialization failed. primary=\(primaryError.localizedDescription) fallback=\(fallbackError.localizedDescription)"
+                )
+            }
         }
     }
 
@@ -313,6 +361,18 @@ private final class SQLiteIndexStore {
         try exec("DELETE FROM embeddings;")
         try exec("DELETE FROM chunks;")
         try exec("DELETE FROM metadata;")
+    }
+
+    func clearAllAtomically() throws {
+        try beginTransaction()
+        do {
+            try reset()
+            try persistMetadata(totalFileCount: 0, lastIndexedAt: nil, languageCounts: [:])
+            try commitTransaction()
+        } catch {
+            try? rollbackTransaction()
+            throw error
+        }
     }
 
     func persistChunk(_ chunk: SourceChunk) throws {
