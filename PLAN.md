@@ -5,10 +5,10 @@
 - **Import code repositories** from the Files app, with persistent access so the app remembers your folders across launches
 - **Browse source files** in a sidebar file tree — tap to view code with syntax-highlighted previews
 - **Ask coding questions** against your imported repo in a chat interface powered by Apple's on-device AI
-- **AI-powered code generation** using a local Qwen2.5-Coder model running entirely on-device via CoreML
+- **AI-powered code generation** using Apple Foundation Models (Apple Intelligence) running entirely on-device
 - **Semantic code search** using CodeBERT embeddings — find relevant code by meaning, not just keywords
 - **Plan and apply patches** — the AI proposes exact-match find-and-replace edits that you review and apply deterministically
-- **Model download manager** — on first launch, download the CoreML models from a configurable URL with progress tracking
+- **Model download manager** — on first launch, download the CoreML embedding model from a configurable URL with progress tracking
 - **Fully offline** — all AI inference runs on-device, no cloud required
 
 ## Design
@@ -28,11 +28,10 @@
 - **File Viewer** — tap a file in the sidebar to view its contents with line numbers and monospace font
 - **Patches** — review proposed code changes as diff-style cards; approve or reject each patch individually
 - **Settings** — configure model download URLs, view model status (downloaded / downloading / not available), manage imported repositories, clear index
-- **Model Manager** — shows download progress for Qwen2.5-Coder and CodeBERT models, with retry on failure
+- **Model Manager** — shows Foundation Models availability and CodeBERT download progress, with retry on failure
 
 ## App Icon
 
 - Dark background with a subtle green-to-teal gradient
 - A terminal cursor or code bracket symbol (`{ }`) in bright green, suggesting code + AI
 - Clean, minimal, professional — matches the dark + green code editor aesthetic
-

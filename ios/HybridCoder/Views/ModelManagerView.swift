@@ -8,7 +8,6 @@ struct ModelManagerView: View {
         ScrollView {
             VStack(spacing: 20) {
                 headerSection
-                qwenModelCard
                 embeddingModelCard
                 foundationModelCard
             }
@@ -29,112 +28,11 @@ struct ModelManagerView: View {
                     .foregroundStyle(.white)
             }
 
-            Text("All inference runs locally. Qwen downloads automatically from HuggingFace on first use via MLX.")
+            Text("All inference runs locally with Apple Foundation Models for generation and CoreML embeddings for semantic search.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var qwenModelCard: some View {
-        let qwen = orchestrator.qwen
-
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Qwen2.5-Coder 1.5B")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
-
-                    Text("Code generation, explanations, and patch planning via MLX")
-                        .font(.caption)
-                        .foregroundStyle(Theme.dimText)
-                }
-
-                Spacer()
-
-                qwenStatusBadge
-            }
-
-            if qwen.isLoading {
-                VStack(spacing: 4) {
-                    ProgressView(value: qwen.loadProgress)
-                        .tint(Theme.accent)
-
-                    HStack {
-                        Text("Loading model…")
-                            .font(.caption2)
-                            .foregroundStyle(Theme.dimText)
-                        Spacer()
-                        Text("\(Int(qwen.loadProgress * 100))%")
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(Theme.accent)
-                    }
-                }
-            }
-
-            if let error = qwen.loadError {
-                Text(error)
-                    .font(.caption2)
-                    .foregroundStyle(.red.opacity(0.8))
-            }
-
-            HStack {
-                Text("~1.2 GB · MLX runtime")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.dimText)
-
-                Spacer()
-
-                if qwen.isLoaded {
-                    if qwen.tokensPerSecond > 0 {
-                        Text("\(String(format: "%.1f", qwen.tokensPerSecond)) tok/s")
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(Theme.accent)
-                    }
-                } else if !qwen.isLoading {
-                    Button("Load Model") {
-                        Task { await orchestrator.qwen.warmUp() }
-                    }
-                    .font(.caption.weight(.medium))
-                    .buttonStyle(.borderedProminent)
-                    .tint(Theme.accent)
-                    .controlSize(.small)
-                }
-
-                if qwen.isLoaded {
-                    Button("Unload") {
-                        orchestrator.qwen.unload()
-                    }
-                    .font(.caption.weight(.medium))
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-            }
-        }
-        .padding(14)
-        .background(Theme.cardBg, in: .rect(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Theme.border, lineWidth: 1)
-        )
-    }
-
-    private var qwenStatusBadge: some View {
-        let qwen = orchestrator.qwen
-        let (text, color): (String, Color) = {
-            if qwen.isLoaded { return ("Ready", Theme.accent) }
-            if qwen.isLoading { return ("Loading", .orange) }
-            if qwen.loadError != nil { return ("Error", .red) }
-            return ("Not Loaded", Theme.dimText)
-        }()
-
-        return Text(text)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(color.opacity(0.15), in: .capsule)
     }
 
     private var embeddingModelCard: some View {

@@ -82,7 +82,7 @@ struct ChatView: View {
                     Label("No AI model available", systemImage: "exclamationmark.circle")
                         .font(.caption)
                         .foregroundStyle(.orange)
-                    Text("Download Qwen from the Models tab, or use a device with Apple Intelligence.")
+                    Text("Use a device with Apple Intelligence enabled and complete model setup in the Models tab.")
                         .font(.caption2)
                         .foregroundStyle(Theme.dimText)
                         .multilineTextAlignment(.center)
