@@ -163,6 +163,9 @@ final class ModelDownloadService {
 
     private static func validateDownloadedAssetsOrThrow(modelID: String, registry: ModelRegistry) throws {
         let fm = FileManager.default
+        guard let entry = registry.entry(for: modelID) else {
+            throw DownloadError.fileCorrupt("Missing model registry entry for \(modelID)")
+        }
 
         let modelDir = registry.downloadedModelDirectory(for: modelID)
         let compiledModel = modelDir.appendingPathComponent("model.mlmodelc")
@@ -172,7 +175,9 @@ final class ModelDownloadService {
         }
 
         let tokenizerDir = registry.downloadedTokenizerDirectory(for: modelID)
-        let tokenizerFiles = ["tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "vocab.json", "merges.txt"]
+        let tokenizerFiles = entry.files
+            .filter { !$0.localPath.contains("model.mlmodelc") && !$0.localPath.contains("model.mlpackage") }
+            .map(\.localPath)
         for expectedFile in tokenizerFiles {
             let path = tokenizerDir.appendingPathComponent(expectedFile).path
             guard fm.fileExists(atPath: path) else {
