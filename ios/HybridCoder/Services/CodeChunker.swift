@@ -11,7 +11,7 @@ struct CodeChunker: Sendable {
 
     let config: Config
 
-    init(config: Config = Config()) {
+    nonisolated init(config: Config = Config()) {
         self.config = config
     }
 

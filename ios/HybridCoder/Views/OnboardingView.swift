@@ -220,7 +220,7 @@ struct OnboardingView: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(Theme.accent)
                         .transition(.scale.combined(with: .opacity))
-                } else if let error {
+                } else if error != nil {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.red)
                 } else if isActive {

@@ -34,7 +34,7 @@ actor HFTokenizer {
         let originalTokenCount: Int
     }
 
-    fileprivate struct TokenizerJSON: Decodable {
+    nonisolated fileprivate struct TokenizerJSON: Decodable {
         struct AddedToken: Decodable {
             let id: Int
             let content: String
@@ -64,7 +64,7 @@ actor HFTokenizer {
         let model: Model
     }
 
-    private enum JSONValue: Decodable {
+    fileprivate enum JSONValue: Decodable {
         case string(String)
         case int(Int)
 
@@ -337,18 +337,18 @@ actor HFTokenizer {
 }
 
 private extension HFTokenizer.TokenizerJSON.PreTokenizer {
-    func contains(type target: String) -> Bool {
+    nonisolated func contains(type target: String) -> Bool {
         let normalizedTarget = target.lowercased()
         if type.lowercased() == normalizedTarget { return true }
         return pretokenizers?.contains(where: { $0.contains(type: normalizedTarget) }) ?? false
     }
 
-    func addPrefixSpaceValue() -> Bool {
+    nonisolated func addPrefixSpaceValue() -> Bool {
         if let add_prefix_space { return add_prefix_space }
         return pretokenizers?.first(where: { $0.contains(type: "bytelevel") })?.addPrefixSpaceValue() ?? false
     }
 
-    func flattenedTypes(path: String) -> [String] {
+    nonisolated func flattenedTypes(path: String) -> [String] {
         var values = ["\(path)=\(type)"]
         for (index, tokenizer) in (pretokenizers ?? []).enumerated() {
             values.append(contentsOf: tokenizer.flattenedTypes(path: "\(path).pretokenizers[\(index)]"))
@@ -358,7 +358,7 @@ private extension HFTokenizer.TokenizerJSON.PreTokenizer {
 }
 
 private extension HFTokenizer.TokenizerJSON.PostProcessor {
-    func containsAny(types targets: [String]) -> Bool {
+    nonisolated func containsAny(types targets: [String]) -> Bool {
         let normalized = type.lowercased()
         if targets.contains(where: { normalized.contains($0.lowercased()) }) {
             return true
@@ -366,7 +366,7 @@ private extension HFTokenizer.TokenizerJSON.PostProcessor {
         return processors?.contains(where: { $0.containsAny(types: targets) }) ?? false
     }
 
-    func flattenedTypes(path: String) -> [String] {
+    nonisolated func flattenedTypes(path: String) -> [String] {
         var values = ["\(path)=\(type)"]
         for (index, processor) in (processors ?? []).enumerated() {
             values.append(contentsOf: processor.flattenedTypes(path: "\(path).processors[\(index)]"))
