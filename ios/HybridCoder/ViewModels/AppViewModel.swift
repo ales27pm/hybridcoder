@@ -10,6 +10,7 @@ final class AppViewModel {
     var fileTree: FileNode?
     var isImportingFolder: Bool = false
     var showSettings: Bool = false
+    var showOnboarding: Bool = false
     var importError: String?
 
     let orchestrator: AIOrchestrator
@@ -31,6 +32,7 @@ final class AppViewModel {
         self.orchestrator = orchestrator
         self.bookmarkService = bookmark
         self.chatViewModel = chat
+        self.showOnboarding = !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
 
         chat.onPatchApplied = { [weak self] in
             self?.refreshFileTree()
@@ -115,6 +117,11 @@ final class AppViewModel {
         Task {
             await orchestrator.rebuildIndex()
         }
+    }
+
+    func completeOnboarding() {
+        showOnboarding = false
+        initialize()
     }
 
     func initialize() {

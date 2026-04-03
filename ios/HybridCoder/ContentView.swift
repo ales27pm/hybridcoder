@@ -6,6 +6,17 @@ struct ContentView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
 
     var body: some View {
+        if viewModel.showOnboarding {
+            OnboardingView(
+                orchestrator: viewModel.orchestrator,
+                onComplete: { viewModel.completeOnboarding() }
+            )
+        } else {
+            mainContent
+        }
+    }
+
+    private var mainContent: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebarContent
                 .navigationTitle("HybridCoder")

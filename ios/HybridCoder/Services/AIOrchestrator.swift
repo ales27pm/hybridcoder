@@ -60,26 +60,38 @@ final class AIOrchestrator {
         isWarmingUp = true
         warmUpError = nil
 
-        if modelDownload.isModelReady {
-            do {
-                try await embeddingService.load()
-            } catch {
-                warmUpError = "Embedding model: \(error.localizedDescription)"
+        let embeddingAlreadyLoaded = await embeddingService.isLoaded
+
+        if !embeddingAlreadyLoaded {
+            if modelDownload.isModelReady {
+                do {
+                    try await embeddingService.load()
+                } catch {
+                    warmUpError = "Embedding model: \(error.localizedDescription)"
+                }
+            } else {
+                warmUpError = "Embedding model not downloaded. Go to Models to download it."
             }
-        } else {
-            warmUpError = "Embedding model not downloaded. Go to Models to download it."
         }
 
-        searchIndex = SemanticSearchIndex(embeddingService: embeddingService)
-        patchEngine = PatchEngine(repoAccess: repoAccess)
+        if searchIndex == nil {
+            searchIndex = SemanticSearchIndex(embeddingService: embeddingService)
+        }
+        if patchEngine == nil {
+            patchEngine = PatchEngine(repoAccess: repoAccess)
+        }
 
         if #available(iOS 26.0, *) {
-            let fm = FoundationModelService()
-            fm.refreshStatus()
-            foundationModel = fm
+            if foundationModel == nil {
+                let fm = FoundationModelService()
+                fm.refreshStatus()
+                foundationModel = fm
+            }
         }
 
-        await qwen.warmUp()
+        if !qwen.isLoaded {
+            await qwen.warmUp()
+        }
         if let err = qwen.loadError {
             let combined = [warmUpError, "Qwen: \(err)"].compactMap { $0 }.joined(separator: "; ")
             warmUpError = combined.isEmpty ? nil : combined
