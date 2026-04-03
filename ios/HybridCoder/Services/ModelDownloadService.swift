@@ -107,7 +107,13 @@ final class ModelDownloadService {
 
                 if fm.fileExists(atPath: localURL.path) {
                     if Self.shouldRedownloadExistingFile(localURL: localURL, modelFile: file) {
-                        try? fm.removeItem(at: localURL)
+                        do {
+                            try fm.removeItem(at: localURL)
+                            logger.warning("Removed invalid cached model artifact path=\(localURL.path, privacy: .private)")
+                        } catch {
+                            logger.error("Failed to remove invalid cached artifact path=\(localURL.path, privacy: .private) error=\(error.localizedDescription, privacy: .private)")
+                            throw DownloadError.fileCorrupt("Failed to remove invalid cached file: \(file.localPath)")
+                        }
                     } else {
                         completed += 1
                         updateProgress(completed: completed, total: totalCount, modelID: modelID)
@@ -200,11 +206,26 @@ final class ModelDownloadService {
     private static func shouldRedownloadExistingFile(localURL: URL, modelFile: ModelRegistry.ModelFile) -> Bool {
         // Guard against stale/corrupt cached tokenizer files (for example HTML error pages)
         // that can cause tokenizer decode failures while still passing existence checks.
-        if modelFile.localPath.hasSuffix("tokenizer.json") || modelFile.localPath.hasSuffix("tokenizer_config.json") || modelFile.localPath.hasSuffix("special_tokens_map.json") {
+        let name = localURL.lastPathComponent.lowercased()
+        let jsonArtifactNames: Set<String> = [
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "manifest.json",
+            "metadata.json"
+        ]
+
+        if jsonArtifactNames.contains(name) {
             return isInvalidJSONFile(at: localURL)
         }
 
-        if modelFile.localPath.hasSuffix("Manifest.json") || modelFile.localPath.hasSuffix("metadata.json") {
+        // Fallback to model registry local path in case naming changes after move/rename.
+        let registryPath = modelFile.localPath.lowercased()
+        if registryPath.hasSuffix("tokenizer.json") ||
+            registryPath.hasSuffix("tokenizer_config.json") ||
+            registryPath.hasSuffix("special_tokens_map.json") ||
+            registryPath.hasSuffix("manifest.json") ||
+            registryPath.hasSuffix("metadata.json") {
             return isInvalidJSONFile(at: localURL)
         }
 
@@ -216,8 +237,12 @@ final class ModelDownloadService {
             return true
         }
 
-        if let prefix = String(data: data.prefix(64), encoding: .utf8)?.lowercased(), prefix.contains("<html") {
-            return true
+        let htmlProbeLength = min(data.count, 1024)
+        if htmlProbeLength > 0,
+           let prefix = String(data: data.prefix(htmlProbeLength), encoding: .utf8)?.lowercased() {
+            if prefix.contains("<html") || prefix.contains("<!doctype html") {
+                return true
+            }
         }
 
         guard let json = try? JSONSerialization.jsonObject(with: data) else {
