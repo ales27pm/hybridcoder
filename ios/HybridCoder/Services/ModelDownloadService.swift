@@ -44,6 +44,10 @@ final class ModelDownloadService {
         } else {
             UserDefaults.standard.set(cleaned, forKey: TokenStore.huggingFaceTokenKey)
         }
+
+        // User acted on auth guidance (save or clear), so hide stale token prompts/errors.
+        shouldSuggestTokenInput = false
+        downloadError = nil
     }
 
     func refreshInstallState(modelID: String) {
