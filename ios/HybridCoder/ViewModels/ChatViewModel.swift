@@ -1,17 +1,42 @@
-import Foundation
 import SwiftUI
 
-@Observable
 @MainActor
+@Observable
 final class ChatViewModel {
-    var messages: [ChatMessage] = []
-    var inputText: String = ""
-    var isStreaming: Bool = false
-    var errorMessage: String?
-
     private let codeIndexService: CodeIndexService
     private let patchService: PatchService
     private let coreMLService: CoreMLCodeService
+
+    private(set) var messages: [ChatMessage] = []
+    var inputText: String = ""
+    private(set) var isStreaming: Bool = false
+    private(set) var isImportingRepo: Bool = false
+    private(set) var isReindexing: Bool = false
+    private(set) var pendingPatchPlan: PatchPlan?
+    private(set) var lastPatchResult: PatchEngine.PatchResult?
+    private(set) var errorMessage: String?
+
+    var semanticStatus: String {
+        if codeIndexService.isIndexing {
+            return "Indexing \(Int(codeIndexService.indexProgress * 100))%…"
+        }
+        let count = codeIndexService.indexedFiles.count
+        if count > 0 {
+            return "\(count) files indexed"
+        }
+        return "No repository indexed"
+    }
+
+    var foundationModelStatus: String {
+        if #available(iOS 26.0, *) {
+            return "Available (iOS 26)"
+        }
+        return "Unavailable (requires iOS 26)"
+    }
+
+    var hasIndexedFiles: Bool {
+        !codeIndexService.indexedFiles.isEmpty
+    }
 
     init(
         codeIndexService: CodeIndexService,
@@ -23,152 +48,241 @@ final class ChatViewModel {
         self.coreMLService = coreMLService
     }
 
-    func sendMessage() async {
-        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+    // MARK: - Send Message
 
-        let userMessage = ChatMessage(role: .user, content: text)
+    func sendMessage() async {
+        let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isStreaming else { return }
+
+        let userMessage = ChatMessage(role: .user, content: trimmed)
         messages.append(userMessage)
         inputText = ""
         isStreaming = true
         errorMessage = nil
 
-        let context = codeIndexService.findRelevantContext(for: text)
-
-        if #available(iOS 26.0, *) {
-            await generateWithFoundationModel(userText: text, context: context)
-        } else {
-            let fallback = ChatMessage(
-                role: .assistant,
-                content: "Foundation Models require iOS 26 or later. Please update your device to use the AI assistant."
-            )
-            messages.append(fallback)
-            isStreaming = false
-        }
-    }
-
-    @available(iOS 26.0, *)
-    private func generateWithFoundationModel(userText: String, context: String) async {
         do {
-            let service = FoundationModelService()
+            let response = try await processQuery(trimmed)
+            messages.append(response)
 
-            let fileList = codeIndexService.indexedFilePaths()
-            let routeDecision = try await service.classifyRoute(query: userText, fileList: fileList)
-            let route = Route(from: routeDecision.route) ?? .explanation
-
-            var assistantMessage = ChatMessage(role: .assistant, content: "")
-            messages.append(assistantMessage)
-            let messageIndex = messages.count - 1
-
-            let stream = service.streamAnswer(query: userText, context: context, route: route)
-            for try await partial in stream {
-                messages[messageIndex].content = partial
-            }
-
-            let finalContent = messages[messageIndex].content
-            let extractedPatches = extractPatches(from: finalContent)
-            if !extractedPatches.isEmpty {
-                messages[messageIndex].patches = extractedPatches
-                for patch in extractedPatches {
-                    patchService.addPatch(patch)
-                }
+            let pendingPatches = response.patches.filter { $0.status == .pending }
+            for patch in pendingPatches {
+                patchService.addPatch(patch)
             }
         } catch {
-            let errorMsg = ChatMessage(
-                role: .assistant,
-                content: "I encountered an error: \(error.localizedDescription)"
-            )
-            messages.append(errorMsg)
+            let fallback = "Sorry, I couldn't process that: \(error.localizedDescription)"
+            messages.append(ChatMessage(role: .assistant, content: fallback))
+            errorMessage = error.localizedDescription
         }
 
         isStreaming = false
     }
 
-    private func buildSystemPrompt(context: String) -> String {
-        var prompt = """
-        You are HybridCoder, a local coding assistant running on-device. You help developers understand, modify, and debug their code repositories.
+    // MARK: - Query Processing
 
-        Rules:
-        - Be concise and direct
-        - When suggesting code changes, format them as exact-match patches using this format:
-        PATCH: filepath
-        OLD:
-        ```
-        exact old code
-        ```
-        NEW:
-        ```
-        exact new code
-        ```
-        END_PATCH
-        - Always reference specific files and line ranges when possible
-        - Explain your reasoning briefly
-        """
+    private func processQuery(_ query: String) async throws -> ChatMessage {
+        let context = codeIndexService.findRelevantContext(for: query)
+        let route = classifyRoute(for: query)
 
-        if !context.isEmpty {
-            prompt += "\n\nRelevant code from the repository:\n\(context)"
+        switch route {
+        case .explanation:
+            let answer = try await generateExplanation(query: query, context: context)
+            return ChatMessage(role: .assistant, content: answer)
+
+        case .codeGeneration:
+            let code = try await generateCode(query: query, context: context)
+            let blocks = extractCodeBlocks(from: code)
+            return ChatMessage(role: .assistant, content: code, codeBlocks: blocks)
+
+        case .patchPlanning:
+            let patches = try await generatePatches(query: query, context: context)
+            let summary = patches.isEmpty
+                ? "No patches could be generated."
+                : "\(patches.count) patch\(patches.count == 1 ? "" : "es") proposed:"
+            return ChatMessage(role: .assistant, content: summary, patches: patches)
+
+        case .search:
+            let hits = codeIndexService.searchFiles(query: query)
+            let summary = formatSearchResults(hits)
+            return ChatMessage(role: .assistant, content: summary)
         }
-
-        return prompt
     }
 
-    private func extractPatches(from content: String) -> [Patch] {
-        var patches: [Patch] = []
-        let lines = content.components(separatedBy: "\n")
-        var i = 0
+    // MARK: - Route Classification
 
-        while i < lines.count {
-            if lines[i].hasPrefix("PATCH:") {
-                let filePath = lines[i].replacingOccurrences(of: "PATCH:", with: "").trimmingCharacters(in: .whitespaces)
-                var oldText = ""
-                var newText = ""
-                var inOld = false
-                var inNew = false
-                i += 1
+    private func classifyRoute(for query: String) -> Route {
+        let lower = query.lowercased()
 
-                while i < lines.count && !lines[i].hasPrefix("END_PATCH") {
-                    if lines[i].hasPrefix("OLD:") {
-                        inOld = true
-                        inNew = false
-                        i += 1
-                        if i < lines.count && lines[i].hasPrefix("```") { i += 1 }
-                        continue
-                    }
-                    if lines[i].hasPrefix("NEW:") {
-                        inOld = false
-                        inNew = true
-                        i += 1
-                        if i < lines.count && lines[i].hasPrefix("```") { i += 1 }
-                        continue
-                    }
-                    if lines[i].hasPrefix("```") {
-                        inOld = false
-                        inNew = false
-                        i += 1
-                        continue
-                    }
-                    if inOld { oldText += (oldText.isEmpty ? "" : "\n") + lines[i] }
-                    if inNew { newText += (newText.isEmpty ? "" : "\n") + lines[i] }
-                    i += 1
-                }
+        let patchKeywords = ["change", "modify", "update", "replace", "fix", "refactor", "rename", "add to", "remove from", "patch", "edit"]
+        if patchKeywords.contains(where: { lower.contains($0) }) {
+            return .patchPlanning
+        }
 
-                if !filePath.isEmpty && !oldText.isEmpty {
-                    patches.append(Patch(
-                        filePath: filePath,
-                        oldText: oldText,
-                        newText: newText,
-                        description: "AI-suggested change to \(filePath)"
-                    ))
-                }
+        let codeKeywords = ["write", "create", "implement", "generate", "build", "make a", "code for"]
+        if codeKeywords.contains(where: { lower.contains($0) }) {
+            return .codeGeneration
+        }
+
+        let searchKeywords = ["find", "search", "where is", "locate", "show me", "which file"]
+        if searchKeywords.contains(where: { lower.contains($0) }) {
+            return .search
+        }
+
+        return .explanation
+    }
+
+    // MARK: - Generation
+
+    private func generateExplanation(query: String, context: String) async throws -> String {
+        if let result = await coreMLService.generateCode(
+            prompt: "Explain the following based on the codebase context.\n\nQuestion: \(query)\n\nContext:\n\(context)",
+            context: context
+        ) {
+            return result
+        }
+
+        if context.isEmpty {
+            return "I don't have enough context to answer that. Try importing a repository first."
+        }
+
+        return buildFallbackExplanation(query: query, context: context)
+    }
+
+    private func generateCode(query: String, context: String) async throws -> String {
+        if let result = await coreMLService.generateCode(prompt: query, context: context) {
+            return result
+        }
+
+        return "Code generation requires the Qwen model. Please download it from the Models tab."
+    }
+
+    private func generatePatches(query: String, context: String) async throws -> [Patch] {
+        if let result = await coreMLService.generateCode(
+            prompt: "Generate exact find-and-replace patches for: \(query)\n\nContext:\n\(context)",
+            context: context
+        ) {
+            return parsePatchesFromResponse(result)
+        }
+
+        return []
+    }
+
+    // MARK: - Reindex
+
+    func reindex(url: URL) async {
+        guard !isReindexing else { return }
+        isReindexing = true
+        appendSystemMessage("Rebuilding index…")
+
+        await codeIndexService.indexRepository(at: url)
+
+        let count = codeIndexService.indexedFiles.count
+        appendSystemMessage("Index rebuilt — \(count) file\(count == 1 ? "" : "s") indexed.")
+        isReindexing = false
+    }
+
+    // MARK: - Patch Application
+
+    func applyPatch(_ patchId: UUID, rootURL: URL) {
+        do {
+            try patchService.applyPatch(patchId, rootURL: rootURL)
+            appendSystemMessage("Patch applied successfully.")
+        } catch {
+            appendSystemMessage("Patch failed: \(error.localizedDescription)")
+        }
+    }
+
+    func rejectPatch(_ patchId: UUID) {
+        patchService.rejectPatch(patchId)
+    }
+
+    // MARK: - Clear Chat
+
+    func clearChat() {
+        messages.removeAll()
+        inputText = ""
+        errorMessage = nil
+    }
+
+    // MARK: - Private Helpers
+
+    private func appendSystemMessage(_ content: String) {
+        messages.append(ChatMessage(role: .system, content: content))
+    }
+
+    private func extractCodeBlocks(from text: String) -> [CodeBlock] {
+        var blocks: [CodeBlock] = []
+        let scanner = text as NSString
+        let pattern = "```(\\w*)\\n([\\s\\S]*?)```"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return blocks }
+
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: scanner.length))
+        for match in matches {
+            let lang = match.numberOfRanges > 1 ? scanner.substring(with: match.range(at: 1)) : ""
+            let code = match.numberOfRanges > 2 ? scanner.substring(with: match.range(at: 2)) : ""
+            if !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                blocks.append(CodeBlock(language: lang, code: code))
             }
-            i += 1
+        }
+
+        return blocks
+    }
+
+    private func formatSearchResults(_ hits: [IndexedFile]) -> String {
+        guard !hits.isEmpty else { return "No matching files found." }
+
+        let capped = hits.prefix(10)
+        var lines: [String] = ["Found \(hits.count) matching file\(hits.count == 1 ? "" : "s"):\n"]
+        for (i, file) in capped.enumerated() {
+            lines.append("**\(i + 1).** `\(file.relativePath)` — \(file.lineCount) lines (\(file.language))")
+        }
+        if hits.count > 10 {
+            lines.append("\n…and \(hits.count - 10) more.")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func parsePatchesFromResponse(_ text: String) -> [Patch] {
+        var patches: [Patch] = []
+        let blocks = text.components(separatedBy: "FILE:")
+
+        for block in blocks.dropFirst() {
+            let lines = block.components(separatedBy: "\n")
+            guard let fileLine = lines.first?.trimmingCharacters(in: .whitespaces), !fileLine.isEmpty else { continue }
+
+            let content = lines.dropFirst().joined(separator: "\n")
+            guard let searchRange = content.range(of: "SEARCH:\n"),
+                  let replaceRange = content.range(of: "\nREPLACE:\n"),
+                  let endRange = content.range(of: "\nEND") else { continue }
+
+            let searchText = String(content[searchRange.upperBound..<replaceRange.lowerBound])
+            let replaceText = String(content[replaceRange.upperBound..<endRange.lowerBound])
+
+            patches.append(Patch(
+                filePath: fileLine,
+                oldText: searchText,
+                newText: replaceText
+            ))
         }
 
         return patches
     }
 
-    func clearChat() {
-        messages.removeAll()
-        errorMessage = nil
+    private func buildFallbackExplanation(query: String, context: String) -> String {
+        let fileCount = codeIndexService.indexedFiles.count
+        let relevant = codeIndexService.searchFiles(query: query)
+
+        var response = "Based on the indexed repository (\(fileCount) files):\n\n"
+
+        if relevant.isEmpty {
+            response += "I couldn't find files directly related to your query. Try rephrasing or checking if the relevant files are in the imported folder."
+        } else {
+            response += "Found \(relevant.count) potentially relevant file\(relevant.count == 1 ? "" : "s"):\n\n"
+            for file in relevant.prefix(5) {
+                response += "• **\(file.relativePath)** — \(file.lineCount) lines\n"
+            }
+            response += "\nFor deeper analysis, ensure the Qwen model is downloaded from the Models tab."
+        }
+
+        return response
     }
 }
