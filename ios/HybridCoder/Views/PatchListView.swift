@@ -5,6 +5,7 @@ struct PatchListView: View {
     let repositoryURL: URL?
     @State private var errorMessage: String?
     @State private var showError: Bool = false
+    @State private var previewingPatch: PatchPreview?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +27,15 @@ struct PatchListView: View {
                 Text(errorMessage)
             }
         }
+        .sheet(item: $previewingPatch) { preview in
+            PatchPreviewView(
+                preview: preview,
+                onApply: { applyPatch(preview.patch.id) },
+                onReject: { rejectPatch(preview.patch.id) }
+            )
+            .presentationDetents([.large])
+            .presentationContentInteraction(.scrolls)
+        }
     }
 
     private var patchList: some View {
@@ -39,28 +49,33 @@ struct PatchListView: View {
                 if !pending.isEmpty {
                     sectionHeader("Pending", count: pending.count, color: .orange)
                     ForEach(pending) { patch in
-                        PatchCard(patch: patch, onApply: { applyPatch(patch.id) }, onReject: { rejectPatch(patch.id) })
+                        PatchCard(
+                            patch: patch,
+                            onPreview: { showPreview(for: patch) },
+                            onApply: { showPreview(for: patch) },
+                            onReject: { rejectPatch(patch.id) }
+                        )
                     }
                 }
 
                 if !applied.isEmpty {
                     sectionHeader("Applied", count: applied.count, color: Theme.accent)
                     ForEach(applied) { patch in
-                        PatchCard(patch: patch, onApply: nil, onReject: nil)
+                        PatchCard(patch: patch, onPreview: nil, onApply: nil, onReject: nil)
                     }
                 }
 
                 if !rejected.isEmpty {
                     sectionHeader("Rejected", count: rejected.count, color: .red)
                     ForEach(rejected) { patch in
-                        PatchCard(patch: patch, onApply: nil, onReject: nil)
+                        PatchCard(patch: patch, onPreview: nil, onApply: nil, onReject: nil)
                     }
                 }
 
                 if !failed.isEmpty {
                     sectionHeader("Failed", count: failed.count, color: .red)
                     ForEach(failed) { patch in
-                        PatchCard(patch: patch, onApply: nil, onReject: nil)
+                        PatchCard(patch: patch, onPreview: nil, onApply: nil, onReject: nil)
                     }
                 }
             }
@@ -80,6 +95,17 @@ struct PatchListView: View {
             Spacer()
         }
         .padding(.top, 8)
+    }
+
+    private func showPreview(for patch: Patch) {
+        guard let url = repositoryURL else {
+            errorMessage = "No repository is open."
+            showError = true
+            return
+        }
+        if let preview = patchService.generatePreview(for: patch.id, rootURL: url) {
+            previewingPatch = preview
+        }
     }
 
     private func applyPatch(_ id: UUID) {
@@ -103,6 +129,7 @@ struct PatchListView: View {
 
 private struct PatchCard: View {
     let patch: Patch
+    let onPreview: (() -> Void)?
     let onApply: (() -> Void)?
     let onReject: (() -> Void)?
 
@@ -139,8 +166,8 @@ private struct PatchCard: View {
                 diffBlock(prefix: "+", text: patch.newText, color: Theme.accent)
             }
 
-            if onApply != nil || onReject != nil {
-                HStack(spacing: 12) {
+            if onApply != nil || onReject != nil || onPreview != nil {
+                HStack(spacing: 10) {
                     if let onReject {
                         Button("Reject", role: .destructive) { onReject() }
                             .font(.caption.weight(.medium))
@@ -148,16 +175,21 @@ private struct PatchCard: View {
                             .controlSize(.small)
                     }
 
-                    if let onApply {
-                        Button("Apply") { onApply() }
-                            .font(.caption.weight(.medium))
-                            .buttonStyle(.borderedProminent)
-                            .tint(Theme.accent)
-                            .controlSize(.small)
-                            .sensoryFeedback(.success, trigger: patch.status == .applied)
+                    Spacer()
+
+                    if let onPreview {
+                        Button {
+                            onPreview()
+                        } label: {
+                            Label("Review", systemImage: "eye")
+                                .font(.caption.weight(.medium))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.orange)
+                        .controlSize(.small)
+                        .sensoryFeedback(.selection, trigger: patch.id)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
         .padding(14)

@@ -59,6 +59,23 @@ final class PatchService {
         patches.filter { $0.status == .pending }
     }
 
+    func generatePreview(for patchId: UUID, rootURL: URL) -> PatchPreview? {
+        guard let patch = patches.first(where: { $0.id == patchId }) else { return nil }
+
+        let fileURL: URL
+        if patch.filePath.hasPrefix("/") {
+            fileURL = URL(fileURLWithPath: patch.filePath)
+        } else {
+            fileURL = rootURL.appendingPathComponent(patch.filePath)
+        }
+
+        guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else {
+            return PatchPreview.generate(for: patch, fileContent: "")
+        }
+
+        return PatchPreview.generate(for: patch, fileContent: content)
+    }
+
     nonisolated enum PatchError: Error, LocalizedError, Sendable {
         case fileNotFound(String)
         case readFailed(String)
