@@ -8,9 +8,13 @@ final class ChatViewModel {
     private(set) var messages: [ChatMessage] = []
     var inputText: String = ""
     private(set) var isStreaming: Bool = false
+    private(set) var streamingText: String = ""
+    private(set) var currentRoute: Route?
     private(set) var patchPlans: [PatchPlan] = []
     private(set) var lastPatchResult: PatchEngine.PatchResult?
     private(set) var errorMessage: String?
+
+    var onPatchApplied: (() -> Void)?
 
     var activePatchPlan: PatchPlan? {
         patchPlans.first { $0.pendingCount > 0 }
@@ -54,10 +58,17 @@ final class ChatViewModel {
         messages.append(userMessage)
         inputText = ""
         isStreaming = true
+        streamingText = ""
+        currentRoute = nil
         errorMessage = nil
 
         do {
-            let response = try await orchestrator.processQuery(trimmed)
+            let (response, route) = try await orchestrator.processQueryStreaming(trimmed) { [weak self] partial in
+                self?.streamingText = partial
+            }
+
+            currentRoute = route
+            streamingText = ""
 
             var planID: UUID?
             if let plan = response.patchPlan {
@@ -69,15 +80,18 @@ final class ChatViewModel {
                 role: .assistant,
                 content: response.text,
                 codeBlocks: response.codeBlocks,
-                patchPlanID: planID
+                patchPlanID: planID,
+                routeKind: response.routeUsed.rawValue
             ))
         } catch {
+            streamingText = ""
             let fallback = "Could not process your request: \(error.localizedDescription)"
             messages.append(ChatMessage(role: .assistant, content: fallback))
             errorMessage = error.localizedDescription
         }
 
         isStreaming = false
+        currentRoute = nil
     }
 
     func previewOperation(_ operation: PatchOperation, in plan: PatchPlan) async -> PatchPreview? {
@@ -117,7 +131,9 @@ final class ChatViewModel {
             }
             patchPlans[planIndex] = updatedPlan
 
-            appendSystemMessage("Applied patch to \(plan.operations.first { $0.id == operationID }?.filePath ?? "file")")
+            let fileName = plan.operations.first { $0.id == operationID }?.filePath ?? "file"
+            appendSystemMessage("Applied patch to \(fileName)")
+            onPatchApplied?()
         } catch {
             appendSystemMessage("Patch failed: \(error.localizedDescription)")
         }
@@ -132,6 +148,7 @@ final class ChatViewModel {
             lastPatchResult = result
             patchPlans[planIndex] = result.updatedPlan
             appendSystemMessage("Patch result: \(result.summary)")
+            onPatchApplied?()
         } catch {
             appendSystemMessage("Patch failed: \(error.localizedDescription)")
         }
@@ -151,9 +168,15 @@ final class ChatViewModel {
     func clearChat() {
         messages.removeAll()
         inputText = ""
+        streamingText = ""
+        currentRoute = nil
         errorMessage = nil
         patchPlans.removeAll()
         lastPatchResult = nil
+    }
+
+    func dismissError() {
+        errorMessage = nil
     }
 
     private func appendSystemMessage(_ content: String) {

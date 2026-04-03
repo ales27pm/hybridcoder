@@ -31,6 +31,17 @@ final class AppViewModel {
         self.orchestrator = orchestrator
         self.bookmarkService = bookmark
         self.chatViewModel = chat
+
+        chat.onPatchApplied = { [weak self] in
+            self?.refreshFileTree()
+        }
+    }
+
+    func refreshFileTree() {
+        guard let url = activeRepositoryURL else { return }
+        Task {
+            fileTree = await orchestrator.repoAccess.buildFileTree(at: url)
+        }
     }
 
     func openRepository(_ repository: Repository) {

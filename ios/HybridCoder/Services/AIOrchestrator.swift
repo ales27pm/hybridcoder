@@ -190,6 +190,80 @@ final class AIOrchestrator {
         }
     }
 
+    func processQueryStreaming(_ query: String, onPartial: @escaping (String) -> Void) async throws -> (response: AssistantResponse, route: Route) {
+        isProcessing = true
+        defer { isProcessing = false }
+
+        let route = await resolveRoute(for: query)
+        let context = await gatherContext(for: query, route: route)
+
+        switch route {
+        case .explanation:
+            let text = try await streamText(query: query, context: context, route: route, preferQwen: false, onPartial: onPartial)
+            return (AssistantResponse(text: text, routeUsed: .explanation), route)
+
+        case .codeGeneration:
+            let code = try await streamText(query: query, context: context, route: route, preferQwen: true, onPartial: onPartial)
+            let blocks = extractCodeBlocks(from: code)
+            return (AssistantResponse(text: code, codeBlocks: blocks, routeUsed: .codeGeneration), route)
+
+        case .patchPlanning:
+            let plan = try await generatePatchPlan(query: query, context: context)
+            onPartial(plan.summary)
+            return (AssistantResponse(text: plan.summary, patchPlan: plan, routeUsed: .patchPlanning), route)
+
+        case .search:
+            let hits = (try? await searchCode(query: query, topK: 5)) ?? []
+            let summary = formatSearchResults(hits)
+            onPartial(summary)
+            return (AssistantResponse(text: summary, searchHits: hits, routeUsed: .search), route)
+        }
+    }
+
+    private func streamText(query: String, context: String, route: Route, preferQwen: Bool, onPartial: @escaping (String) -> Void) async throws -> String {
+        if preferQwen && qwen.isLoaded {
+            let systemPrompt = route == .codeGeneration ? PromptBuilder.codeGenerationSystem() : PromptBuilder.explanationSystem()
+            let userPrompt = route == .codeGeneration
+                ? PromptBuilder.codeGenerationUser(query: query, repoContext: context)
+                : PromptBuilder.explanationUser(query: query, repoContext: context)
+            let result = try await qwen.generateStreaming(
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                onChunk: { onPartial($0) }
+            )
+            return result.text
+        }
+
+        if #available(iOS 26.0, *),
+           let fm = foundationModel as? FoundationModelService,
+           fm.isAvailable {
+            do {
+                var fullText = ""
+                let stream = fm.streamAnswer(query: query, context: context, route: route)
+                for try await chunk in stream {
+                    fullText = chunk
+                    onPartial(chunk)
+                }
+                if !fullText.isEmpty { return fullText }
+            } catch { }
+        }
+
+        if !preferQwen && qwen.isLoaded {
+            let systemPrompt = route == .codeGeneration ? PromptBuilder.codeGenerationSystem() : PromptBuilder.explanationSystem()
+            let userPrompt = route == .codeGeneration
+                ? PromptBuilder.codeGenerationUser(query: query, repoContext: context)
+                : PromptBuilder.explanationUser(query: query, repoContext: context)
+            let result = try await qwen.generateStreaming(
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                onChunk: { onPartial($0) }
+            )
+            return result.text
+        }
+
+        throw OrchestratorError.noModelAvailable
+    }
+
     func planPatch(query: String) async throws -> PatchPlan {
         isProcessing = true
         defer { isProcessing = false }

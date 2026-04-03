@@ -164,9 +164,15 @@ struct ContentView: View {
         HStack(spacing: 5) {
             let stats = viewModel.orchestrator.indexStats
             let isIndexing = viewModel.orchestrator.isIndexing
+            let isProcessing = viewModel.orchestrator.isProcessing
             let chunkCount = stats?.embeddedChunks ?? 0
 
-            if isIndexing {
+            if isProcessing {
+                Image(systemName: "brain")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Theme.accent)
+                    .symbolEffect(.pulse, isActive: true)
+            } else if isIndexing {
                 Image(systemName: "arrow.triangle.2.circlepath")
                     .font(.system(size: 9))
                     .foregroundStyle(Theme.accent)
@@ -177,9 +183,15 @@ struct ContentView: View {
                     .foregroundStyle(chunkCount > 0 ? Theme.accent.opacity(0.6) : Theme.dimText)
             }
 
-            Text(isIndexing ? "Indexing…" : (chunkCount > 0 ? "\(chunkCount) chunks" : "Not indexed"))
-                .font(.system(.caption2, design: .monospaced))
-                .foregroundStyle(Theme.dimText)
+            if isProcessing {
+                Text("Processing…")
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
+            } else {
+                Text(isIndexing ? "Indexing…" : (chunkCount > 0 ? "\(chunkCount) chunks" : "Not indexed"))
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(Theme.dimText)
+            }
         }
     }
 

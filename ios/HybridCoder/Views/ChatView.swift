@@ -10,10 +10,14 @@ struct ChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if viewModel.messages.isEmpty {
+            if viewModel.messages.isEmpty && !viewModel.isStreaming {
                 emptyState
             } else {
                 messageList
+            }
+
+            if let error = viewModel.errorMessage {
+                errorBanner(error)
             }
 
             if let plan = viewModel.activePatchPlan {
@@ -115,29 +119,88 @@ struct ChatView: View {
                     }
 
                     if viewModel.isStreaming {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(Theme.accent)
-                            Text("Thinking…")
-                                .font(.caption)
-                                .foregroundStyle(Theme.dimText)
-                            Spacer()
-                        }
-                        .padding(.horizontal)
+                        streamingSection
+                            .id("streaming-anchor")
                     }
                 }
                 .padding(.vertical, 16)
             }
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: viewModel.messages.count) { _, _ in
-                if let last = viewModel.messages.last {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(last.id, anchor: .bottom)
-                    }
+                scrollToBottom(proxy)
+            }
+            .onChange(of: viewModel.streamingText) { _, _ in
+                withAnimation(.easeOut(duration: 0.1)) {
+                    proxy.scrollTo("streaming-anchor", anchor: .bottom)
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var streamingSection: some View {
+        if viewModel.streamingText.isEmpty {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(Theme.accent)
+
+                if let route = viewModel.currentRoute {
+                    Text(routeActivityLabel(route))
+                        .font(.caption)
+                        .foregroundStyle(Theme.dimText)
+                } else {
+                    Text("Thinking…")
+                        .font(.caption)
+                        .foregroundStyle(Theme.dimText)
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal)
+        } else {
+            MessageBubble(message: ChatMessage(
+                role: .assistant,
+                content: viewModel.streamingText
+            ))
+            .transition(.opacity)
+        }
+    }
+
+    private func routeActivityLabel(_ route: Route) -> String {
+        switch route {
+        case .explanation: return "Explaining…"
+        case .codeGeneration: return "Generating code…"
+        case .patchPlanning: return "Planning patches…"
+        case .search: return "Searching codebase…"
+        }
+    }
+
+    private func errorBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.caption2)
+                .foregroundStyle(.red)
+
+            Text(message)
+                .font(.caption2)
+                .foregroundStyle(.red.opacity(0.9))
+                .lineLimit(2)
+
+            Spacer()
+
+            Button {
+                viewModel.dismissError()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.dimText)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.red.opacity(0.08))
     }
 
     private func patchPlanBanner(_ plan: PatchPlan) -> some View {
@@ -226,5 +289,13 @@ struct ChatView: View {
 
     private var canSend: Bool {
         !viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !viewModel.isStreaming
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        if let last = viewModel.messages.last {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo(last.id, anchor: .bottom)
+            }
+        }
     }
 }

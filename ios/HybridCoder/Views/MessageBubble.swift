@@ -29,9 +29,15 @@ struct MessageBubble: View {
                     patchSummaryStrip
                 }
 
-                Text(message.timestamp, style: .time)
-                    .font(.caption2)
-                    .foregroundStyle(Theme.dimText)
+                HStack(spacing: 6) {
+                    if let route = message.routeKind {
+                        routeBadge(route)
+                    }
+
+                    Text(message.timestamp, style: .time)
+                        .font(.caption2)
+                        .foregroundStyle(Theme.dimText)
+                }
             }
             .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
 
@@ -118,6 +124,49 @@ struct MessageBubble: View {
                 .font(.caption2)
         }
         .foregroundStyle(Theme.accent.opacity(0.7))
+    }
+
+    private func routeBadge(_ route: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: routeIcon(route))
+                .font(.system(size: 8))
+            Text(routeLabel(route))
+                .font(.system(size: 9, weight: .medium))
+        }
+        .foregroundStyle(routeColor(route).opacity(0.7))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(routeColor(route).opacity(0.08), in: .capsule)
+    }
+
+    private func routeIcon(_ route: String) -> String {
+        switch route {
+        case "explanation": return "lightbulb"
+        case "codeGeneration": return "chevron.left.forwardslash.chevron.right"
+        case "patchPlanning": return "doc.badge.gearshape"
+        case "search": return "magnifyingglass"
+        default: return "brain"
+        }
+    }
+
+    private func routeLabel(_ route: String) -> String {
+        switch route {
+        case "explanation": return "Explanation"
+        case "codeGeneration": return "Code"
+        case "patchPlanning": return "Patch"
+        case "search": return "Search"
+        default: return route
+        }
+    }
+
+    private func routeColor(_ route: String) -> Color {
+        switch route {
+        case "explanation": return .cyan
+        case "codeGeneration": return Theme.accent
+        case "patchPlanning": return .orange
+        case "search": return .purple
+        default: return Theme.dimText
+        }
     }
 
     private func avatarView(icon: String, color: Color) -> some View {
