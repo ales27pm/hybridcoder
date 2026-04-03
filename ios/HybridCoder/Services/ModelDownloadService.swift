@@ -1,5 +1,6 @@
 import Foundation
 import CoreML
+import OSLog
 
 @Observable
 @MainActor
@@ -11,8 +12,13 @@ final class ModelDownloadService {
     private(set) var isDownloading: Bool = false
     private(set) var downloadProgress: Double = 0
     private(set) var downloadError: String?
+    private(set) var shouldSuggestTokenInput: Bool = false
 
     private let registry: ModelRegistry
+    private let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.hybridcoder",
+        category: "ModelDownloadService"
+    )
 
     init(registry: ModelRegistry) {
         self.registry = registry
@@ -38,6 +44,10 @@ final class ModelDownloadService {
         } else {
             UserDefaults.standard.set(cleaned, forKey: TokenStore.huggingFaceTokenKey)
         }
+
+        // User acted on auth guidance (save or clear), so hide stale token prompts/errors.
+        shouldSuggestTokenInput = false
+        downloadError = nil
     }
 
     func refreshInstallState(modelID: String) {
@@ -60,6 +70,7 @@ final class ModelDownloadService {
         isDownloading = true
         downloadProgress = 0
         downloadError = nil
+        shouldSuggestTokenInput = false
         registry.setInstallState(for: modelID, .downloading(progress: 0))
 
         do {
@@ -108,7 +119,12 @@ final class ModelDownloadService {
                 guard let httpResponse = response as? HTTPURLResponse,
                       (200...299).contains(httpResponse.statusCode) else {
                     let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-                    throw DownloadError.httpError(code, file.remotePath)
+                    throw DownloadError.httpError(
+                        statusCode: code,
+                        remotePath: file.remotePath,
+                        modelID: modelID,
+                        repoBaseURL: entry.remoteBaseURL
+                    )
                 }
 
                 let parentDir = localURL.deletingLastPathComponent()
@@ -138,9 +154,12 @@ final class ModelDownloadService {
             registry.setInstallState(for: modelID, .notInstalled)
         } catch let error as DownloadError {
             downloadError = error.localizedDescription
+            shouldSuggestTokenInput = error.shouldSuggestHuggingFaceTokenInput
+            logger.error("DownloadError modelID=\(modelID, privacy: .public) details=\(error.triageSummary, privacy: .private)")
             registry.setInstallState(for: modelID, .notInstalled)
         } catch {
             downloadError = "Download failed: \(error.localizedDescription)"
+            logger.error("Unexpected download failure modelID=\(modelID, privacy: .public) error=\(error.localizedDescription, privacy: .private)")
             registry.setInstallState(for: modelID, .notInstalled)
         }
 
@@ -236,18 +255,69 @@ final class ModelDownloadService {
 
     nonisolated enum DownloadError: Error, LocalizedError, Sendable {
         case modelNotDownloaded(String)
-        case httpError(Int, String)
+        case httpError(statusCode: Int, remotePath: String, modelID: String?, repoBaseURL: String?)
         case fileCorrupt(String)
+
+        nonisolated var isAuthorizationError: Bool {
+            if case .httpError(statusCode: let code, remotePath: _, modelID: _, repoBaseURL: _) = self {
+                return code == 401 || code == 403
+            }
+            return false
+        }
+
+        nonisolated var shouldSuggestHuggingFaceTokenInput: Bool {
+            isAuthorizationError && isHuggingFaceRepository
+        }
+
+        nonisolated var isHuggingFaceRepository: Bool {
+            guard case .httpError(statusCode: _, remotePath: _, modelID: _, repoBaseURL: let repoBaseURL) = self,
+                  let repoBaseURL,
+                  let host = URL(string: repoBaseURL)?.host?.lowercased() else {
+                return false
+            }
+            return host == "huggingface.co" || host.hasSuffix(".huggingface.co")
+        }
+
+        nonisolated var repoHostForDisplay: String? {
+            guard case .httpError(statusCode: _, remotePath: _, modelID: _, repoBaseURL: let repoBaseURL) = self,
+                  let repoBaseURL else {
+                return nil
+            }
+            return URL(string: repoBaseURL)?.host
+        }
+
+        nonisolated var triageSummary: String {
+            switch self {
+            case .modelNotDownloaded(let details):
+                return "modelNotDownloaded: \(details)"
+            case .httpError(statusCode: let code, remotePath: let remotePath, modelID: let modelID, repoBaseURL: let repoBaseURL):
+                return "httpError status=\(code) remotePath=\(remotePath) modelID=\(modelID ?? "nil") repoBaseURL=\(repoBaseURL ?? "nil")"
+            case .fileCorrupt(let file):
+                return "fileCorrupt: \(file)"
+            }
+        }
 
         nonisolated var errorDescription: String? {
             switch self {
             case .modelNotDownloaded(let details):
                 return details
-            case .httpError(let code, let file):
-                if code == 401 {
-                    return "HTTP 401 downloading \(file). Add your Hugging Face token in the Models tab and retry."
+            case .httpError(statusCode: let code, remotePath: let file, modelID: _, repoBaseURL: _):
+                if code == 404 {
+                    return "HTTP 404 downloading \(file). The file, repository, or remote path could not be found."
                 }
-                return "HTTP \(code) downloading \(file). Check your network connection and try again."
+                if code == 401 || code == 403 {
+                    if shouldSuggestHuggingFaceTokenInput {
+                        return "HTTP \(code) downloading \(file). Authentication failed or access is denied. Add a valid Hugging Face token and retry."
+                    }
+                    if let repoHostForDisplay {
+                        return "HTTP \(code) downloading \(file) from \(repoHostForDisplay). Authentication failed or access is denied."
+                    }
+                    return "HTTP \(code) downloading \(file). Authentication failed or access is denied."
+                }
+                if (500...599).contains(code) {
+                    return "HTTP \(code) downloading \(file). The server reported a temporary error. Retry in a moment."
+                }
+                return "HTTP \(code) downloading \(file). The request failed."
             case .fileCorrupt(let file):
                 return "Downloaded file '\(file)' appears corrupt. Delete and re-download."
             }
