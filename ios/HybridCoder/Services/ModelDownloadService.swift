@@ -9,9 +9,9 @@ final class ModelDownloadService {
     private(set) var downloadError: String?
     private(set) var isModelReady: Bool = false
 
-    private static let embeddingModelsDir = "EmbeddingModels"
-    private static let modelDirName = "codebert-base-coreml"
-    private static let tokenizerDirName = "codebert-base-tokenizer"
+    private static let embeddingModelsDir = BundledEmbeddingAssets.embeddingModelsFolder
+    private static let modelDirName = BundledEmbeddingAssets.modelDirectoryName
+    private static let tokenizerDirName = BundledEmbeddingAssets.tokenizerDirectoryName
     private static let canonicalModelID = "microsoft/codebert-base"
     private static let canonicalModelLabel = "CodeBERT (microsoft/codebert-base)"
 
@@ -239,7 +239,9 @@ final class ModelDownloadService {
             return downloadedModel
         }
 
-        return try BundledEmbeddingAssets.locateModelAsset()
+        throw DownloadError.modelNotDownloaded(
+            "Embedding model not found at \(downloadedModel.path). Download \(canonicalModelLabel) from Model Manager before using semantic search."
+        )
     }
 
     nonisolated static func locateTokenizerAsset() throws -> URL {
@@ -251,10 +253,13 @@ final class ModelDownloadService {
             return downloadedTokenizer
         }
 
-        return try BundledEmbeddingAssets.locateTokenizerAssets()
+        throw DownloadError.modelNotDownloaded(
+            "Tokenizer assets not found at \(downloadedTokenizer.path). Download \(canonicalModelLabel) from Model Manager before using semantic search."
+        )
     }
 
     nonisolated enum DownloadError: Error, LocalizedError, Sendable {
+        case modelNotDownloaded(String)
         case httpError(Int, String)
         case fileCorrupt(String)
         case metadataMismatch(file: String, expected: String, found: String)
@@ -262,6 +267,8 @@ final class ModelDownloadService {
 
         nonisolated var errorDescription: String? {
             switch self {
+            case .modelNotDownloaded(let details):
+                return details
             case .httpError(let code, let file):
                 return "HTTP \(code) downloading \(file). Check your network connection and try again."
             case .fileCorrupt(let file):
