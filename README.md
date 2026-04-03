@@ -15,6 +15,16 @@ This repository is now standardized on **FoundationModels + CoreML (iOS 26+)**.
 - Minimum deployment target: **iOS 26.0** for all app and test targets.
 - Apple Intelligence availability is required for model-backed assistant responses.
 
+## Supported OS / Model Matrix
+
+| Runtime capability | Supported OS | Provider | Fallback |
+| --- | --- | --- | --- |
+| Route classification | iOS 26.0+ | Apple Foundation Models | None |
+| Assistant generation (explain/code/patch planning) | iOS 26.0+ | Apple Foundation Models | None |
+| Semantic embeddings / search index | iOS 26.0+ | CoreML CodeBERT | None (user must download embedding model) |
+
+HybridCoder is **Foundation Models first and only** for generation/routing. If Apple Intelligence is unavailable at runtime, requests fail with a deterministic "no model available" error instead of falling back to alternate providers.
+
 ## Why this path
 
 - Single Apple-native stack for inference + orchestration.
