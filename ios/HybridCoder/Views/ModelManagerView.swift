@@ -1,0 +1,235 @@
+import SwiftUI
+
+struct ModelManagerView: View {
+    let downloadService: ModelDownloadService
+    @State private var qwenURLString: String = ""
+    @State private var codeBERTURLString: String = ""
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                headerSection
+
+                ForEach(downloadService.models) { model in
+                    ModelCard(
+                        model: model,
+                        urlString: binding(for: model.id),
+                        onDownload: { downloadModel(model.id) },
+                        onCancel: { downloadService.cancelDownload(model.id) },
+                        onDelete: { downloadService.deleteModel(model.id) }
+                    )
+                }
+
+                foundationModelStatus
+            }
+            .padding(16)
+        }
+        .background(Theme.surfaceBg)
+    }
+
+    private var headerSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: "cpu")
+                    .font(.title3)
+                    .foregroundStyle(Theme.accent)
+
+                Text("On-Device Models")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white)
+            }
+
+            Text("Download CoreML models for local code generation and semantic search. All inference runs on-device.")
+                .font(.caption)
+                .foregroundStyle(Theme.dimText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var foundationModelStatus: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "apple.intelligence")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.accent)
+
+                Text("Apple Foundation Models")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white)
+
+                Spacer()
+
+                if #available(iOS 26.0, *) {
+                    FoundationModelStatusBadge()
+                } else {
+                    Text("Requires iOS 26")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.orange.opacity(0.15), in: .capsule)
+                }
+            }
+
+            Text("Used for routing, explanations, structured outputs, and patch planning. Built into iOS — no download needed.")
+                .font(.caption)
+                .foregroundStyle(Theme.dimText)
+        }
+        .padding(14)
+        .background(Theme.cardBg, in: .rect(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Theme.border, lineWidth: 1)
+        )
+    }
+
+    private func binding(for modelId: String) -> Binding<String> {
+        switch modelId {
+        case "qwen2.5-coder-1.5b": return $qwenURLString
+        case "codebert-base": return $codeBERTURLString
+        default: return .constant("")
+        }
+    }
+
+    private func downloadModel(_ modelId: String) {
+        let urlString: String
+        switch modelId {
+        case "qwen2.5-coder-1.5b": urlString = qwenURLString
+        case "codebert-base": urlString = codeBERTURLString
+        default: return
+        }
+
+        guard let url = URL(string: urlString), !urlString.isEmpty else { return }
+        downloadService.setDownloadURL(for: modelId, url: url)
+        Task { await downloadService.downloadModel(modelId) }
+    }
+}
+
+@available(iOS 26.0, *)
+private struct FoundationModelStatusBadge: View {
+    var body: some View {
+        let available = SystemLanguageModel.default.isAvailable
+        Text(available ? "Available" : "Unavailable")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(available ? Theme.accent : .red)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background((available ? Theme.accent : .red).opacity(0.15), in: .capsule)
+    }
+}
+
+import FoundationModels
+
+private struct ModelCard: View {
+    let model: ModelInfo
+    @Binding var urlString: String
+    let onDownload: () -> Void
+    let onCancel: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(model.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+
+                    Text(model.description)
+                        .font(.caption)
+                        .foregroundStyle(Theme.dimText)
+                }
+
+                Spacer()
+
+                statusBadge
+            }
+
+            if model.status == .notDownloaded || model.status == .failed {
+                TextField("Model download URL...", text: $urlString)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Theme.inputBg, in: .rect(cornerRadius: 8))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+            }
+
+            if model.status == .downloading || model.status == .extracting {
+                VStack(spacing: 4) {
+                    ProgressView(value: model.progress)
+                        .tint(Theme.accent)
+
+                    HStack {
+                        Text(model.status == .extracting ? "Extracting..." : "Downloading...")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.dimText)
+                        Spacer()
+                        Text("\(Int(model.progress * 100))%")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(Theme.accent)
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Text(model.sizeDescription)
+                    .font(.caption2)
+                    .foregroundStyle(Theme.dimText)
+
+                Spacer()
+
+                switch model.status {
+                case .notDownloaded, .failed:
+                    Button("Download") { onDownload() }
+                        .font(.caption.weight(.medium))
+                        .buttonStyle(.borderedProminent)
+                        .tint(Theme.accent)
+                        .controlSize(.small)
+                        .disabled(urlString.isEmpty)
+
+                case .downloading:
+                    Button("Cancel") { onCancel() }
+                        .font(.caption.weight(.medium))
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+
+                case .downloaded:
+                    Button("Delete", role: .destructive) { onDelete() }
+                        .font(.caption.weight(.medium))
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+
+                case .extracting:
+                    EmptyView()
+                }
+            }
+        }
+        .padding(14)
+        .background(Theme.cardBg, in: .rect(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Theme.border, lineWidth: 1)
+        )
+    }
+
+    private var statusBadge: some View {
+        let (text, color): (String, Color) = {
+            switch model.status {
+            case .notDownloaded: return ("Not Downloaded", Theme.dimText)
+            case .downloading: return ("Downloading", .orange)
+            case .extracting: return ("Extracting", .orange)
+            case .downloaded: return ("Ready", Theme.accent)
+            case .failed: return ("Failed", .red)
+            }
+        }()
+
+        return Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.15), in: .capsule)
+    }
+}
