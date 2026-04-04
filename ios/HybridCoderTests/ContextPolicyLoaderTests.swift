@@ -95,7 +95,7 @@ struct ContextPolicyLoaderTests {
 
         let anchors = AIOrchestrator.resolvePolicyLoadAnchors(repoRoot: repoRoot, preferredWorkingDirectory: preferred)
 
-        #expect(anchors.start.standardizedFileURL == preferred.standardizedFileURL)
+        #expect(anchors.start.standardizedFileURL == repoRoot.standardizedFileURL)
         #expect(anchors.stopAt.standardizedFileURL == repoRoot.standardizedFileURL)
     }
 
