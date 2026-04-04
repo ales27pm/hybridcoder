@@ -494,7 +494,8 @@ final class AIOrchestrator {
 
         if !policyText.isEmpty {
             let policySection = "<policy_context>\n\(policyText)\n</policy_context>"
-            let clipped = String(policySection.prefix(remaining)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let policyLimit = min(remaining, remainingNonCodeBudget)
+            let clipped = String(policySection.prefix(policyLimit)).trimmingCharacters(in: .whitespacesAndNewlines)
             if !clipped.isEmpty {
                 sections.append(clipped)
                 remaining -= clipped.count

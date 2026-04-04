@@ -20,17 +20,17 @@ nonisolated struct ConversationMemoryContext: Sendable, Equatable {
         var blocks: [String] = []
 
         if let compactionSummary, !compactionSummary.isEmpty {
-            blocks.append("Compaction summary:\n\(compactionSummary)")
+            blocks.append("Compaction summary:\n\(Self.escapeForPrompt(compactionSummary))")
         }
 
         if !fileOperationSummaries.isEmpty {
-            let operations = fileOperationSummaries.map { "- \($0)" }.joined(separator: "\n")
+            let operations = fileOperationSummaries.map { "- \(Self.escapeForPrompt($0))" }.joined(separator: "\n")
             blocks.append("File operations:\n\(operations)")
         }
 
         if !recentTurns.isEmpty {
             let renderedTurns = recentTurns.map { turn in
-                "\(turn.role.rawValue.uppercased()): \(turn.content)"
+                "\(turn.role.rawValue.uppercased()): \(Self.escapeForPrompt(turn.content))"
             }.joined(separator: "\n")
             blocks.append("Recent turns:\n\(renderedTurns)")
         }
@@ -41,5 +41,12 @@ nonisolated struct ConversationMemoryContext: Sendable, Equatable {
         guard !body.isEmpty else { return "" }
 
         return "\(prefix)\(body)\(suffix)"
+    }
+
+    nonisolated private static func escapeForPrompt(_ raw: String) -> String {
+        raw
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
     }
 }

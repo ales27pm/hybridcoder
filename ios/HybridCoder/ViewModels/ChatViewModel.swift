@@ -75,7 +75,10 @@ final class ChatViewModel {
 
         do {
             await compactConversationMemoryIfNeeded()
-            let (response, route) = try await orchestrator.processQueryStreaming(trimmed, memory: buildMemoryContext()) { [weak self] partial in
+            let (response, route) = try await orchestrator.processQueryStreaming(
+                trimmed,
+                memory: buildMemoryContext(excludingMostRecentUserTurn: true)
+            ) { [weak self] partial in
                 self?.streamingText = partial
             }
 
@@ -218,10 +221,15 @@ final class ChatViewModel {
         max(1, text.count / 4)
     }
 
-    private func buildMemoryContext() -> ConversationMemoryContext {
+    private func buildMemoryContext(excludingMostRecentUserTurn: Bool = false) -> ConversationMemoryContext {
+        var turns = conversationTurns
+        if excludingMostRecentUserTurn, let last = turns.last, last.role == .user {
+            turns.removeLast()
+        }
+
         ConversationMemoryContext(
             compactionSummary: memorySummary,
-            recentTurns: conversationTurns,
+            recentTurns: turns,
             fileOperationSummaries: fileOperationSummaries
         )
     }

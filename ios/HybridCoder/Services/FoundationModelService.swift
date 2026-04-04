@@ -243,16 +243,20 @@ final class FoundationModelService {
             """
         }
 
+        let clippedSummary = String(priorSummary.prefix(1_200))
+        let clippedOperations = String(fileOperationSummaries.prefix(1_200))
+        let clippedTurns = String(turns.prefix(4_000))
+
         let prompt = Prompt {
             """
             Existing summary:
-            \(priorSummary)
+            \(clippedSummary)
 
             File operation summaries:
-            \(fileOperationSummaries)
+            \(clippedOperations)
 
             Older turns to compact:
-            \(turns)
+            \(clippedTurns)
 
             Return a compact, actionable memory block in under 220 words.
             """

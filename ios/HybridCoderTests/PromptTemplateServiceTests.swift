@@ -275,19 +275,15 @@ struct PromptTemplateServiceTests {
         let service = PromptTemplateService()
         let diagnostics = try await service.diagnostics(for: root)
         let ids = diagnostics.map(\.id)
+        let errorDiagnostics = diagnostics.compactMap { diagnostic -> ErrorDiagnostic? in
+            if case .error(let errorDiagnostic) = diagnostic {
+                return errorDiagnostic
+            }
+            return nil
+        }
 
         #expect(Set(ids).count == ids.count)
-        #expect(diagnostics.contains(where: {
-            if case .error(let errorDiagnostic) = $0 {
-                return errorDiagnostic.contextID == "alias"
-            }
-            return false
-        }))
-        #expect(diagnostics.contains(where: {
-            if case .error(let errorDiagnostic) = $0 {
-                return errorDiagnostic.contextID == "mismatch"
-            }
-            return false
-        }))
+        #expect(errorDiagnostics.count == 1)
+        #expect(errorDiagnostics.first?.contextID == "alias,mismatch")
     }
 }

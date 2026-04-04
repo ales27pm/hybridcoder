@@ -67,6 +67,7 @@ final class ContextPolicyLoader {
 
     private struct LoadWarning: Sendable {
         let fileName: String
+        let sourcePath: String
         let message: String
     }
 
@@ -105,23 +106,31 @@ final class ContextPolicyLoader {
 
                 do {
                     let resolvedFileURL = fileURL.standardizedFileURL.resolvingSymlinksInPath()
+                    let displayPath = makeDisplayPath(fileURL: resolvedFileURL, rootURL: root)
                     if let boundary, !isWithinBoundary(candidate: resolvedFileURL, boundary: boundary) {
-                        warnings.append(LoadWarning(fileName: fileName, message: "Policy file resolves outside boundary"))
+                        warnings.append(LoadWarning(
+                            fileName: fileName,
+                            sourcePath: displayPath,
+                            message: "Policy file resolves outside boundary"
+                        ))
                         continue
                     }
 
                     let contents = try String(contentsOf: resolvedFileURL, encoding: .utf8)
-                    let displayPath = makeDisplayPath(fileURL: resolvedFileURL, rootURL: root)
                     collected.append(ContextPolicyFile(displayPath: displayPath, content: contents))
                 } catch {
-                    warnings.append(LoadWarning(fileName: fileName, message: error.localizedDescription))
+                    warnings.append(LoadWarning(
+                        fileName: fileName,
+                        sourcePath: fileURL.lastPathComponent,
+                        message: error.localizedDescription
+                    ))
                 }
             }
         }
 
         let diagnostics = warnings.map { warning in
             DiscoveryDiagnostic.warning(WarningDiagnostic(
-                sourcePath: warning.fileName,
+                sourcePath: warning.sourcePath,
                 message: warning.message
             ))
         }

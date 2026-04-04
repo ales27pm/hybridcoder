@@ -118,25 +118,31 @@ actor PromptTemplateService {
                 }
                 templates[template.id] = template
             } catch let templateError as TemplateError {
-                for invalidID in inferInvalidTemplateIDs(from: url) {
+                let invalidIDs = Array(inferInvalidTemplateIDs(from: url)).sorted()
+                for invalidID in invalidIDs {
                     invalidTemplates[invalidID] = templateError
+                    logger.error("template.invalid id=\(invalidID, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public) reason=\(templateError.localizedDescription, privacy: .public)")
+                }
+                if !invalidIDs.isEmpty {
                     diagnostics.append(.error(ErrorDiagnostic(
                         sourcePath: url.path(percentEncoded: false),
-                        message: templateError.localizedDescription,
-                        contextID: invalidID
+                        message: "\(templateError.localizedDescription) (template ids: \(invalidIDs.joined(separator: ", ")))",
+                        contextID: invalidIDs.joined(separator: ",")
                     )))
-                    logger.error("template.invalid id=\(invalidID, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public) reason=\(templateError.localizedDescription, privacy: .public)")
                 }
             } catch {
                 let templateError = TemplateError.invalidFrontmatter(url.lastPathComponent, error.localizedDescription)
-                for invalidID in inferInvalidTemplateIDs(from: url) {
+                let invalidIDs = Array(inferInvalidTemplateIDs(from: url)).sorted()
+                for invalidID in invalidIDs {
                     invalidTemplates[invalidID] = templateError
+                    logger.error("template.invalid id=\(invalidID, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public) reason=\(error.localizedDescription, privacy: .public)")
+                }
+                if !invalidIDs.isEmpty {
                     diagnostics.append(.error(ErrorDiagnostic(
                         sourcePath: url.path(percentEncoded: false),
-                        message: templateError.localizedDescription,
-                        contextID: invalidID
+                        message: "\(templateError.localizedDescription) (template ids: \(invalidIDs.joined(separator: ", ")))",
+                        contextID: invalidIDs.joined(separator: ",")
                     )))
-                    logger.error("template.invalid id=\(invalidID, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public) reason=\(error.localizedDescription, privacy: .public)")
                 }
             }
         }
