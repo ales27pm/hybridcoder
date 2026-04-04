@@ -172,11 +172,16 @@ final class AIOrchestrator {
             return
         }
 
-        if url.hasDirectoryPath {
-            policyWorkingDirectory = url.standardizedFileURL
-        } else {
-            policyWorkingDirectory = url.deletingLastPathComponent().standardizedFileURL
+        let standardized = url.standardizedFileURL
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: standardized.path(percentEncoded: false), isDirectory: &isDirectory)
+
+        if exists {
+            policyWorkingDirectory = isDirectory.boolValue ? standardized : standardized.deletingLastPathComponent()
+            return
         }
+
+        policyWorkingDirectory = standardized.hasDirectoryPath ? standardized : standardized.deletingLastPathComponent()
     }
 
     func loadContextPolicies(repoRoot: URL) async -> ContextPolicySnapshot {
@@ -192,10 +197,12 @@ final class AIOrchestrator {
         }
 
         let standardizedPreferred = preferredWorkingDirectory.standardizedFileURL
-        let repoPath = standardizedRepoRoot.path(percentEncoded: false)
-        let preferredPath = standardizedPreferred.path(percentEncoded: false)
+        let repoComponents = standardizedRepoRoot.pathComponents.map { $0.lowercased() }
+        let preferredComponents = standardizedPreferred.pathComponents.map { $0.lowercased() }
 
-        guard preferredPath == repoPath || preferredPath.hasPrefix(repoPath + "/") else {
+        guard preferredComponents.count >= repoComponents.count,
+              zip(repoComponents, preferredComponents).allSatisfy({ $0 == $1 })
+        else {
             return (standardizedRepoRoot, standardizedRepoRoot)
         }
 

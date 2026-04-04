@@ -69,6 +69,36 @@ struct ContextPolicyLoaderTests {
         #expect(anchors.stopAt.standardizedFileURL == repoRoot.standardizedFileURL)
     }
 
+
+    @Test("setPolicyWorkingContext normalizes file URLs without relying only on hasDirectoryPath")
+    @MainActor
+    func setPolicyWorkingContextUsesFileSystemTypeWhenAvailable() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repoRoot = root.appendingPathComponent("repo", isDirectory: true)
+        let nested = repoRoot.appendingPathComponent("Sources", isDirectory: true)
+        let fileURL = nested.appendingPathComponent("Example.swift")
+
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try "print(1)".write(to: fileURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let orchestrator = AIOrchestrator()
+        orchestrator.setPolicyWorkingContext(fileURL)
+
+        #expect(orchestrator.policyWorkingDirectory?.standardizedFileURL == nested.standardizedFileURL)
+    }
+
+    @Test("resolvePolicyLoadAnchors treats case-only component differences as inside repo")
+    func resolvePolicyLoadAnchorsAllowsCaseOnlyPathDifferences() {
+        let repoRoot = URL(fileURLWithPath: "/tmp/RepoRoot", isDirectory: true)
+        let preferred = URL(fileURLWithPath: "/tmp/reporoot/Sources/App", isDirectory: true)
+
+        let anchors = AIOrchestrator.resolvePolicyLoadAnchors(repoRoot: repoRoot, preferredWorkingDirectory: preferred)
+
+        #expect(anchors.start.standardizedFileURL == preferred.standardizedFileURL)
+        #expect(anchors.stopAt.standardizedFileURL == repoRoot.standardizedFileURL)
+    }
+
     @Test("Render for prompt uses display paths and obeys maxCharacters cap")
     func renderForPromptFormatsAndTruncates() {
         let snapshot = ContextPolicySnapshot(files: [
