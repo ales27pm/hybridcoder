@@ -8,6 +8,7 @@ final class ChatViewModel {
     private let compactionThreshold = 1600
     private let preservedRecentTurnCount = 6
     private let maxFileOperationSummaries = 12
+    private let maxFallbackSummaryCharacters = 1200
 
     private(set) var messages: [ChatMessage] = []
     var inputText: String = ""
@@ -251,7 +252,7 @@ final class ChatViewModel {
             memorySummary = summary
         } else {
             let fallback = turnsToCompact.map { "\($0.role.rawValue): \($0.content.prefix(120))" }.joined(separator: " | ")
-            memorySummary = fallback
+            memorySummary = String(fallback.prefix(maxFallbackSummaryCharacters))
         }
 
         conversationTurns = Array(conversationTurns.suffix(keepCount))

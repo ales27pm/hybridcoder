@@ -8,6 +8,9 @@ final class AIOrchestrator {
     private static let minimumCodeContextBudget = 1600
     private static let maximumPolicyContextBudget = 700
     private static let maximumConversationContextBudget = 1000
+    // Keep this equal to ConversationMemoryContext.renderForPrompt(maxCharacters:) input.
+    // We intentionally enforce the same budget here as a second guardrail during final packing.
+    private static let conversationMemoryRenderBudget = maximumConversationContextBudget
 
     let repoAccess = RepoAccessService()
     let modelRegistry: ModelRegistry
@@ -440,7 +443,7 @@ final class AIOrchestrator {
         }
 
         let rawPolicyText = contextPolicySnapshot.renderForPrompt(maxCharacters: 2000)
-        let memoryBlock = memory?.renderForPrompt(maxCharacters: Self.maximumConversationContextBudget) ?? ""
+        let memoryBlock = memory?.renderForPrompt(maxCharacters: Self.conversationMemoryRenderBudget) ?? ""
         let context = Self.buildPromptContext(
             rawPolicyText: rawPolicyText,
             conversationMemoryBlock: memoryBlock,
@@ -480,10 +483,14 @@ final class AIOrchestrator {
         }
 
         let policyText = String(rawPolicyText.prefix(allowedPolicyBudget)).trimmingCharacters(in: .whitespacesAndNewlines)
-        let conversationText = String(conversationMemoryBlock.prefix(maxConversationBudget)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let maxNonCodeBudget = hasCode ? max(0, totalLimit - minCodeBudget) : totalLimit
+        let remainingConversationBudget = max(0, maxNonCodeBudget - policyText.count)
+        let allowedConversationBudget = min(maxConversationBudget, remainingConversationBudget)
+        let conversationText = String(conversationMemoryBlock.prefix(allowedConversationBudget)).trimmingCharacters(in: .whitespacesAndNewlines)
 
         var sections: [String] = []
         var remaining = totalLimit
+        var remainingNonCodeBudget = maxNonCodeBudget
 
         if !policyText.isEmpty {
             let policySection = "<policy_context>\n\(policyText)\n</policy_context>"
@@ -491,14 +498,17 @@ final class AIOrchestrator {
             if !clipped.isEmpty {
                 sections.append(clipped)
                 remaining -= clipped.count
+                remainingNonCodeBudget = max(0, remainingNonCodeBudget - clipped.count)
             }
         }
 
-        if !conversationText.isEmpty, remaining > 0 {
-            let clipped = String(conversationText.prefix(remaining)).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !conversationText.isEmpty, remaining > 0, remainingNonCodeBudget > 0 {
+            let conversationLimit = min(remaining, remainingNonCodeBudget)
+            let clipped = String(conversationText.prefix(conversationLimit)).trimmingCharacters(in: .whitespacesAndNewlines)
             if !clipped.isEmpty {
                 sections.append(clipped)
                 remaining -= clipped.count
+                remainingNonCodeBudget = max(0, remainingNonCodeBudget - clipped.count)
             }
         }
 

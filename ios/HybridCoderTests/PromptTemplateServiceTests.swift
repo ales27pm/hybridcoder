@@ -244,10 +244,13 @@ struct PromptTemplateServiceTests {
         let service = PromptTemplateService()
         let diagnostics = try await service.diagnostics(for: root)
 
-        #expect(diagnostics.contains(where: {
+        let collisionDiagnostics = diagnostics.filter {
             if case .collision = $0 { return true }
             return false
-        }))
+        }
+        #expect(collisionDiagnostics.count == 2)
+        #expect(collisionDiagnostics.contains(where: { $0.sourcePath.hasSuffix("/one.md") || $0.sourcePath.hasSuffix("\\one.md") }))
+        #expect(collisionDiagnostics.contains(where: { $0.sourcePath.hasSuffix("/two.md") || $0.sourcePath.hasSuffix("\\two.md") }))
         #expect(diagnostics.contains(where: {
             if case .error = $0 { return true }
             return false

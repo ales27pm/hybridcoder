@@ -101,11 +101,19 @@ actor PromptTemplateService {
             do {
                 let template = try parseTemplate(at: url)
                 if let existing = templates[template.id] {
-                    logger.warning("template.duplicate id=\(template.id, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public)")
+                    let newPath = url.path(percentEncoded: false)
+                    let existingPath = existing.fileURL.path(percentEncoded: false)
+                    let collisionMessage = "Template id \(template.id) is defined more than once"
+                    logger.warning("template.duplicate id=\(template.id, privacy: .public) file=\(newPath, privacy: .public) existing=\(existingPath, privacy: .public)")
                     diagnostics.append(.collision(CollisionDiagnostic(
-                        sourcePath: url.path(percentEncoded: false),
-                        conflictingPath: existing.fileURL.path(percentEncoded: false),
-                        message: "Template id \(template.id) is defined more than once"
+                        sourcePath: newPath,
+                        conflictingPath: existingPath,
+                        message: collisionMessage
+                    )))
+                    diagnostics.append(.collision(CollisionDiagnostic(
+                        sourcePath: existingPath,
+                        conflictingPath: newPath,
+                        message: collisionMessage
                     )))
                 }
                 templates[template.id] = template

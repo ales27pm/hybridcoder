@@ -59,4 +59,20 @@ struct AIOrchestratorContextAssemblyTests {
         #expect(AIOrchestrator.shouldCompactConversation(totalEstimatedTokens: 1600, threshold: 1600) == true)
         #expect(AIOrchestrator.shouldCompactConversation(totalEstimatedTokens: 1800, threshold: 1600) == true)
     }
+
+    @Test("Conversation memory does not consume reserved code budget")
+    func conversationMemoryPreservesCodeBudget() {
+        let context = AIOrchestrator.buildPromptContext(
+            rawPolicyText: "policy",
+            conversationMemoryBlock: String(repeating: "M", count: 5000),
+            codeParts: ["--- file.swift ---\n\(String(repeating: "C", count: 2200))"],
+            totalLimit: 2500,
+            minCodeBudget: 1600,
+            maxPolicyBudget: 700,
+            maxConversationBudget: 1000
+        )
+
+        #expect(context.contains("--- file.swift ---"))
+        #expect(context.filter { $0 == "C" }.count >= 1200)
+    }
 }
