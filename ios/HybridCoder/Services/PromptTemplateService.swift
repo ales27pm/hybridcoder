@@ -98,14 +98,16 @@ actor PromptTemplateService {
                 }
                 templates[template.id] = template
             } catch let templateError as TemplateError {
-                let invalidID = url.deletingPathExtension().lastPathComponent.lowercased()
-                invalidTemplates[invalidID] = templateError
-                logger.error("template.invalid id=\(invalidID, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public) reason=\(templateError.localizedDescription, privacy: .public)")
+                for invalidID in inferInvalidTemplateIDs(from: url) {
+                    invalidTemplates[invalidID] = templateError
+                    logger.error("template.invalid id=\(invalidID, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public) reason=\(templateError.localizedDescription, privacy: .public)")
+                }
             } catch {
-                let invalidID = url.deletingPathExtension().lastPathComponent.lowercased()
                 let templateError = TemplateError.invalidFrontmatter(url.lastPathComponent, error.localizedDescription)
-                invalidTemplates[invalidID] = templateError
-                logger.error("template.invalid id=\(invalidID, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public) reason=\(error.localizedDescription, privacy: .public)")
+                for invalidID in inferInvalidTemplateIDs(from: url) {
+                    invalidTemplates[invalidID] = templateError
+                    logger.error("template.invalid id=\(invalidID, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public) reason=\(error.localizedDescription, privacy: .public)")
+                }
             }
         }
 
@@ -314,6 +316,40 @@ actor PromptTemplateService {
         }
 
         throw TemplateError.invalidFrontmatter("inline", "Missing closing --- in frontmatter")
+    }
+
+    private func inferInvalidTemplateIDs(from fileURL: URL) -> Set<String> {
+        var ids: Set<String> = [fileURL.deletingPathExtension().lastPathComponent.lowercased()]
+        guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else {
+            return ids
+        }
+
+        let normalized = content.replacingOccurrences(of: "\r\n", with: "\n")
+        guard normalized.hasPrefix("---\n") else {
+            return ids
+        }
+
+        let lines = normalized.components(separatedBy: "\n")
+        for line in lines.dropFirst() {
+            if line == "---" { break }
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !trimmed.hasPrefix("#"),
+                  let separator = line.firstIndex(of: ":")
+            else {
+                continue
+            }
+
+            let key = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard key == "name" else { continue }
+
+            let value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if !value.isEmpty {
+                ids.insert(value)
+            }
+            break
+        }
+
+        return ids
     }
 
     private func cacheKey(for repoRoot: URL) -> String {

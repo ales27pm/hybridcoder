@@ -191,4 +191,25 @@ struct PromptTemplateServiceTests {
             _ = try await service.resolve(query: "/broken hi", repoRoot: root)
         }
     }
+
+    @Test("Malformed template errors are surfaced by frontmatter name when filename differs")
+    func malformedTemplateUsesFrontmatterNameForLookup() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let prompts = root.appendingPathComponent(".hybridcoder/prompts", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: prompts, withIntermediateDirectories: true)
+
+        try """
+        ---
+        name: alias
+        route: not-a-route
+        ---
+        body
+        """.write(to: prompts.appendingPathComponent("mismatched-file-name.md"), atomically: true, encoding: .utf8)
+
+        let service = PromptTemplateService()
+        await #expect(throws: PromptTemplateService.TemplateError.invalidFrontmatter("mismatched-file-name.md", "Unsupported route: not-a-route")) {
+            _ = try await service.resolve(query: "/alias hello", repoRoot: root)
+        }
+    }
 }
