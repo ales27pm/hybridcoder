@@ -13,6 +13,7 @@ final class AIOrchestrator {
     let embeddingService: CoreMLEmbeddingService
     let modelDownload: ModelDownloadService
     let contextPolicyLoader: ContextPolicyLoader
+    let promptTemplateService: PromptTemplateService
 
     private(set) var searchIndex: SemanticSearchIndex?
     private(set) var patchEngine: PatchEngine?
@@ -33,12 +34,13 @@ final class AIOrchestrator {
 
     var isRepoLoaded: Bool { repoRoot != nil }
 
-    init() {
+    init(promptTemplateService: PromptTemplateService = PromptTemplateService()) {
         let registry = ModelRegistry()
         self.modelRegistry = registry
         self.embeddingService = CoreMLEmbeddingService(modelID: registry.activeEmbeddingModelID, registry: registry)
         self.modelDownload = ModelDownloadService(registry: registry)
         self.contextPolicyLoader = ContextPolicyLoader()
+        self.promptTemplateService = promptTemplateService
         Task { [weak self] in
             await self?.refreshRegistryInstallState()
         }
@@ -129,6 +131,7 @@ final class AIOrchestrator {
 
         repoRoot = url
         repoFiles = files
+        await promptTemplateService.invalidateCache(for: url)
         await refreshContextPolicies(repoRoot: url)
 
         await rebuildIndex()
@@ -147,6 +150,7 @@ final class AIOrchestrator {
         let files = await repoAccess.listSourceFiles(in: url)
         repoRoot = url
         repoFiles = files
+        await promptTemplateService.invalidateCache(for: url)
         await refreshContextPolicies(repoRoot: url)
         return true
     }
@@ -161,6 +165,7 @@ final class AIOrchestrator {
         indexingProgress = nil
         contextPolicySnapshot = .init(files: [])
         policyWorkingDirectory = nil
+        await promptTemplateService.clearCache()
         await searchIndex?.clear()
     }
 
@@ -256,22 +261,23 @@ final class AIOrchestrator {
         isProcessing = true
         defer { isProcessing = false }
 
-        let route = try await resolveRoute(for: query)
-        let context = await gatherContext(for: query, route: route)
-        logProviderSelection(query: query, route: route, mode: "non-stream")
+        let resolved = try await resolveTemplateIfNeeded(query)
+        let route = resolved.routeOverride ?? (try await resolveRoute(for: resolved.query))
+        let context = await gatherContext(for: resolved.query, route: route)
+        logProviderSelection(query: resolved.query, route: route, mode: "non-stream")
 
         switch route {
         case .explanation:
-            let text = try await generateExplanation(query: query, context: context)
+            let text = try await generateExplanation(query: resolved.query, context: context)
             return AssistantResponse(text: text, routeUsed: .explanation)
 
         case .codeGeneration:
-            let code = try await generateCode(query: query, context: context)
+            let code = try await generateCode(query: resolved.query, context: context)
             let blocks = extractCodeBlocks(from: code)
             return AssistantResponse(text: code, codeBlocks: blocks, routeUsed: .codeGeneration)
 
         case .patchPlanning:
-            let plan = try await generatePatchPlan(query: query, context: context)
+            let plan = try await generatePatchPlan(query: resolved.query, context: context)
             return AssistantResponse(
                 text: plan.summary,
                 patchPlan: plan,
@@ -279,7 +285,7 @@ final class AIOrchestrator {
             )
 
         case .search:
-            let hits = (try? await searchCode(query: query, topK: 5)) ?? []
+            let hits = (try? await searchCode(query: resolved.query, topK: 5)) ?? []
             let summary = formatSearchResults(hits)
             return AssistantResponse(text: summary, searchHits: hits, routeUsed: .search)
         }
@@ -289,30 +295,46 @@ final class AIOrchestrator {
         isProcessing = true
         defer { isProcessing = false }
 
-        let route = try await resolveRoute(for: query)
-        let context = await gatherContext(for: query, route: route)
-        logProviderSelection(query: query, route: route, mode: "stream")
+        let resolved = try await resolveTemplateIfNeeded(query)
+        let route = resolved.routeOverride ?? (try await resolveRoute(for: resolved.query))
+        let context = await gatherContext(for: resolved.query, route: route)
+        logProviderSelection(query: resolved.query, route: route, mode: "stream")
 
         switch route {
         case .explanation:
-            let text = try await streamText(query: query, context: context, route: route, onPartial: onPartial)
+            let text = try await streamText(query: resolved.query, context: context, route: route, onPartial: onPartial)
             return (AssistantResponse(text: text, routeUsed: .explanation), route)
 
         case .codeGeneration:
-            let code = try await streamText(query: query, context: context, route: route, onPartial: onPartial)
+            let code = try await streamText(query: resolved.query, context: context, route: route, onPartial: onPartial)
             let blocks = extractCodeBlocks(from: code)
             return (AssistantResponse(text: code, codeBlocks: blocks, routeUsed: .codeGeneration), route)
 
         case .patchPlanning:
-            let plan = try await generatePatchPlan(query: query, context: context)
+            let plan = try await generatePatchPlan(query: resolved.query, context: context)
             onPartial(plan.summary)
             return (AssistantResponse(text: plan.summary, patchPlan: plan, routeUsed: .patchPlanning), route)
 
         case .search:
-            let hits = (try? await searchCode(query: query, topK: 5)) ?? []
+            let hits = (try? await searchCode(query: resolved.query, topK: 5)) ?? []
             let summary = formatSearchResults(hits)
             onPartial(summary)
             return (AssistantResponse(text: summary, searchHits: hits, routeUsed: .search), route)
+        }
+    }
+
+    private func resolveTemplateIfNeeded(_ query: String) async throws -> ResolvedPromptQuery {
+        let repoRoot = self.repoRoot
+        let service = promptTemplateService
+        do {
+            return try await Task.detached(priority: .userInitiated) {
+                try await service.resolve(query: query, repoRoot: repoRoot)
+            }.value
+        } catch let templateError as PromptTemplateService.TemplateError {
+            throw OrchestratorError.templateResolutionFailed(templateError.localizedDescription)
+        } catch {
+            logger.error("template.resolve.failed reason=\(error.localizedDescription, privacy: .public)")
+            throw OrchestratorError.templateResolutionFailed(error.localizedDescription)
         }
     }
 
@@ -549,6 +571,7 @@ final class AIOrchestrator {
         case foundationModelNotInitialized
         case noModelAvailable
         case routeResolutionFailed(String)
+        case templateResolutionFailed(String)
 
         nonisolated var errorDescription: String? {
             switch self {
@@ -564,6 +587,8 @@ final class AIOrchestrator {
                 return "No AI model is available. Use a device with Apple Intelligence enabled (iOS 26+)."
             case .routeResolutionFailed(let reason):
                 return "Route resolution failed: \(reason)"
+            case .templateResolutionFailed(let reason):
+                return "Template resolution failed: \(reason)"
             }
         }
     }
