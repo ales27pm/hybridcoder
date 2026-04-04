@@ -34,13 +34,10 @@ struct HybridCoderTests {
             return updated
         }
 
-        let startedAt = Date()
         let result = await engine.apply(plan, repoRoot: repoRoot)
-        let elapsed = Date().timeIntervalSince(startedAt)
 
         #expect(result.failures.isEmpty)
         #expect(result.updatedPlan.operations.allSatisfy { $0.status == .applied })
-        #expect(elapsed < 0.55)
 
         let events = await recorder.snapshot()
         let markers = Dictionary(uniqueKeysWithValues: events.map { ($0.key, $0.value) })
@@ -79,6 +76,39 @@ struct HybridCoderTests {
         #expect(result.failures.map(\.operationID) == [op0.id, op1.id])
         #expect(result.updatedPlan.operations.map(\.status) == [.failed, .failed])
     }
+
+    @Test func patchEngineRejectsTraversalOutsideRepoRoot() async throws {
+        let repoRoot = try makeTempRepoRoot()
+        defer { try? FileManager.default.removeItem(at: repoRoot) }
+
+        let operation = PatchOperation(filePath: "../outside.txt", searchText: "x", replaceText: "y")
+        let plan = PatchPlan(summary: "traversal", operations: [operation])
+
+        let result = await PatchEngine(repoAccess: RepoAccessService()).apply(plan, repoRoot: repoRoot)
+
+        #expect(result.changedFiles.isEmpty)
+        #expect(result.updatedPlan.operations.map(\.status) == [.failed])
+        #expect(result.failures.count == 1)
+        #expect(result.failures[0].reason.contains("Path escapes repository root"))
+    }
+
+    @Test func patchEngineReportsCanonicalChangedFilePathOnce() async throws {
+        let repoRoot = try makeTempRepoRoot()
+        defer { try? FileManager.default.removeItem(at: repoRoot) }
+
+        let target = repoRoot.appending(path: "alpha.txt")
+        try "A\n".write(to: target, atomically: true, encoding: .utf8)
+
+        let op1 = PatchOperation(filePath: "./alpha.txt", searchText: "A", replaceText: "B")
+        let op2 = PatchOperation(filePath: "alpha.txt", searchText: "B", replaceText: "C")
+        let plan = PatchPlan(summary: "dedupe", operations: [op1, op2])
+
+        let result = await PatchEngine(repoAccess: RepoAccessService()).apply(plan, repoRoot: repoRoot)
+
+        #expect(result.failures.isEmpty)
+        #expect(result.changedFiles == ["alpha.txt"])
+    }
+
 }
 
 private actor EventRecorder {

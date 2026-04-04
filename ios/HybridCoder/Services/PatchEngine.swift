@@ -41,6 +41,7 @@ actor PatchEngine {
         case searchTextNotFound(String)
         case multipleMatches(String, Int)
         case writeFailed(String, String)
+        case pathOutsideRepo(String)
     }
 
     func apply(_ plan: PatchPlan, repoRoot: URL) async -> PatchResult {
@@ -111,7 +112,25 @@ actor PatchEngine {
         var failures: [OperationFailure] = []
 
         for operation in plan.operations where operation.status == .pending {
-            let fileURL = repoRoot.appending(path: operation.filePath)
+            let fileURL: URL
+            do {
+                fileURL = try Self.safeResolvedFileURL(for: operation.filePath, repoRoot: repoRoot)
+            } catch let error as PatchError {
+                failures.append(OperationFailure(
+                    operationID: operation.id,
+                    filePath: operation.filePath,
+                    reason: Self.failureReason(for: error)
+                ))
+                continue
+            } catch {
+                failures.append(OperationFailure(
+                    operationID: operation.id,
+                    filePath: operation.filePath,
+                    reason: error.localizedDescription
+                ))
+                continue
+            }
+
             guard let content = await repoAccess.readUTF8(at: fileURL) else {
                 failures.append(OperationFailure(
                     operationID: operation.id,
@@ -121,7 +140,7 @@ actor PatchEngine {
                 continue
             }
 
-            let matchCount = countOccurrences(of: operation.searchText, in: content)
+            let matchCount = Self.countOccurrences(of: operation.searchText, in: content)
             if matchCount == 0 {
                 failures.append(OperationFailure(
                     operationID: operation.id,
@@ -141,8 +160,10 @@ actor PatchEngine {
     }
 
     private func canonicalFileKey(for relativePath: String, repoRoot: URL) -> String {
-        let fileURL = repoRoot.appending(path: relativePath)
-        return fileURL.standardizedFileURL.path(percentEncoded: false)
+        if let resolved = try? Self.safeResolvedFileURL(for: relativePath, repoRoot: repoRoot) {
+            return resolved.path(percentEncoded: false)
+        }
+        return "invalid:\(relativePath)"
     }
 
     private static func processQueue(
@@ -161,9 +182,10 @@ actor PatchEngine {
         for indexedOperation in orderedQueue {
             let operation = indexedOperation.operation
             do {
+                let resolvedFileURL = try safeResolvedFileURL(for: operation.filePath, repoRoot: repoRoot)
                 let content = try await resolveFileContent(
-                    for: operation.filePath,
-                    repoRoot: repoRoot,
+                    at: resolvedFileURL,
+                    displayPath: operation.filePath,
                     cache: &fileContentsCache,
                     repoAccess: repoAccess
                 )
@@ -175,34 +197,20 @@ actor PatchEngine {
                     updated = try applyOperation(operation, to: content)
                 }
 
-                fileContentsCache[operation.filePath] = updated
+                fileContentsCache[resolvedFileURL.path(percentEncoded: false)] = updated
 
-                let fileURL = repoRoot.appending(path: operation.filePath)
                 do {
-                    try await repoAccess.writeUTF8(updated, to: fileURL)
-                    changedFiles.insert(operation.filePath)
+                    try await repoAccess.writeUTF8(updated, to: resolvedFileURL)
+                    changedFiles.insert(displayRelativePath(for: resolvedFileURL, repoRoot: repoRoot))
                     statusesByOperationID[operation.id] = .applied
                 } catch {
                     throw PatchError.writeFailed(operation.filePath, error.localizedDescription)
                 }
             } catch let error as PatchError {
-                let reason: String
-                switch error {
-                case .noRepoRoot:
-                    reason = "Repository root not accessible"
-                case .fileNotReadable(let path):
-                    reason = "Cannot read file: \(path)"
-                case .searchTextNotFound(let path):
-                    reason = "Search text not found in \(path)"
-                case .multipleMatches(let path, let count):
-                    reason = "Search text found \(count) times in \(path) (expected exactly 1)"
-                case .writeFailed(let path, let detail):
-                    reason = "Write failed for \(path): \(detail)"
-                }
                 failuresByIndex[indexedOperation.index] = OperationFailure(
                     operationID: operation.id,
                     filePath: operation.filePath,
-                    reason: reason
+                    reason: failureReason(for: error)
                 )
                 statusesByOperationID[operation.id] = .failed
             } catch {
@@ -223,22 +231,72 @@ actor PatchEngine {
     }
 
     private static func resolveFileContent(
-        for relativePath: String,
-        repoRoot: URL,
+        at resolvedFileURL: URL,
+        displayPath: String,
         cache: inout [String: String],
         repoAccess: RepoAccessService
     ) async throws -> String {
-        if let cached = cache[relativePath] {
+        let cacheKey = resolvedFileURL.path(percentEncoded: false)
+        if let cached = cache[cacheKey] {
             return cached
         }
 
-        let fileURL = repoRoot.appending(path: relativePath)
-        guard let content = await repoAccess.readUTF8(at: fileURL) else {
-            throw PatchError.fileNotReadable(relativePath)
+        guard let content = await repoAccess.readUTF8(at: resolvedFileURL) else {
+            throw PatchError.fileNotReadable(displayPath)
         }
 
-        cache[relativePath] = content
+        cache[cacheKey] = content
         return content
+    }
+
+    private static func safeResolvedFileURL(for relativePath: String, repoRoot: URL) throws -> URL {
+        let resolvedRoot = repoRoot.standardizedFileURL.resolvingSymlinksInPath()
+        let candidate = repoRoot
+            .appending(path: relativePath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+
+        let rootPath = resolvedRoot.path(percentEncoded: false)
+        let candidatePath = candidate.path(percentEncoded: false)
+
+        if candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/") {
+            return candidate
+        }
+
+        throw PatchError.pathOutsideRepo(relativePath)
+    }
+
+    private static func displayRelativePath(for resolvedFileURL: URL, repoRoot: URL) -> String {
+        let resolvedRootPath = repoRoot
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path(percentEncoded: false)
+        let resolvedFilePath = resolvedFileURL.path(percentEncoded: false)
+
+        guard resolvedFilePath.hasPrefix(resolvedRootPath) else {
+            return resolvedFilePath
+        }
+
+        let trimmed = String(resolvedFilePath.dropFirst(resolvedRootPath.count))
+        let relative = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return relative.isEmpty ? "." : relative
+    }
+
+    private static func failureReason(for error: PatchError) -> String {
+        switch error {
+        case .noRepoRoot:
+            return "Repository root not accessible"
+        case .fileNotReadable(let path):
+            return "Cannot read file: \(path)"
+        case .searchTextNotFound(let path):
+            return "Search text not found in \(path)"
+        case .multipleMatches(let path, let count):
+            return "Search text found \(count) times in \(path) (expected exactly 1)"
+        case .writeFailed(let path, let detail):
+            return "Write failed for \(path): \(detail)"
+        case .pathOutsideRepo(let path):
+            return "Path escapes repository root: \(path)"
+        }
     }
 
     private static func applyOperation(_ operation: PatchOperation, to content: String) throws -> String {
