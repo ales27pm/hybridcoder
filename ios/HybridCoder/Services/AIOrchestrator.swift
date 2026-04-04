@@ -34,13 +34,13 @@ final class AIOrchestrator {
 
     var isRepoLoaded: Bool { repoRoot != nil }
 
-    init() {
+    init(promptTemplateService: PromptTemplateService = PromptTemplateService()) {
         let registry = ModelRegistry()
         self.modelRegistry = registry
         self.embeddingService = CoreMLEmbeddingService(modelID: registry.activeEmbeddingModelID, registry: registry)
         self.modelDownload = ModelDownloadService(registry: registry)
         self.contextPolicyLoader = ContextPolicyLoader()
-        self.promptTemplateService = PromptTemplateService()
+        self.promptTemplateService = promptTemplateService
         Task { [weak self] in
             await self?.refreshRegistryInstallState()
         }

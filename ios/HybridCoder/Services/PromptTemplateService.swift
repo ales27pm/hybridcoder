@@ -111,7 +111,7 @@ final class PromptTemplateService {
     }
 
     func interpolate(template: PromptTemplate, arguments: [String]) throws -> String {
-        let escapedSentinel = "__HYBRIDCODER_ESCAPED_DOLLAR_BRACE__"
+        let escapedSentinel = "__HYBRIDCODER_ESCAPED_DOLLAR_BRACE_\(UUID().uuidString)__"
         var working = template.body.replacingOccurrences(of: "\\${", with: escapedSentinel)
 
         let pattern = #"\$\{(@(?::\d+)?)|(\d+)\}"#
@@ -175,11 +175,13 @@ final class PromptTemplateService {
         var current = ""
         var quote: Character?
         var escaping = false
+        var tokenStarted = false
 
         for char in input {
             if escaping {
                 current.append(char)
                 escaping = false
+                tokenStarted = true
                 continue
             }
 
@@ -190,8 +192,6 @@ final class PromptTemplateService {
 
             if let quote {
                 if char == quote {
-                    self.finishTokenIfNeeded(current: &current, tokens: &tokens, force: true)
-                    self.finishQuoteTokenBoundary(tokens: &tokens)
                     quote = nil
                 } else {
                     current.append(char)
@@ -201,21 +201,29 @@ final class PromptTemplateService {
 
             if char == "\"" || char == "'" {
                 quote = char
+                tokenStarted = true
                 continue
             }
 
             if char.isWhitespace {
-                finishTokenIfNeeded(current: &current, tokens: &tokens, force: false)
+                if tokenStarted {
+                    finishTokenIfNeeded(current: &current, tokens: &tokens, force: false)
+                    tokenStarted = false
+                }
             } else {
                 current.append(char)
+                tokenStarted = true
             }
         }
 
         if escaping {
             current.append("\\")
+            tokenStarted = true
         }
 
-        finishTokenIfNeeded(current: &current, tokens: &tokens, force: quote != nil)
+        if tokenStarted || quote != nil {
+            finishTokenIfNeeded(current: &current, tokens: &tokens, force: true)
+        }
         return tokens
     }
 
@@ -223,12 +231,6 @@ final class PromptTemplateService {
         if force || !current.isEmpty {
             tokens.append(current)
             current = ""
-        }
-    }
-
-    private func finishQuoteTokenBoundary(tokens: inout [String]) {
-        if tokens.last == nil {
-            tokens.append("")
         }
     }
 

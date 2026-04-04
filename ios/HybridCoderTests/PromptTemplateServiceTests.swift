@@ -124,4 +124,25 @@ struct PromptTemplateServiceTests {
         #expect(resolved.query == "Summarize Parser. Context: edge cases")
         #expect(resolved.template?.name == "summarize")
     }
+
+    @Test("Template command parser preserves empty quoted args")
+    func resolveTemplateCommandWithEmptyQuotedArg() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let prompts = root.appendingPathComponent(".hybridcoder/prompts", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: prompts, withIntermediateDirectories: true)
+
+        let templateURL = prompts.appendingPathComponent("msg.md")
+        try """
+        ---
+        name: msg
+        ---
+        subject=${1}; body=${2}
+        """.write(to: templateURL, atomically: true, encoding: .utf8)
+
+        let service = PromptTemplateService()
+        let resolved = try service.resolve(query: #"/msg "" "hello world""#, repoRoot: root)
+
+        #expect(resolved.query == "subject=; body=hello world")
+    }
 }
