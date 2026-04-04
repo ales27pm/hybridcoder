@@ -16,12 +16,14 @@ final class AppViewModel {
     let orchestrator: AIOrchestrator
     let bookmarkService: BookmarkService
     let chatViewModel: ChatViewModel
+    let sandboxViewModel: SandboxViewModel
 
     enum SidebarSection: Hashable {
         case chat
         case fileViewer(FileNode)
         case patches
         case models
+        case sandbox
     }
 
     init() {
@@ -32,6 +34,7 @@ final class AppViewModel {
         self.orchestrator = orchestrator
         self.bookmarkService = bookmark
         self.chatViewModel = chat
+        self.sandboxViewModel = SandboxViewModel()
         self.showOnboarding = !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
 
         chat.onPatchApplied = { [weak self] in

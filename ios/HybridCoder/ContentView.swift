@@ -134,6 +134,26 @@ struct ContentView: View {
                 Label("Models", systemImage: "cpu")
             }
             .tag(AppViewModel.SidebarSection.models)
+
+            NavigationStack {
+                sandboxContent
+                    .navigationTitle("Sandbox")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button {
+                                viewModel.sandboxViewModel.showNewProjectSheet = true
+                            } label: {
+                                Image(systemName: "plus")
+                                    .foregroundStyle(Theme.accent)
+                            }
+                        }
+                    }
+            }
+            .tabItem {
+                Label("Sandbox", systemImage: "hammer")
+            }
+            .tag(AppViewModel.SidebarSection.sandbox)
         }
         .onAppear {
             normalizeCompactSelection()
@@ -149,6 +169,7 @@ struct ContentView: View {
             case .chat: return .chat
             case .patches: return .patches
             case .models: return .models
+            case .sandbox: return .sandbox
             case .fileViewer: return .chat
             }
         } set: { newValue in
@@ -440,6 +461,13 @@ struct ContentView: View {
                 }()) {
                     viewModel.selectedSection = .models
                 }
+
+                sidebarTab(icon: "hammer", label: "Sandbox", isActive: {
+                    if case .sandbox = viewModel.selectedSection { return true }
+                    return false
+                }()) {
+                    viewModel.selectedSection = .sandbox
+                }
             }
             .padding(.horizontal, 4)
             .padding(.vertical, 8)
@@ -536,6 +564,33 @@ struct ContentView: View {
             ModelManagerView(orchestrator: viewModel.orchestrator)
                 .navigationTitle("Models")
                 .navigationBarTitleDisplayMode(.inline)
+
+        case .sandbox:
+            sandboxContent
+                .navigationTitle("Sandbox")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            viewModel.sandboxViewModel.showNewProjectSheet = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .foregroundStyle(Theme.accent)
+                        }
+                    }
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var sandboxContent: some View {
+        if let project = viewModel.sandboxViewModel.activeProject {
+            SandboxEditorView(
+                viewModel: viewModel.sandboxViewModel,
+                project: project
+            )
+        } else {
+            SandboxListView(viewModel: viewModel.sandboxViewModel)
         }
     }
 }
