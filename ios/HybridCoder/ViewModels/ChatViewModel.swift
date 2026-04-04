@@ -227,7 +227,7 @@ final class ChatViewModel {
             turns.removeLast()
         }
 
-        ConversationMemoryContext(
+        return ConversationMemoryContext(
             compactionSummary: memorySummary,
             recentTurns: turns,
             fileOperationSummaries: fileOperationSummaries

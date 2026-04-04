@@ -288,7 +288,12 @@ final class AIOrchestrator {
         defer { isProcessing = false }
 
         let resolved = try await resolveTemplateIfNeeded(query)
-        let route = resolved.routeOverride ?? (try await resolveRoute(for: resolved.query))
+        let route: Route
+        if let override = resolved.routeOverride {
+            route = override
+        } else {
+            route = try await resolveRoute(for: resolved.query)
+        }
         let context = await gatherContext(for: resolved.query, route: route, memory: memory)
         logProviderSelection(query: resolved.query, route: route, mode: "non-stream")
 
@@ -322,7 +327,12 @@ final class AIOrchestrator {
         defer { isProcessing = false }
 
         let resolved = try await resolveTemplateIfNeeded(query)
-        let route = resolved.routeOverride ?? (try await resolveRoute(for: resolved.query))
+        let route: Route
+        if let override = resolved.routeOverride {
+            route = override
+        } else {
+            route = try await resolveRoute(for: resolved.query)
+        }
         let context = await gatherContext(for: resolved.query, route: route, memory: memory)
         logProviderSelection(query: resolved.query, route: route, mode: "stream")
 

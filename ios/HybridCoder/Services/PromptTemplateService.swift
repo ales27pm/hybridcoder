@@ -269,8 +269,8 @@ actor PromptTemplateService {
                 continue
             }
 
-            if let quote {
-                if char == quote {
+            if let q = quote {
+                if char == q {
                     quote = nil
                 } else {
                     current.append(char)

@@ -185,7 +185,7 @@ actor PatchEngine {
             let operation = indexedOperation.operation
             do {
                 let resolvedFileURL = try safeResolvedFileURL(for: operation.filePath, repoRoot: repoRoot)
-                let resolvedCanonicalKey = canonicalPathKey(for: resolvedFileURL)
+                let resolvedCanonicalKey = Self.canonicalPathKey(for: resolvedFileURL)
                 if !canonicalPathKey.hasPrefix("invalid:") && resolvedCanonicalKey != canonicalPathKey {
                     throw PatchError.pathOutsideRepo(operation.filePath)
                 }
