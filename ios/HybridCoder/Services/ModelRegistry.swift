@@ -55,7 +55,6 @@ final class ModelRegistry {
 
     init() {
         let embeddingID = "microsoft/codebert-base"
-        let qwenGenerationID = "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit"
         let generationID = "apple/foundation-language-model"
 
         let embeddingFiles: [ModelFile] = [
@@ -67,15 +66,6 @@ final class ModelRegistry {
             ModelFile(remotePath: "special_tokens_map.json", localPath: "special_tokens_map.json")
         ]
 
-        let qwenGenerationFiles: [ModelFile] = [
-            ModelFile(remotePath: "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/metadata.json", localPath: "model.mlmodelc/metadata.json"),
-            ModelFile(remotePath: "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/model.mil", localPath: "model.mlmodelc/model.mil"),
-            ModelFile(remotePath: "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/coremldata.bin", localPath: "model.mlmodelc/coremldata.bin"),
-            ModelFile(remotePath: "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/weights/weight.bin", localPath: "model.mlmodelc/weights/weight.bin"),
-            ModelFile(remotePath: "tokenizer.json", localPath: "tokenizer.json"),
-            ModelFile(remotePath: "tokenizer_config.json", localPath: "tokenizer_config.json")
-        ]
-
         let initialEntries: [String: Entry] = [
             embeddingID: Entry(
                 id: embeddingID,
@@ -84,17 +74,6 @@ final class ModelRegistry {
                 provider: .huggingFace,
                 remoteBaseURL: "https://huggingface.co/rsvalerio/codebert-base-coreml/resolve/main",
                 files: embeddingFiles,
-                isAvailable: true,
-                installState: .notInstalled,
-                loadState: .unloaded
-            ),
-            qwenGenerationID: Entry(
-                id: qwenGenerationID,
-                displayName: "Qwen2.5 Coder 1.5B Instruct 4bit (CoreML)",
-                capability: .generation,
-                provider: .huggingFace,
-                remoteBaseURL: "https://huggingface.co/finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit/resolve/main",
-                files: qwenGenerationFiles,
                 isAvailable: true,
                 installState: .notInstalled,
                 loadState: .unloaded
@@ -115,12 +94,22 @@ final class ModelRegistry {
         let savedEmbeddingModelID = UserDefaults.standard.string(forKey: activeEmbeddingKey) ?? embeddingID
         let resolvedEmbeddingModelID = initialEntries[savedEmbeddingModelID] == nil ? embeddingID : savedEmbeddingModelID
 
-        let savedGenerationModelID = UserDefaults.standard.string(forKey: activeGenerationKey) ?? generationID
-        let resolvedGenerationModelID = initialEntries[savedGenerationModelID] == nil ? generationID : savedGenerationModelID
+        let savedGenerationModelID = UserDefaults.standard.string(forKey: activeGenerationKey)
+        let requiresGenerationMigration: Bool
+        if let savedGenerationModelID {
+            requiresGenerationMigration = initialEntries[savedGenerationModelID]?.provider != .apple
+        } else {
+            requiresGenerationMigration = true
+        }
+        let resolvedGenerationModelID = generationID
 
         self.entries = initialEntries
         self.activeEmbeddingModelID = resolvedEmbeddingModelID
         self.activeGenerationModelID = resolvedGenerationModelID
+
+        if requiresGenerationMigration {
+            UserDefaults.standard.set(generationID, forKey: activeGenerationKey)
+        }
     }
 
     var allModels: [Entry] {
@@ -166,7 +155,8 @@ final class ModelRegistry {
     }
 
     func readinessSummary() -> String {
-        let parts = [activeGenerationModelID, activeEmbeddingModelID].compactMap { id -> String? in
+        let activeModelIDs = ["apple/foundation-language-model", activeEmbeddingModelID]
+        let parts = activeModelIDs.compactMap { id -> String? in
             guard let model = entries[id], isReady(modelID: id) else { return nil }
             return "\(model.displayName) ready"
         }
@@ -174,7 +164,7 @@ final class ModelRegistry {
     }
 
     func hasAnyGenerationModelReady() -> Bool {
-        entries.values.contains(where: { $0.capability == .generation && isReady(modelID: $0.id) })
+        isReady(modelID: "apple/foundation-language-model")
     }
 
     nonisolated static var downloadedModelsRoot: URL {
