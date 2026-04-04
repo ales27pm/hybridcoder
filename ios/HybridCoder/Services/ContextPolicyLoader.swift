@@ -70,8 +70,8 @@ final class ContextPolicyLoader {
         fileNames: [String]
     ) -> (snapshot: ContextPolicySnapshot, warnings: [LoadWarning]) {
         let fm = FileManager.default
-        let start = directoryURL.standardizedFileURL
-        let boundary = boundaryURL?.standardizedFileURL
+        let start = directoryURL.standardizedFileURL.resolvingSymlinksInPath()
+        let boundary = boundaryURL?.standardizedFileURL.resolvingSymlinksInPath()
 
         var directories: [URL] = []
         var cursor = start
@@ -98,8 +98,14 @@ final class ContextPolicyLoader {
                 guard fm.fileExists(atPath: fileURL.path) else { continue }
 
                 do {
-                    let contents = try String(contentsOf: fileURL, encoding: .utf8)
-                    let displayPath = makeDisplayPath(fileURL: fileURL, rootURL: root)
+                    let resolvedFileURL = fileURL.standardizedFileURL.resolvingSymlinksInPath()
+                    if let boundary, !isWithinBoundary(candidate: resolvedFileURL, boundary: boundary) {
+                        warnings.append(LoadWarning(fileName: fileName, message: "Policy file resolves outside boundary"))
+                        continue
+                    }
+
+                    let contents = try String(contentsOf: resolvedFileURL, encoding: .utf8)
+                    let displayPath = makeDisplayPath(fileURL: resolvedFileURL, rootURL: root)
                     collected.append(ContextPolicyFile(displayPath: displayPath, content: contents))
                 } catch {
                     warnings.append(LoadWarning(fileName: fileName, message: error.localizedDescription))
@@ -108,6 +114,18 @@ final class ContextPolicyLoader {
         }
 
         return (ContextPolicySnapshot(files: collected), warnings)
+    }
+
+
+    nonisolated private static func isWithinBoundary(candidate: URL, boundary: URL) -> Bool {
+        let boundaryComponents = boundary.pathComponents.map { $0.lowercased() }
+        let candidateComponents = candidate.pathComponents.map { $0.lowercased() }
+
+        guard candidateComponents.count >= boundaryComponents.count else {
+            return false
+        }
+
+        return zip(boundaryComponents, candidateComponents).allSatisfy({ $0 == $1 })
     }
 
     nonisolated private static func makeDisplayPath(fileURL: URL, rootURL: URL) -> String {

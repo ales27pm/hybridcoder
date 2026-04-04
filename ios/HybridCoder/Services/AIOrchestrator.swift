@@ -18,6 +18,7 @@ final class AIOrchestrator {
     private(set) var patchEngine: PatchEngine?
     private(set) var foundationModel: AnyObject?
     private(set) var contextPolicySnapshot: ContextPolicySnapshot = .init(files: [])
+    private(set) var policyWorkingDirectory: URL?
 
     private(set) var repoRoot: URL?
     private(set) var repoFiles: [RepoFile] = []
@@ -128,7 +129,7 @@ final class AIOrchestrator {
 
         repoRoot = url
         repoFiles = files
-        contextPolicySnapshot = await contextPolicyLoader.loadPolicyFiles(startingAt: url, stopAt: url)
+        await refreshContextPolicies(repoRoot: url)
 
         await rebuildIndex()
     }
@@ -146,7 +147,7 @@ final class AIOrchestrator {
         let files = await repoAccess.listSourceFiles(in: url)
         repoRoot = url
         repoFiles = files
-        contextPolicySnapshot = await contextPolicyLoader.loadPolicyFiles(startingAt: url, stopAt: url)
+        await refreshContextPolicies(repoRoot: url)
         return true
     }
 
@@ -159,7 +160,68 @@ final class AIOrchestrator {
         indexStats = nil
         indexingProgress = nil
         contextPolicySnapshot = .init(files: [])
+        policyWorkingDirectory = nil
         await searchIndex?.clear()
+    }
+
+
+
+    func setPolicyWorkingContext(_ url: URL?) {
+        guard let url else {
+            policyWorkingDirectory = nil
+            return
+        }
+
+        let standardized = url.standardizedFileURL
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: standardized.path(percentEncoded: false), isDirectory: &isDirectory)
+
+        if exists {
+            policyWorkingDirectory = isDirectory.boolValue ? standardized : standardized.deletingLastPathComponent()
+            return
+        }
+
+        policyWorkingDirectory = standardized.hasDirectoryPath ? standardized : standardized.deletingLastPathComponent()
+    }
+
+    func loadContextPolicies(repoRoot: URL) async -> ContextPolicySnapshot {
+        let anchors = Self.resolvePolicyLoadAnchors(repoRoot: repoRoot, preferredWorkingDirectory: policyWorkingDirectory)
+        return await contextPolicyLoader.loadPolicyFiles(startingAt: anchors.start, stopAt: anchors.stopAt)
+    }
+
+    func refreshContextPolicies(repoRoot overrideRepoRoot: URL? = nil) async {
+        guard let root = overrideRepoRoot ?? repoRoot else {
+            contextPolicySnapshot = .init(files: [])
+            return
+        }
+
+        contextPolicySnapshot = await loadContextPolicies(repoRoot: root)
+    }
+
+    func setPolicyWorkingContextAndReload(_ url: URL?) async {
+        setPolicyWorkingContext(url)
+        await refreshContextPolicies()
+    }
+
+
+    nonisolated static func resolvePolicyLoadAnchors(repoRoot: URL, preferredWorkingDirectory: URL?) -> (start: URL, stopAt: URL) {
+        let resolvedRepoRoot = repoRoot.standardizedFileURL.resolvingSymlinksInPath()
+
+        guard let preferredWorkingDirectory else {
+            return (resolvedRepoRoot, resolvedRepoRoot)
+        }
+
+        let resolvedPreferred = preferredWorkingDirectory.standardizedFileURL.resolvingSymlinksInPath()
+        let repoComponents = resolvedRepoRoot.pathComponents.map { $0.lowercased() }
+        let preferredComponents = resolvedPreferred.pathComponents.map { $0.lowercased() }
+
+        guard preferredComponents.count >= repoComponents.count,
+              zip(repoComponents, preferredComponents).allSatisfy({ $0 == $1 })
+        else {
+            return (resolvedRepoRoot, resolvedRepoRoot)
+        }
+
+        return (resolvedPreferred, resolvedRepoRoot)
     }
 
     func rebuildIndex() async {

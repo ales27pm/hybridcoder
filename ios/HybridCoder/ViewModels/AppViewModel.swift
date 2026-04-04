@@ -58,6 +58,7 @@ final class AppViewModel {
 
         importError = nil
         activeRepositoryURL = url
+        orchestrator.setPolicyWorkingContext(url)
 
         Task {
             fileTree = await orchestrator.repoAccess.buildFileTree(at: url)
@@ -96,6 +97,9 @@ final class AppViewModel {
     func selectFile(_ node: FileNode) {
         selectedFile = node
         selectedSection = .fileViewer(node)
+        Task {
+            await orchestrator.setPolicyWorkingContextAndReload(node.url)
+        }
     }
 
     func closeRepository() {
