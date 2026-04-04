@@ -129,7 +129,7 @@ final class AIOrchestrator {
 
         repoRoot = url
         repoFiles = files
-        contextPolicySnapshot = await loadContextPolicies(repoRoot: url)
+        await refreshContextPolicies(repoRoot: url)
 
         await rebuildIndex()
     }
@@ -147,7 +147,7 @@ final class AIOrchestrator {
         let files = await repoAccess.listSourceFiles(in: url)
         repoRoot = url
         repoFiles = files
-        contextPolicySnapshot = await loadContextPolicies(repoRoot: url)
+        await refreshContextPolicies(repoRoot: url)
         return true
     }
 
@@ -189,24 +189,39 @@ final class AIOrchestrator {
         return await contextPolicyLoader.loadPolicyFiles(startingAt: anchors.start, stopAt: anchors.stopAt)
     }
 
-    nonisolated static func resolvePolicyLoadAnchors(repoRoot: URL, preferredWorkingDirectory: URL?) -> (start: URL, stopAt: URL) {
-        let standardizedRepoRoot = repoRoot.standardizedFileURL
-
-        guard let preferredWorkingDirectory else {
-            return (standardizedRepoRoot, standardizedRepoRoot)
+    func refreshContextPolicies(repoRoot overrideRepoRoot: URL? = nil) async {
+        guard let root = overrideRepoRoot ?? repoRoot else {
+            contextPolicySnapshot = .init(files: [])
+            return
         }
 
-        let standardizedPreferred = preferredWorkingDirectory.standardizedFileURL
-        let repoComponents = standardizedRepoRoot.pathComponents.map { $0.lowercased() }
-        let preferredComponents = standardizedPreferred.pathComponents.map { $0.lowercased() }
+        contextPolicySnapshot = await loadContextPolicies(repoRoot: root)
+    }
+
+    func setPolicyWorkingContextAndReload(_ url: URL?) async {
+        setPolicyWorkingContext(url)
+        await refreshContextPolicies()
+    }
+
+
+    nonisolated static func resolvePolicyLoadAnchors(repoRoot: URL, preferredWorkingDirectory: URL?) -> (start: URL, stopAt: URL) {
+        let resolvedRepoRoot = repoRoot.standardizedFileURL.resolvingSymlinksInPath()
+
+        guard let preferredWorkingDirectory else {
+            return (resolvedRepoRoot, resolvedRepoRoot)
+        }
+
+        let resolvedPreferred = preferredWorkingDirectory.standardizedFileURL.resolvingSymlinksInPath()
+        let repoComponents = resolvedRepoRoot.pathComponents.map { $0.lowercased() }
+        let preferredComponents = resolvedPreferred.pathComponents.map { $0.lowercased() }
 
         guard preferredComponents.count >= repoComponents.count,
               zip(repoComponents, preferredComponents).allSatisfy({ $0 == $1 })
         else {
-            return (standardizedRepoRoot, standardizedRepoRoot)
+            return (resolvedRepoRoot, resolvedRepoRoot)
         }
 
-        return (standardizedPreferred, standardizedRepoRoot)
+        return (resolvedPreferred, resolvedRepoRoot)
     }
 
     func rebuildIndex() async {

@@ -97,7 +97,9 @@ final class AppViewModel {
     func selectFile(_ node: FileNode) {
         selectedFile = node
         selectedSection = .fileViewer(node)
-        orchestrator.setPolicyWorkingContext(node.url)
+        Task {
+            await orchestrator.setPolicyWorkingContextAndReload(node.url)
+        }
     }
 
     func closeRepository() {
@@ -112,7 +114,6 @@ final class AppViewModel {
         selectedFile = nil
         selectedSection = .chat
         importError = nil
-        orchestrator.setPolicyWorkingContext(nil)
     }
 
     func reindexRepository() {

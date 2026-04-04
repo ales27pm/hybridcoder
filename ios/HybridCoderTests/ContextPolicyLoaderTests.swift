@@ -99,6 +99,76 @@ struct ContextPolicyLoaderTests {
         #expect(anchors.stopAt.standardizedFileURL == repoRoot.standardizedFileURL)
     }
 
+
+    @Test("Refreshing policies after working context change updates orchestrator snapshot")
+    @MainActor
+    func refreshingPoliciesAfterWorkingContextChangeUpdatesSnapshot() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repoRoot = root.appendingPathComponent("repo", isDirectory: true)
+        let nested = repoRoot.appendingPathComponent("Sources/App", isDirectory: true)
+        let swiftFile = nested.appendingPathComponent("Feature.swift")
+
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try "root policy".write(to: repoRoot.appendingPathComponent("AGENTS.md"), atomically: true, encoding: .utf8)
+        try "nested policy".write(to: repoRoot.appendingPathComponent("Sources/CLAUDE.md"), atomically: true, encoding: .utf8)
+        try "let value = 1".write(to: swiftFile, atomically: true, encoding: .utf8)
+
+        let orchestrator = AIOrchestrator()
+
+        orchestrator.setPolicyWorkingContext(repoRoot)
+        await orchestrator.refreshContextPolicies(repoRoot: repoRoot)
+        #expect(orchestrator.contextPolicySnapshot.files.map(\.displayPath) == ["AGENTS.md"])
+
+        orchestrator.setPolicyWorkingContext(swiftFile)
+        await orchestrator.refreshContextPolicies(repoRoot: repoRoot)
+        #expect(orchestrator.contextPolicySnapshot.files.map(\.displayPath) == ["AGENTS.md", "Sources/CLAUDE.md"])
+    }
+
+    @Test("resolvePolicyLoadAnchors rejects symlinked working directories outside repo")
+    func resolvePolicyLoadAnchorsRejectsSymlinkEscapes() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repoRoot = root.appendingPathComponent("repo", isDirectory: true)
+        let external = root.appendingPathComponent("external", isDirectory: true)
+        let link = repoRoot.appendingPathComponent("linked", isDirectory: true)
+
+        try FileManager.default.createDirectory(at: repoRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: external, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: external)
+
+        let preferred = link.appendingPathComponent("work", isDirectory: true)
+        let anchors = AIOrchestrator.resolvePolicyLoadAnchors(repoRoot: repoRoot, preferredWorkingDirectory: preferred)
+
+        #expect(anchors.start.standardizedFileURL.resolvingSymlinksInPath() == repoRoot.standardizedFileURL.resolvingSymlinksInPath())
+        #expect(anchors.stopAt.standardizedFileURL.resolvingSymlinksInPath() == repoRoot.standardizedFileURL.resolvingSymlinksInPath())
+    }
+
+    @Test("ContextPolicyLoader ignores symlinked policy files that resolve outside boundary")
+    func contextPolicyLoaderIgnoresSymlinkedPoliciesOutsideBoundary() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repoRoot = root.appendingPathComponent("repo", isDirectory: true)
+        let nested = repoRoot.appendingPathComponent("src", isDirectory: true)
+        let outside = root.appendingPathComponent("outside", isDirectory: true)
+
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let outsidePolicy = outside.appendingPathComponent("AGENTS.md")
+        try "outside policy".write(to: outsidePolicy, atomically: true, encoding: .utf8)
+
+        let symlinkInRepo = nested.appendingPathComponent("AGENTS.md")
+        try FileManager.default.createSymbolicLink(at: symlinkInRepo, withDestinationURL: outsidePolicy)
+
+        let loader = ContextPolicyLoader()
+        let snapshot = await loader.loadPolicyFiles(startingAt: nested, stopAt: repoRoot)
+
+        #expect(snapshot.files.isEmpty)
+    }
+
     @Test("Render for prompt uses display paths and obeys maxCharacters cap")
     func renderForPromptFormatsAndTruncates() {
         let snapshot = ContextPolicySnapshot(files: [
