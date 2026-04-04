@@ -18,6 +18,7 @@ final class AIOrchestrator {
     private(set) var patchEngine: PatchEngine?
     private(set) var foundationModel: AnyObject?
     private(set) var contextPolicySnapshot: ContextPolicySnapshot = .init(files: [])
+    private(set) var policyWorkingDirectory: URL?
 
     private(set) var repoRoot: URL?
     private(set) var repoFiles: [RepoFile] = []
@@ -128,7 +129,7 @@ final class AIOrchestrator {
 
         repoRoot = url
         repoFiles = files
-        contextPolicySnapshot = await contextPolicyLoader.loadPolicyFiles(startingAt: url, stopAt: url)
+        contextPolicySnapshot = await loadContextPolicies(repoRoot: url)
 
         await rebuildIndex()
     }
@@ -146,7 +147,7 @@ final class AIOrchestrator {
         let files = await repoAccess.listSourceFiles(in: url)
         repoRoot = url
         repoFiles = files
-        contextPolicySnapshot = await contextPolicyLoader.loadPolicyFiles(startingAt: url, stopAt: url)
+        contextPolicySnapshot = await loadContextPolicies(repoRoot: url)
         return true
     }
 
@@ -159,7 +160,46 @@ final class AIOrchestrator {
         indexStats = nil
         indexingProgress = nil
         contextPolicySnapshot = .init(files: [])
+        policyWorkingDirectory = nil
         await searchIndex?.clear()
+    }
+
+
+
+    func setPolicyWorkingContext(_ url: URL?) {
+        guard let url else {
+            policyWorkingDirectory = nil
+            return
+        }
+
+        if url.hasDirectoryPath {
+            policyWorkingDirectory = url.standardizedFileURL
+        } else {
+            policyWorkingDirectory = url.deletingLastPathComponent().standardizedFileURL
+        }
+    }
+
+    func loadContextPolicies(repoRoot: URL) async -> ContextPolicySnapshot {
+        let anchors = Self.resolvePolicyLoadAnchors(repoRoot: repoRoot, preferredWorkingDirectory: policyWorkingDirectory)
+        return await contextPolicyLoader.loadPolicyFiles(startingAt: anchors.start, stopAt: anchors.stopAt)
+    }
+
+    nonisolated static func resolvePolicyLoadAnchors(repoRoot: URL, preferredWorkingDirectory: URL?) -> (start: URL, stopAt: URL) {
+        let standardizedRepoRoot = repoRoot.standardizedFileURL
+
+        guard let preferredWorkingDirectory else {
+            return (standardizedRepoRoot, standardizedRepoRoot)
+        }
+
+        let standardizedPreferred = preferredWorkingDirectory.standardizedFileURL
+        let repoPath = standardizedRepoRoot.path(percentEncoded: false)
+        let preferredPath = standardizedPreferred.path(percentEncoded: false)
+
+        guard preferredPath == repoPath || preferredPath.hasPrefix(repoPath + "/") else {
+            return (standardizedRepoRoot, standardizedRepoRoot)
+        }
+
+        return (standardizedPreferred, standardizedRepoRoot)
     }
 
     func rebuildIndex() async {
