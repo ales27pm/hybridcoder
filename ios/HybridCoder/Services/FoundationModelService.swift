@@ -227,6 +227,45 @@ final class FoundationModelService {
         return PatchPlan(summary: plan.summary, operations: operations)
     }
 
+    func summarizeConversationMemory(
+        priorSummary: String,
+        turns: String,
+        fileOperationSummaries: String
+    ) async throws -> String {
+        guard isAvailable else { throw ServiceError.unavailable }
+        isGenerating = true
+        defer { isGenerating = false }
+
+        let session = LanguageModelSession {
+            """
+            You compress coding-chat memory. Keep critical constraints, decisions, and unresolved tasks.
+            Preserve file operation outcomes and avoid repeating obvious details.
+            """
+        }
+
+        let clippedSummary = String(priorSummary.prefix(1_200))
+        let clippedOperations = String(fileOperationSummaries.prefix(1_200))
+        let clippedTurns = String(turns.prefix(4_000))
+
+        let prompt = Prompt {
+            """
+            Existing summary:
+            \(clippedSummary)
+
+            File operation summaries:
+            \(clippedOperations)
+
+            Older turns to compact:
+            \(clippedTurns)
+
+            Return a compact, actionable memory block in under 220 words.
+            """
+        }
+
+        let response = try await session.respond(to: prompt)
+        return response.content
+    }
+
     nonisolated enum ServiceError: Error, LocalizedError, Sendable {
         case unavailable
         case generationFailed(String)

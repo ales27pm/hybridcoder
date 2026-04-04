@@ -212,4 +212,78 @@ struct PromptTemplateServiceTests {
             _ = try await service.resolve(query: "/alias hello", repoRoot: root)
         }
     }
+
+    @Test("Diagnostics include collisions and invalid templates")
+    func templateDiagnosticsIncludeCollisionAndError() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let prompts = root.appendingPathComponent(".hybridcoder/prompts", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: prompts, withIntermediateDirectories: true)
+
+        try """
+        ---
+        name: dup
+        ---
+        first
+        """.write(to: prompts.appendingPathComponent("one.md"), atomically: true, encoding: .utf8)
+
+        try """
+        ---
+        name: dup
+        ---
+        second
+        """.write(to: prompts.appendingPathComponent("two.md"), atomically: true, encoding: .utf8)
+
+        try """
+        ---
+        name invalid
+        ---
+        broken
+        """.write(to: prompts.appendingPathComponent("broken.md"), atomically: true, encoding: .utf8)
+
+        let service = PromptTemplateService()
+        let diagnostics = try await service.diagnostics(for: root)
+
+        let collisionDiagnostics = diagnostics.filter {
+            if case .collision = $0 { return true }
+            return false
+        }
+        #expect(collisionDiagnostics.count == 2)
+        #expect(collisionDiagnostics.contains(where: { $0.sourcePath.hasSuffix("/one.md") || $0.sourcePath.hasSuffix("\\one.md") }))
+        #expect(collisionDiagnostics.contains(where: { $0.sourcePath.hasSuffix("/two.md") || $0.sourcePath.hasSuffix("\\two.md") }))
+        #expect(diagnostics.contains(where: {
+            if case .error = $0 { return true }
+            return false
+        }))
+    }
+
+    @Test("Diagnostics ids are unique when malformed template maps to multiple inferred IDs")
+    func diagnosticsHaveUniqueIDsForMultiIDTemplateFailures() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let prompts = root.appendingPathComponent(".hybridcoder/prompts", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: prompts, withIntermediateDirectories: true)
+
+        try """
+        ---
+        name: alias
+        route: not-a-route
+        ---
+        body
+        """.write(to: prompts.appendingPathComponent("mismatch.md"), atomically: true, encoding: .utf8)
+
+        let service = PromptTemplateService()
+        let diagnostics = try await service.diagnostics(for: root)
+        let ids = diagnostics.map(\.id)
+        let errorDiagnostics = diagnostics.compactMap { diagnostic -> ErrorDiagnostic? in
+            if case .error(let errorDiagnostic) = diagnostic {
+                return errorDiagnostic
+            }
+            return nil
+        }
+
+        #expect(Set(ids).count == ids.count)
+        #expect(errorDiagnostics.count == 1)
+        #expect(errorDiagnostics.first?.contextID == "alias,mismatch")
+    }
 }

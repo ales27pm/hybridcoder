@@ -4,6 +4,11 @@ import SwiftUI
 @Observable
 final class ChatViewModel {
     private let orchestrator: AIOrchestrator
+    private let maxConversationTokens = 2200
+    private let compactionThreshold = 1600
+    private let preservedRecentTurnCount = 6
+    private let maxFileOperationSummaries = 12
+    private let maxFallbackSummaryCharacters = 1200
 
     private(set) var messages: [ChatMessage] = []
     var inputText: String = ""
@@ -13,6 +18,11 @@ final class ChatViewModel {
     private(set) var patchPlans: [PatchPlan] = []
     private(set) var lastPatchResult: PatchEngine.PatchResult?
     private(set) var errorMessage: String?
+    private(set) var memorySummary: String?
+    private(set) var estimatedConversationTokens: Int = 0
+
+    private var conversationTurns: [ConversationMemoryTurn] = []
+    private var fileOperationSummaries: [String] = []
 
     var onPatchApplied: (() -> Void)?
 
@@ -56,6 +66,7 @@ final class ChatViewModel {
 
         let userMessage = ChatMessage(role: .user, content: trimmed)
         messages.append(userMessage)
+        conversationTurns.append(.init(role: .user, content: trimmed))
         inputText = ""
         isStreaming = true
         streamingText = ""
@@ -63,7 +74,11 @@ final class ChatViewModel {
         errorMessage = nil
 
         do {
-            let (response, route) = try await orchestrator.processQueryStreaming(trimmed) { [weak self] partial in
+            await compactConversationMemoryIfNeeded()
+            let (response, route) = try await orchestrator.processQueryStreaming(
+                trimmed,
+                memory: buildMemoryContext(excludingMostRecentUserTurn: true)
+            ) { [weak self] partial in
                 self?.streamingText = partial
             }
 
@@ -83,10 +98,13 @@ final class ChatViewModel {
                 patchPlanID: planID,
                 routeKind: response.routeUsed.rawValue
             ))
+            conversationTurns.append(.init(role: .assistant, content: response.text))
+            await compactConversationMemoryIfNeeded()
         } catch {
             streamingText = ""
             let fallback = "Could not process your request: \(error.localizedDescription)"
             messages.append(ChatMessage(role: .assistant, content: fallback))
+            conversationTurns.append(.init(role: .assistant, content: fallback))
             errorMessage = error.localizedDescription
         }
 
@@ -133,9 +151,11 @@ final class ChatViewModel {
 
             let fileName = plan.operations.first { $0.id == operationID }?.filePath ?? "file"
             appendSystemMessage("Applied patch to \(fileName)")
+            recordFileOperationSummary("Applied patch to \(fileName)")
             onPatchApplied?()
         } catch {
             appendSystemMessage("Patch failed: \(error.localizedDescription)")
+            recordFileOperationSummary("Patch failed: \(error.localizedDescription)")
         }
     }
 
@@ -148,9 +168,11 @@ final class ChatViewModel {
             lastPatchResult = result
             patchPlans[planIndex] = result.updatedPlan
             appendSystemMessage("Patch result: \(result.summary)")
+            recordFileOperationSummary("Patch result: \(result.summary)")
             onPatchApplied?()
         } catch {
             appendSystemMessage("Patch failed: \(error.localizedDescription)")
+            recordFileOperationSummary("Patch failed: \(error.localizedDescription)")
         }
 
         isStreaming = false
@@ -173,6 +195,10 @@ final class ChatViewModel {
         errorMessage = nil
         patchPlans.removeAll()
         lastPatchResult = nil
+        memorySummary = nil
+        estimatedConversationTokens = 0
+        conversationTurns.removeAll()
+        fileOperationSummaries.removeAll()
     }
 
     func dismissError() {
@@ -181,5 +207,63 @@ final class ChatViewModel {
 
     private func appendSystemMessage(_ content: String) {
         messages.append(ChatMessage(role: .system, content: content))
+        conversationTurns.append(.init(role: .system, content: content))
+    }
+
+    private func recordFileOperationSummary(_ summary: String) {
+        fileOperationSummaries.append(summary)
+        if fileOperationSummaries.count > maxFileOperationSummaries {
+            fileOperationSummaries.removeFirst(fileOperationSummaries.count - maxFileOperationSummaries)
+        }
+    }
+
+    private func estimatedTokens(for text: String) -> Int {
+        max(1, text.count / 4)
+    }
+
+    private func buildMemoryContext(excludingMostRecentUserTurn: Bool = false) -> ConversationMemoryContext {
+        var turns = conversationTurns
+        if excludingMostRecentUserTurn, let last = turns.last, last.role == .user {
+            turns.removeLast()
+        }
+
+        ConversationMemoryContext(
+            compactionSummary: memorySummary,
+            recentTurns: turns,
+            fileOperationSummaries: fileOperationSummaries
+        )
+    }
+
+    private func recalculateEstimatedConversationTokens() {
+        let turnCount = conversationTurns.reduce(0) { $0 + estimatedTokens(for: $1.content) }
+        let opCount = fileOperationSummaries.reduce(0) { $0 + estimatedTokens(for: $1) }
+        let summaryCount = estimatedTokens(for: memorySummary ?? "")
+        estimatedConversationTokens = min(maxConversationTokens, turnCount + opCount + summaryCount)
+    }
+
+    private func compactConversationMemoryIfNeeded() async {
+        recalculateEstimatedConversationTokens()
+        guard AIOrchestrator.shouldCompactConversation(totalEstimatedTokens: estimatedConversationTokens, threshold: compactionThreshold) else {
+            return
+        }
+
+        let keepCount = min(preservedRecentTurnCount, conversationTurns.count)
+        let compactCount = max(0, conversationTurns.count - keepCount)
+        guard compactCount > 0 else { return }
+
+        let turnsToCompact = Array(conversationTurns.prefix(compactCount))
+        if let summary = await orchestrator.summarizeConversationForCompaction(
+            priorSummary: memorySummary,
+            turnsToCompact: turnsToCompact,
+            fileOperationSummaries: fileOperationSummaries
+        ) {
+            memorySummary = summary
+        } else {
+            let fallback = turnsToCompact.map { "\($0.role.rawValue): \($0.content.prefix(120))" }.joined(separator: " | ")
+            memorySummary = String(fallback.prefix(maxFallbackSummaryCharacters))
+        }
+
+        conversationTurns = Array(conversationTurns.suffix(keepCount))
+        recalculateEstimatedConversationTokens()
     }
 }
