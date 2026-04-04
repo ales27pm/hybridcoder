@@ -58,10 +58,11 @@ actor PatchEngine {
         var statusesByOperationID: [UUID: PatchOperation.Status] = [:]
 
         await withTaskGroup(of: GroupResult.self) { group in
-            for queue in queuesByCanonicalFile.values {
+            for (canonicalPathKey, queue) in queuesByCanonicalFile {
                 group.addTask { [repoAccess, operationTransformer] in
                     await Self.processQueue(
                         queue,
+                        canonicalPathKey: canonicalPathKey,
                         repoRoot: repoRoot,
                         repoAccess: repoAccess,
                         operationTransformer: operationTransformer
@@ -161,18 +162,19 @@ actor PatchEngine {
 
     private func canonicalFileKey(for relativePath: String, repoRoot: URL) -> String {
         if let resolved = try? Self.safeResolvedFileURL(for: relativePath, repoRoot: repoRoot) {
-            return resolved.path(percentEncoded: false)
+            return Self.canonicalPathKey(for: resolved)
         }
         return "invalid:\(relativePath)"
     }
 
     private static func processQueue(
         _ queue: [IndexedOperation],
+        canonicalPathKey: String,
         repoRoot: URL,
         repoAccess: RepoAccessService,
         operationTransformer: (@Sendable (PatchOperation, String) async throws -> String)?
     ) async -> GroupResult {
-        var fileContentsCache: [String: String] = [:]
+        var cachedContent: String?
         var changedFiles: Set<String> = []
         var failuresByIndex: [Int: OperationFailure] = [:]
         var statusesByOperationID: [UUID: PatchOperation.Status] = [:]
@@ -183,12 +185,19 @@ actor PatchEngine {
             let operation = indexedOperation.operation
             do {
                 let resolvedFileURL = try safeResolvedFileURL(for: operation.filePath, repoRoot: repoRoot)
-                let content = try await resolveFileContent(
-                    at: resolvedFileURL,
-                    displayPath: operation.filePath,
-                    cache: &fileContentsCache,
-                    repoAccess: repoAccess
-                )
+                let resolvedCanonicalKey = canonicalPathKey(for: resolvedFileURL)
+                if !canonicalPathKey.hasPrefix("invalid:") && resolvedCanonicalKey != canonicalPathKey {
+                    throw PatchError.pathOutsideRepo(operation.filePath)
+                }
+                let content = if let cachedContent {
+                    cachedContent
+                } else {
+                    try await resolveFileContent(
+                        at: resolvedFileURL,
+                        displayPath: operation.filePath,
+                        repoAccess: repoAccess
+                    )
+                }
 
                 let updated: String
                 if let operationTransformer {
@@ -197,7 +206,7 @@ actor PatchEngine {
                     updated = try applyOperation(operation, to: content)
                 }
 
-                fileContentsCache[resolvedFileURL.path(percentEncoded: false)] = updated
+                cachedContent = updated
 
                 do {
                     try await repoAccess.writeUTF8(updated, to: resolvedFileURL)
@@ -233,19 +242,12 @@ actor PatchEngine {
     private static func resolveFileContent(
         at resolvedFileURL: URL,
         displayPath: String,
-        cache: inout [String: String],
         repoAccess: RepoAccessService
     ) async throws -> String {
-        let cacheKey = resolvedFileURL.path(percentEncoded: false)
-        if let cached = cache[cacheKey] {
-            return cached
-        }
-
         guard let content = await repoAccess.readUTF8(at: resolvedFileURL) else {
             throw PatchError.fileNotReadable(displayPath)
         }
 
-        cache[cacheKey] = content
         return content
     }
 
@@ -280,6 +282,13 @@ actor PatchEngine {
         let trimmed = String(resolvedFilePath.dropFirst(resolvedRootPath.count))
         let relative = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         return relative.isEmpty ? "." : relative
+    }
+
+    private static func canonicalPathKey(for resolvedFileURL: URL) -> String {
+        let resolvedPath = resolvedFileURL.path(percentEncoded: false)
+        let values = try? resolvedFileURL.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
+        let caseSensitive = values?.volumeSupportsCaseSensitiveNames ?? true
+        return caseSensitive ? resolvedPath : resolvedPath.lowercased()
     }
 
     private static func failureReason(for error: PatchError) -> String {

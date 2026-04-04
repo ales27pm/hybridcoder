@@ -40,7 +40,10 @@ struct HybridCoderTests {
         #expect(result.updatedPlan.operations.allSatisfy { $0.status == .applied })
 
         let events = await recorder.snapshot()
-        let markers = Dictionary(uniqueKeysWithValues: events.map { ($0.key, $0.value) })
+        let markers = Dictionary(
+            events.map { ($0.key, $0.value) },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         let a1Start = try #require(markers[.start(operationID: operationA1.id)])
         let a1End = try #require(markers[.end(operationID: operationA1.id)])
