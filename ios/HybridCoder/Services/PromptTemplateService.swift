@@ -20,6 +20,7 @@ actor PromptTemplateService {
     private struct TemplateLoadResult {
         let templates: [String: PromptTemplate]
         let invalidTemplates: [String: TemplateError]
+        let diagnostics: [DiscoveryDiagnostic]
     }
 
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "PromptTemplateService")
@@ -53,6 +54,11 @@ actor PromptTemplateService {
         throw TemplateError.templateNotFound(invocation.templateName)
     }
 
+
+    func diagnostics(for repoRoot: URL?) throws -> [DiscoveryDiagnostic] {
+        guard let repoRoot else { return [] }
+        return try loadTemplates(in: repoRoot).diagnostics
+    }
     func invalidateCache(for repoRoot: URL) {
         cachedTemplatesByRepo.removeValue(forKey: cacheKey(for: repoRoot))
     }
@@ -73,19 +79,20 @@ actor PromptTemplateService {
 
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: promptsDirectory.path(percentEncoded: false), isDirectory: &isDirectory), isDirectory.boolValue else {
-            let empty = TemplateLoadResult(templates: [:], invalidTemplates: [:])
+            let empty = TemplateLoadResult(templates: [:], invalidTemplates: [:], diagnostics: [])
             cachedTemplatesByRepo[key] = empty
             return empty
         }
 
         var templates: [String: PromptTemplate] = [:]
         var invalidTemplates: [String: TemplateError] = [:]
+        var diagnostics: [DiscoveryDiagnostic] = []
         guard let enumerator = fileManager.enumerator(
             at: promptsDirectory,
             includingPropertiesForKeys: [.isRegularFileKey],
             options: [.skipsHiddenFiles]
         ) else {
-            let empty = TemplateLoadResult(templates: [:], invalidTemplates: [:])
+            let empty = TemplateLoadResult(templates: [:], invalidTemplates: [:], diagnostics: [])
             cachedTemplatesByRepo[key] = empty
             return empty
         }
@@ -93,25 +100,38 @@ actor PromptTemplateService {
         for case let url as URL in enumerator where url.pathExtension.lowercased() == "md" {
             do {
                 let template = try parseTemplate(at: url)
-                if templates[template.id] != nil {
+                if let existing = templates[template.id] {
                     logger.warning("template.duplicate id=\(template.id, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public)")
+                    diagnostics.append(.collision(CollisionDiagnostic(
+                        sourcePath: url.path(percentEncoded: false),
+                        conflictingPath: existing.fileURL.path(percentEncoded: false),
+                        message: "Template id \(template.id) is defined more than once"
+                    )))
                 }
                 templates[template.id] = template
             } catch let templateError as TemplateError {
                 for invalidID in inferInvalidTemplateIDs(from: url) {
                     invalidTemplates[invalidID] = templateError
+                    diagnostics.append(.error(ErrorDiagnostic(
+                        sourcePath: url.path(percentEncoded: false),
+                        message: templateError.localizedDescription
+                    )))
                     logger.error("template.invalid id=\(invalidID, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public) reason=\(templateError.localizedDescription, privacy: .public)")
                 }
             } catch {
                 let templateError = TemplateError.invalidFrontmatter(url.lastPathComponent, error.localizedDescription)
                 for invalidID in inferInvalidTemplateIDs(from: url) {
                     invalidTemplates[invalidID] = templateError
+                    diagnostics.append(.error(ErrorDiagnostic(
+                        sourcePath: url.path(percentEncoded: false),
+                        message: templateError.localizedDescription
+                    )))
                     logger.error("template.invalid id=\(invalidID, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public) reason=\(error.localizedDescription, privacy: .public)")
                 }
             }
         }
 
-        let loaded = TemplateLoadResult(templates: templates, invalidTemplates: invalidTemplates)
+        let loaded = TemplateLoadResult(templates: templates, invalidTemplates: invalidTemplates, diagnostics: diagnostics)
         cachedTemplatesByRepo[key] = loaded
         return loaded
     }

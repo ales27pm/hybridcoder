@@ -8,6 +8,12 @@ struct ContextPolicyFile: Sendable, Equatable {
 
 struct ContextPolicySnapshot: Sendable, Equatable {
     let files: [ContextPolicyFile]
+    let diagnostics: [DiscoveryDiagnostic]
+
+    init(files: [ContextPolicyFile], diagnostics: [DiscoveryDiagnostic] = []) {
+        self.files = files
+        self.diagnostics = diagnostics
+    }
 
     var isEmpty: Bool { files.isEmpty }
 
@@ -113,7 +119,14 @@ final class ContextPolicyLoader {
             }
         }
 
-        return (ContextPolicySnapshot(files: collected), warnings)
+        let diagnostics = warnings.map { warning in
+            DiscoveryDiagnostic.warning(WarningDiagnostic(
+                sourcePath: warning.fileName,
+                message: warning.message
+            ))
+        }
+
+        return (ContextPolicySnapshot(files: collected, diagnostics: diagnostics), warnings)
     }
 
 

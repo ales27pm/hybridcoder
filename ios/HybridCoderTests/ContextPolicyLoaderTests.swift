@@ -167,6 +167,12 @@ struct ContextPolicyLoaderTests {
         let snapshot = await loader.loadPolicyFiles(startingAt: nested, stopAt: repoRoot)
 
         #expect(snapshot.files.isEmpty)
+        #expect(snapshot.diagnostics.contains(where: {
+            if case let .warning(warning) = $0 {
+                return warning.sourcePath == "AGENTS.md"
+            }
+            return false
+        }))
     }
 
     @Test("Render for prompt uses display paths and obeys maxCharacters cap")

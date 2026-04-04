@@ -7,6 +7,7 @@ final class AIOrchestrator {
     private static let downstreamContextCap = 2500
     private static let minimumCodeContextBudget = 1600
     private static let maximumPolicyContextBudget = 700
+    private static let maximumConversationContextBudget = 1000
 
     let repoAccess = RepoAccessService()
     let modelRegistry: ModelRegistry
@@ -19,6 +20,7 @@ final class AIOrchestrator {
     private(set) var patchEngine: PatchEngine?
     private(set) var foundationModel: AnyObject?
     private(set) var contextPolicySnapshot: ContextPolicySnapshot = .init(files: [])
+    private(set) var templateDiagnostics: [DiscoveryDiagnostic] = []
     private(set) var policyWorkingDirectory: URL?
 
     private(set) var repoRoot: URL?
@@ -132,6 +134,7 @@ final class AIOrchestrator {
         repoRoot = url
         repoFiles = files
         await promptTemplateService.invalidateCache(for: url)
+        await refreshTemplateDiagnostics(repoRoot: url)
         await refreshContextPolicies(repoRoot: url)
 
         await rebuildIndex()
@@ -151,6 +154,7 @@ final class AIOrchestrator {
         repoRoot = url
         repoFiles = files
         await promptTemplateService.invalidateCache(for: url)
+        await refreshTemplateDiagnostics(repoRoot: url)
         await refreshContextPolicies(repoRoot: url)
         return true
     }
@@ -164,6 +168,7 @@ final class AIOrchestrator {
         indexStats = nil
         indexingProgress = nil
         contextPolicySnapshot = .init(files: [])
+        templateDiagnostics = []
         policyWorkingDirectory = nil
         await promptTemplateService.clearCache()
         await searchIndex?.clear()
@@ -201,6 +206,20 @@ final class AIOrchestrator {
         }
 
         contextPolicySnapshot = await loadContextPolicies(repoRoot: root)
+    }
+
+    func refreshTemplateDiagnostics(repoRoot overrideRepoRoot: URL? = nil) async {
+        guard let root = overrideRepoRoot ?? repoRoot else {
+            templateDiagnostics = []
+            return
+        }
+
+        do {
+            templateDiagnostics = try await promptTemplateService.diagnostics(for: root)
+        } catch {
+            logger.error("template.diagnostics.failed reason=\(error.localizedDescription, privacy: .public)")
+            templateDiagnostics = [.error(ErrorDiagnostic(sourcePath: ".hybridcoder/prompts", message: error.localizedDescription))]
+        }
     }
 
     func setPolicyWorkingContextAndReload(_ url: URL?) async {
@@ -257,13 +276,17 @@ final class AIOrchestrator {
         return try await index.search(query: query, topK: topK)
     }
 
-    func processQuery(_ query: String) async throws -> AssistantResponse {
+    var discoveryDiagnostics: [DiscoveryDiagnostic] {
+        contextPolicySnapshot.diagnostics + templateDiagnostics
+    }
+
+    func processQuery(_ query: String, memory: ConversationMemoryContext? = nil) async throws -> AssistantResponse {
         isProcessing = true
         defer { isProcessing = false }
 
         let resolved = try await resolveTemplateIfNeeded(query)
         let route = resolved.routeOverride ?? (try await resolveRoute(for: resolved.query))
-        let context = await gatherContext(for: resolved.query, route: route)
+        let context = await gatherContext(for: resolved.query, route: route, memory: memory)
         logProviderSelection(query: resolved.query, route: route, mode: "non-stream")
 
         switch route {
@@ -291,13 +314,13 @@ final class AIOrchestrator {
         }
     }
 
-    func processQueryStreaming(_ query: String, onPartial: @escaping (String) -> Void) async throws -> (response: AssistantResponse, route: Route) {
+    func processQueryStreaming(_ query: String, memory: ConversationMemoryContext? = nil, onPartial: @escaping (String) -> Void) async throws -> (response: AssistantResponse, route: Route) {
         isProcessing = true
         defer { isProcessing = false }
 
         let resolved = try await resolveTemplateIfNeeded(query)
         let route = resolved.routeOverride ?? (try await resolveRoute(for: resolved.query))
-        let context = await gatherContext(for: resolved.query, route: route)
+        let context = await gatherContext(for: resolved.query, route: route, memory: memory)
         logProviderSelection(query: resolved.query, route: route, mode: "stream")
 
         switch route {
@@ -357,7 +380,7 @@ final class AIOrchestrator {
         isProcessing = true
         defer { isProcessing = false }
 
-        let context = await gatherContext(for: query, route: .patchPlanning)
+        let context = await gatherContext(for: query, route: .patchPlanning, memory: nil)
         return try await generatePatchPlan(query: query, context: context)
     }
 
@@ -396,7 +419,7 @@ final class AIOrchestrator {
         return route
     }
 
-    private func gatherContext(for query: String, route: Route) async -> String {
+    private func gatherContext(for query: String, route: Route, memory: ConversationMemoryContext?) async -> String {
         var codeContextParts: [String] = []
 
         if let hits = try? await searchCode(query: query, topK: 3) {
@@ -417,12 +440,15 @@ final class AIOrchestrator {
         }
 
         let rawPolicyText = contextPolicySnapshot.renderForPrompt(maxCharacters: 2000)
+        let memoryBlock = memory?.renderForPrompt(maxCharacters: Self.maximumConversationContextBudget) ?? ""
         let context = Self.buildPromptContext(
             rawPolicyText: rawPolicyText,
+            conversationMemoryBlock: memoryBlock,
             codeParts: codeContextParts,
             totalLimit: Self.downstreamContextCap,
             minCodeBudget: Self.minimumCodeContextBudget,
-            maxPolicyBudget: Self.maximumPolicyContextBudget
+            maxPolicyBudget: Self.maximumPolicyContextBudget,
+            maxConversationBudget: Self.maximumConversationContextBudget
         )
 
         if !context.isEmpty {
@@ -434,10 +460,12 @@ final class AIOrchestrator {
 
     nonisolated static func buildPromptContext(
         rawPolicyText: String,
+        conversationMemoryBlock: String,
         codeParts: [String],
         totalLimit: Int,
         minCodeBudget: Int,
-        maxPolicyBudget: Int
+        maxPolicyBudget: Int,
+        maxConversationBudget: Int
     ) -> String {
         guard totalLimit > 0 else { return "" }
 
@@ -452,6 +480,7 @@ final class AIOrchestrator {
         }
 
         let policyText = String(rawPolicyText.prefix(allowedPolicyBudget)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let conversationText = String(conversationMemoryBlock.prefix(maxConversationBudget)).trimmingCharacters(in: .whitespacesAndNewlines)
 
         var sections: [String] = []
         var remaining = totalLimit
@@ -459,6 +488,14 @@ final class AIOrchestrator {
         if !policyText.isEmpty {
             let policySection = "<policy_context>\n\(policyText)\n</policy_context>"
             let clipped = String(policySection.prefix(remaining)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !clipped.isEmpty {
+                sections.append(clipped)
+                remaining -= clipped.count
+            }
+        }
+
+        if !conversationText.isEmpty, remaining > 0 {
+            let clipped = String(conversationText.prefix(remaining)).trimmingCharacters(in: .whitespacesAndNewlines)
             if !clipped.isEmpty {
                 sections.append(clipped)
                 remaining -= clipped.count
@@ -473,6 +510,33 @@ final class AIOrchestrator {
         }
 
         return sections.joined(separator: "\n\n")
+    }
+
+    func summarizeConversationForCompaction(
+        priorSummary: String?,
+        turnsToCompact: [ConversationMemoryTurn],
+        fileOperationSummaries: [String]
+    ) async -> String? {
+        guard !turnsToCompact.isEmpty || !(priorSummary ?? "").isEmpty else { return priorSummary }
+
+        let fm: FoundationModelService
+        do {
+            fm = try requireFoundationModel()
+        } catch {
+            return nil
+        }
+
+        let renderedTurns = turnsToCompact.map { "\($0.role.rawValue): \($0.content)" }.joined(separator: "\n")
+        let renderedOps = fileOperationSummaries.map { "- \($0)" }.joined(separator: "\n")
+        return try? await fm.summarizeConversationMemory(
+            priorSummary: priorSummary ?? "",
+            turns: renderedTurns,
+            fileOperationSummaries: renderedOps
+        )
+    }
+
+    nonisolated static func shouldCompactConversation(totalEstimatedTokens: Int, threshold: Int) -> Bool {
+        totalEstimatedTokens >= threshold
     }
 
     private func generateExplanation(query: String, context: String) async throws -> String {

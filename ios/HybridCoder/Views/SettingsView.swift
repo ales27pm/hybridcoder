@@ -12,6 +12,7 @@ struct SettingsView: View {
             List {
                 repositoriesSection
                 indexSection
+                diagnosticsSection
                 aboutSection
             }
             .listStyle(.insetGrouped)
@@ -118,6 +119,49 @@ struct SettingsView: View {
             }
         } header: {
             Text("About")
+        }
+    }
+
+    private var diagnosticsSection: some View {
+        Section {
+            if orchestrator.discoveryDiagnostics.isEmpty {
+                Text("No diagnostics")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.dimText)
+            } else {
+                ForEach(orchestrator.discoveryDiagnostics) { diagnostic in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(diagnostic.severity.rawValue.capitalized)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(severityColor(diagnostic.severity))
+                            Spacer()
+                            Text(diagnostic.sourcePath)
+                                .font(.caption2)
+                                .foregroundStyle(Theme.dimText)
+                                .lineLimit(1)
+                        }
+
+                        Text(diagnostic.actionableMessage)
+                            .font(.subheadline)
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        } header: {
+            Text("Diagnostics")
+        }
+    }
+
+    private func severityColor(_ severity: DiscoveryDiagnosticSeverity) -> Color {
+        switch severity {
+        case .warning:
+            return .yellow
+        case .error:
+            return .red
+        case .collision:
+            return .orange
         }
     }
 }
