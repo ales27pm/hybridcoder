@@ -11,6 +11,9 @@ final class AppViewModel {
     var isImportingFolder: Bool = false
     var showSettings: Bool = false
     var showOnboarding: Bool = false
+    var showProjectHub: Bool = false
+    var showRecentPicker: Bool = false
+    var showNewSandboxProject: Bool = false
     var importError: String?
 
     let orchestrator: AIOrchestrator

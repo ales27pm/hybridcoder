@@ -41,6 +41,7 @@ struct ContentView: View {
             case .success(let urls):
                 if let url = urls.first {
                     viewModel.importFolder(url: url)
+                    viewModel.selectedSection = .chat
                 }
             case .failure(let error):
                 viewModel.importError = error.localizedDescription
@@ -54,8 +55,18 @@ struct ContentView: View {
                 onCloseRepository: { viewModel.closeRepository() }
             )
         }
+        .sheet(isPresented: $viewModel.showProjectHub) {
+            ProjectHubView(viewModel: viewModel)
+        }
+        .sheet(isPresented: $viewModel.showRecentPicker) {
+            RecentProjectPickerSheet(viewModel: viewModel)
+        }
+        .sheet(isPresented: $viewModel.showNewSandboxProject) {
+            NewSandboxProjectSheet(viewModel: viewModel.sandboxViewModel)
+        }
         .task {
             viewModel.initialize()
+            await viewModel.sandboxViewModel.loadProjects()
         }
     }
 
@@ -85,7 +96,7 @@ struct ContentView: View {
                         selectedSection: $viewModel.selectedSection,
                         isOpen: .constant(true),
                         viewModel: viewModel,
-                        onImportFolder: { viewModel.isImportingFolder = true },
+                        onShowProjectHub: { viewModel.showProjectHub = true },
                         onReindex: { viewModel.reindexRepository() },
                         onShowSettings: { viewModel.showSettings = true }
                     )
@@ -127,7 +138,7 @@ struct ContentView: View {
             selectedSection: $viewModel.selectedSection,
             isOpen: $isSidebarOpen,
             viewModel: viewModel,
-            onImportFolder: { viewModel.isImportingFolder = true },
+            onShowProjectHub: { viewModel.showProjectHub = true },
             onReindex: { viewModel.reindexRepository() },
             onShowSettings: { viewModel.showSettings = true }
         )
@@ -156,6 +167,9 @@ struct ContentView: View {
         switch viewModel.selectedSection {
         case .chat:
             Menu {
+                Button("Projects", systemImage: "square.grid.2x2") {
+                    viewModel.showProjectHub = true
+                }
                 if viewModel.activeRepositoryURL != nil {
                     Button("Reindex Repository", systemImage: "arrow.triangle.2.circlepath") {
                         viewModel.reindexRepository()
@@ -163,6 +177,7 @@ struct ContentView: View {
                     .disabled(viewModel.orchestrator.isIndexing)
                 }
                 if !viewModel.chatViewModel.messages.isEmpty {
+                    Divider()
                     Button("Clear Chat", systemImage: "trash", role: .destructive) {
                         viewModel.chatViewModel.clearChat()
                     }
@@ -173,8 +188,13 @@ struct ContentView: View {
             }
 
         case .sandbox:
-            Button {
-                viewModel.sandboxViewModel.showNewProjectSheet = true
+            Menu {
+                Button("New Sandbox Project", systemImage: "plus.rectangle.on.folder") {
+                    viewModel.showNewSandboxProject = true
+                }
+                Button("All Projects", systemImage: "square.grid.2x2") {
+                    viewModel.showProjectHub = true
+                }
             } label: {
                 Image(systemName: "plus")
                     .foregroundStyle(Theme.accent)
@@ -195,7 +215,7 @@ struct ContentView: View {
                 viewModel: viewModel.chatViewModel,
                 orchestrator: viewModel.orchestrator,
                 repositoryURL: viewModel.activeRepositoryURL,
-                onImportRepo: { viewModel.isImportingFolder = true },
+                onOpenProjectHub: { viewModel.showProjectHub = true },
                 onReindex: { viewModel.reindexRepository() }
             )
             .navigationTitle("Chat")

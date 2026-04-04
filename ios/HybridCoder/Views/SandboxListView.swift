@@ -15,9 +15,6 @@ struct SandboxListView: View {
         .task {
             await viewModel.loadProjects()
         }
-        .sheet(isPresented: $viewModel.showNewProjectSheet) {
-            NewSandboxProjectSheet(viewModel: viewModel)
-        }
         .alert("Delete Project?", isPresented: $viewModel.showDeleteConfirmation) {
             Button("Delete", role: .destructive) {
                 if let project = viewModel.projectToDelete {

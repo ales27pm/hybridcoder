@@ -4,7 +4,7 @@ struct ChatView: View {
     @Bindable var viewModel: ChatViewModel
     let orchestrator: AIOrchestrator
     let repositoryURL: URL?
-    var onImportRepo: () -> Void = {}
+    var onOpenProjectHub: () -> Void = {}
     var onReindex: () -> Void = {}
     @FocusState private var isInputFocused: Bool
 
@@ -63,16 +63,16 @@ struct ChatView: View {
             if !orchestrator.isRepoLoaded {
                 VStack(spacing: 10) {
                     Button {
-                        onImportRepo()
+                        onOpenProjectHub()
                     } label: {
-                        Label("Import a Repository", systemImage: "folder.badge.plus")
+                        Label("Open a Project", systemImage: "square.grid.2x2")
                             .font(.caption.weight(.medium))
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.accent)
                     .controlSize(.small)
 
-                    Text("Open a folder from the Files app to get started.")
+                    Text("Import a repo or create a sandbox project to get started.")
                         .font(.caption2)
                         .foregroundStyle(Theme.dimText)
                 }

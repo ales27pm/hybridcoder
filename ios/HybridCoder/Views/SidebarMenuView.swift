@@ -4,7 +4,7 @@ struct SidebarMenuView: View {
     @Binding var selectedSection: AppViewModel.SidebarSection
     @Binding var isOpen: Bool
     let viewModel: AppViewModel
-    let onImportFolder: () -> Void
+    let onShowProjectHub: () -> Void
     let onReindex: () -> Void
     let onShowSettings: () -> Void
 
@@ -361,16 +361,23 @@ struct SidebarMenuView: View {
     private var bottomActions: some View {
         VStack(spacing: 2) {
             Button {
-                onImportFolder()
+                onShowProjectHub()
                 closeSidebar()
             } label: {
                 HStack(spacing: 12) {
-                    Image(systemName: "folder.badge.plus")
+                    Image(systemName: "square.grid.2x2")
                         .font(.system(size: 14, weight: .medium))
                         .frame(width: 24)
-                    Text("Import Repository")
+                    Text("Projects")
                         .font(.subheadline)
                     Spacer()
+
+                    let hasActive = viewModel.activeRepositoryURL != nil || viewModel.sandboxViewModel.activeProject != nil
+                    if hasActive {
+                        Circle()
+                            .fill(Theme.accent)
+                            .frame(width: 6, height: 6)
+                    }
                 }
                 .foregroundStyle(Theme.accent)
                 .padding(.horizontal, 16)
