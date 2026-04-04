@@ -122,7 +122,8 @@ actor PromptTemplateService {
                     invalidTemplates[invalidID] = templateError
                     diagnostics.append(.error(ErrorDiagnostic(
                         sourcePath: url.path(percentEncoded: false),
-                        message: templateError.localizedDescription
+                        message: templateError.localizedDescription,
+                        contextID: invalidID
                     )))
                     logger.error("template.invalid id=\(invalidID, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public) reason=\(templateError.localizedDescription, privacy: .public)")
                 }
@@ -132,7 +133,8 @@ actor PromptTemplateService {
                     invalidTemplates[invalidID] = templateError
                     diagnostics.append(.error(ErrorDiagnostic(
                         sourcePath: url.path(percentEncoded: false),
-                        message: templateError.localizedDescription
+                        message: templateError.localizedDescription,
+                        contextID: invalidID
                     )))
                     logger.error("template.invalid id=\(invalidID, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public) reason=\(error.localizedDescription, privacy: .public)")
                 }

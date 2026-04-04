@@ -12,6 +12,11 @@ nonisolated struct ConversationMemoryContext: Sendable, Equatable {
 
     func renderForPrompt(maxCharacters: Int) -> String {
         guard maxCharacters > 0 else { return "" }
+        let prefix = "<conversation_memory>\n"
+        let suffix = "\n</conversation_memory>"
+        let wrapperOverhead = prefix.count + suffix.count
+        guard maxCharacters > wrapperOverhead else { return "" }
+
         var blocks: [String] = []
 
         if let compactionSummary, !compactionSummary.isEmpty {
@@ -30,10 +35,11 @@ nonisolated struct ConversationMemoryContext: Sendable, Equatable {
             blocks.append("Recent turns:\n\(renderedTurns)")
         }
 
-        let body = blocks.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        let maxBodyCharacters = max(0, maxCharacters - wrapperOverhead)
+        let body = String(blocks.joined(separator: "\n\n").prefix(maxBodyCharacters))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return "" }
 
-        let wrapped = "<conversation_memory>\n\(body)\n</conversation_memory>"
-        return String(wrapped.prefix(maxCharacters)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(prefix)\(body)\(suffix)"
     }
 }

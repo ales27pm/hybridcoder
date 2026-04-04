@@ -256,4 +256,38 @@ struct PromptTemplateServiceTests {
             return false
         }))
     }
+
+    @Test("Diagnostics ids are unique when malformed template maps to multiple inferred IDs")
+    func diagnosticsHaveUniqueIDsForMultiIDTemplateFailures() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let prompts = root.appendingPathComponent(".hybridcoder/prompts", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: prompts, withIntermediateDirectories: true)
+
+        try """
+        ---
+        name: alias
+        route: not-a-route
+        ---
+        body
+        """.write(to: prompts.appendingPathComponent("mismatch.md"), atomically: true, encoding: .utf8)
+
+        let service = PromptTemplateService()
+        let diagnostics = try await service.diagnostics(for: root)
+        let ids = diagnostics.map(\.id)
+
+        #expect(Set(ids).count == ids.count)
+        #expect(diagnostics.contains(where: {
+            if case .error(let errorDiagnostic) = $0 {
+                return errorDiagnostic.contextID == "alias"
+            }
+            return false
+        }))
+        #expect(diagnostics.contains(where: {
+            if case .error(let errorDiagnostic) = $0 {
+                return errorDiagnostic.contextID == "mismatch"
+            }
+            return false
+        }))
+    }
 }

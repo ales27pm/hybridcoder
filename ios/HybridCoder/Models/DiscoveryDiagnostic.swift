@@ -9,11 +9,25 @@ nonisolated enum DiscoveryDiagnosticSeverity: String, Sendable {
 nonisolated struct WarningDiagnostic: Sendable, Equatable {
     let sourcePath: String
     let message: String
+    let contextID: String?
+
+    init(sourcePath: String, message: String, contextID: String? = nil) {
+        self.sourcePath = sourcePath
+        self.message = message
+        self.contextID = contextID
+    }
 }
 
 nonisolated struct ErrorDiagnostic: Sendable, Equatable {
     let sourcePath: String
     let message: String
+    let contextID: String?
+
+    init(sourcePath: String, message: String, contextID: String? = nil) {
+        self.sourcePath = sourcePath
+        self.message = message
+        self.contextID = contextID
+    }
 }
 
 nonisolated struct CollisionDiagnostic: Sendable, Equatable {
@@ -28,7 +42,14 @@ nonisolated enum DiscoveryDiagnostic: Sendable, Equatable, Identifiable {
     case collision(CollisionDiagnostic)
 
     var id: String {
-        "\(severity.rawValue):\(sourcePath):\(actionableMessage)"
+        switch self {
+        case .warning(let diagnostic):
+            return "\(severity.rawValue):\(diagnostic.sourcePath):\(diagnostic.message):\(diagnostic.contextID ?? "-")"
+        case .error(let diagnostic):
+            return "\(severity.rawValue):\(diagnostic.sourcePath):\(diagnostic.message):\(diagnostic.contextID ?? "-")"
+        case .collision(let diagnostic):
+            return "\(severity.rawValue):\(diagnostic.sourcePath):\(diagnostic.conflictingPath):\(diagnostic.message)"
+        }
     }
 
     var severity: DiscoveryDiagnosticSeverity {
