@@ -5,7 +5,7 @@ import Testing
 struct PromptTemplateServiceTests {
 
     @Test("Parses frontmatter metadata and route from markdown template")
-    func parsesFrontmatterMetadata() throws {
+    func parsesFrontmatterMetadata() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -21,7 +21,7 @@ struct PromptTemplateServiceTests {
         """.write(to: templateURL, atomically: true, encoding: .utf8)
 
         let service = PromptTemplateService()
-        let template = try service.parseTemplate(at: templateURL)
+        let template = try await service.parseTemplate(at: templateURL)
 
         #expect(template.id == "review")
         #expect(template.description == "Generate a review summary")
@@ -30,7 +30,7 @@ struct PromptTemplateServiceTests {
     }
 
     @Test("Interpolation supports positional, variadic and start-index variadic placeholders")
-    func interpolationSupportsVariadicSyntax() throws {
+    func interpolationSupportsVariadicSyntax() async throws {
         let service = PromptTemplateService()
         let template = PromptTemplate(
             id: "commit",
@@ -41,13 +41,13 @@ struct PromptTemplateServiceTests {
             body: "title=${1}\nall=${@}\nrest=${@:2}"
         )
 
-        let result = try service.interpolate(template: template, arguments: ["feat", "api", "tests"])
+        let result = try await service.interpolate(template: template, arguments: ["feat", "api", "tests"])
 
         #expect(result == "title=feat\nall=feat api tests\nrest=api tests")
     }
 
     @Test("Interpolation preserves escaped placeholders and handles empty variadic args")
-    func interpolationEscapesAndEmptyArgs() throws {
+    func interpolationEscapesAndEmptyArgs() async throws {
         let service = PromptTemplateService()
         let template = PromptTemplate(
             id: "escape",
@@ -58,13 +58,13 @@ struct PromptTemplateServiceTests {
             body: #"literal=\${1}; all=${@}; tail=${@:3}"#
         )
 
-        let result = try service.interpolate(template: template, arguments: ["one", "two"])
+        let result = try await service.interpolate(template: template, arguments: ["one", "two"])
 
         #expect(result == "literal=${1}; all=one two; tail=")
     }
 
     @Test("Interpolation fails deterministically when required positional args are missing")
-    func interpolationFailsForMissingPositionalArg() throws {
+    func interpolationFailsForMissingPositionalArg() async throws {
         let service = PromptTemplateService()
         let template = PromptTemplate(
             id: "missing",
@@ -75,13 +75,13 @@ struct PromptTemplateServiceTests {
             body: "Need ${2}"
         )
 
-        #expect(throws: PromptTemplateService.TemplateError.missingRequiredArgument("missing", requiredIndex: 2, providedCount: 1)) {
-            _ = try service.interpolate(template: template, arguments: ["only-one"])
+        await #expect(throws: PromptTemplateService.TemplateError.missingRequiredArgument("missing", requiredIndex: 2, providedCount: 1)) {
+            _ = try await service.interpolate(template: template, arguments: ["only-one"])
         }
     }
 
     @Test("Invalid frontmatter reports deterministic malformed template errors")
-    func invalidFrontmatterFails() throws {
+    func invalidFrontmatterFails() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -96,13 +96,13 @@ struct PromptTemplateServiceTests {
         """.write(to: templateURL, atomically: true, encoding: .utf8)
 
         let service = PromptTemplateService()
-        #expect(throws: PromptTemplateService.TemplateError.invalidFrontmatter("bad.md", "Invalid frontmatter line: name review")) {
-            _ = try service.parseTemplate(at: templateURL)
+        await #expect(throws: PromptTemplateService.TemplateError.invalidFrontmatter("bad.md", "Invalid frontmatter line: name review")) {
+            _ = try await service.parseTemplate(at: templateURL)
         }
     }
 
     @Test("Resolve template command from repository prompt directory")
-    func resolveTemplateCommand() throws {
+    func resolveTemplateCommand() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let prompts = root.appendingPathComponent(".hybridcoder/prompts", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -118,7 +118,7 @@ struct PromptTemplateServiceTests {
         """.write(to: templateURL, atomically: true, encoding: .utf8)
 
         let service = PromptTemplateService()
-        let resolved = try service.resolve(query: #"/summarize "Parser" edge cases"#, repoRoot: root)
+        let resolved = try await service.resolve(query: #"/summarize "Parser" edge cases"#, repoRoot: root)
 
         #expect(resolved.routeOverride == .explanation)
         #expect(resolved.query == "Summarize Parser. Context: edge cases")
@@ -126,7 +126,7 @@ struct PromptTemplateServiceTests {
     }
 
     @Test("Template command parser preserves empty quoted args")
-    func resolveTemplateCommandWithEmptyQuotedArg() throws {
+    func resolveTemplateCommandWithEmptyQuotedArg() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let prompts = root.appendingPathComponent(".hybridcoder/prompts", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -141,8 +141,54 @@ struct PromptTemplateServiceTests {
         """.write(to: templateURL, atomically: true, encoding: .utf8)
 
         let service = PromptTemplateService()
-        let resolved = try service.resolve(query: #"/msg "" "hello world""#, repoRoot: root)
+        let resolved = try await service.resolve(query: #"/msg "" "hello world""#, repoRoot: root)
 
         #expect(resolved.query == "subject=; body=hello world")
+    }
+
+    @Test("Malformed template does not block resolving other valid templates")
+    func malformedTemplateDoesNotBlockValidTemplateResolution() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let prompts = root.appendingPathComponent(".hybridcoder/prompts", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: prompts, withIntermediateDirectories: true)
+
+        try """
+        ---
+        name: valid
+        ---
+        valid ${1}
+        """.write(to: prompts.appendingPathComponent("valid.md"), atomically: true, encoding: .utf8)
+
+        try """
+        ---
+        name broken
+        ---
+        broken
+        """.write(to: prompts.appendingPathComponent("broken.md"), atomically: true, encoding: .utf8)
+
+        let service = PromptTemplateService()
+        let resolved = try await service.resolve(query: "/valid works", repoRoot: root)
+        #expect(resolved.query == "valid works")
+    }
+
+    @Test("Invoking malformed template returns deterministic error for that template")
+    func malformedTemplateReturnsDeterministicError() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let prompts = root.appendingPathComponent(".hybridcoder/prompts", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: prompts, withIntermediateDirectories: true)
+
+        try """
+        ---
+        name broken
+        ---
+        broken
+        """.write(to: prompts.appendingPathComponent("broken.md"), atomically: true, encoding: .utf8)
+
+        let service = PromptTemplateService()
+        await #expect(throws: PromptTemplateService.TemplateError.invalidFrontmatter("broken.md", "Invalid frontmatter line: name broken")) {
+            _ = try await service.resolve(query: "/broken hi", repoRoot: root)
+        }
     }
 }

@@ -16,9 +16,15 @@ struct ResolvedPromptQuery: Sendable, Equatable {
     let template: PromptTemplate?
 }
 
-final class PromptTemplateService {
+actor PromptTemplateService {
+    private struct TemplateLoadResult {
+        let templates: [String: PromptTemplate]
+        let invalidTemplates: [String: TemplateError]
+    }
+
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "PromptTemplateService")
     private let fileManager: FileManager
+    private var cachedTemplatesByRepo: [String: TemplateLoadResult] = [:]
 
     init(fileManager: FileManager = .default) {
         self.fileManager = fileManager
@@ -34,43 +40,78 @@ final class PromptTemplateService {
             throw TemplateError.repositoryUnavailable
         }
 
-        let templates = try loadTemplates(in: repoRoot)
-        guard let template = templates[invocation.templateName] else {
-            throw TemplateError.templateNotFound(invocation.templateName)
+        let loadResult = try loadTemplates(in: repoRoot)
+        if let template = loadResult.templates[invocation.templateName] {
+            let expanded = try interpolate(template: template, arguments: invocation.arguments)
+            return ResolvedPromptQuery(query: expanded, routeOverride: template.route, template: template)
         }
 
-        let expanded = try interpolate(template: template, arguments: invocation.arguments)
-        return ResolvedPromptQuery(query: expanded, routeOverride: template.route, template: template)
+        if let invalid = loadResult.invalidTemplates[invocation.templateName] {
+            throw invalid
+        }
+
+        throw TemplateError.templateNotFound(invocation.templateName)
     }
 
-    func loadTemplates(in repoRoot: URL) throws -> [String: PromptTemplate] {
+    func invalidateCache(for repoRoot: URL) {
+        cachedTemplatesByRepo.removeValue(forKey: cacheKey(for: repoRoot))
+    }
+
+    func clearCache() {
+        cachedTemplatesByRepo.removeAll()
+    }
+
+    private func loadTemplates(in repoRoot: URL) throws -> TemplateLoadResult {
+        let key = cacheKey(for: repoRoot)
+        if let cached = cachedTemplatesByRepo[key] {
+            return cached
+        }
+
         let promptsDirectory = repoRoot
             .appendingPathComponent(".hybridcoder", isDirectory: true)
             .appendingPathComponent("prompts", isDirectory: true)
 
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: promptsDirectory.path(percentEncoded: false), isDirectory: &isDirectory), isDirectory.boolValue else {
-            return [:]
+            let empty = TemplateLoadResult(templates: [:], invalidTemplates: [:])
+            cachedTemplatesByRepo[key] = empty
+            return empty
         }
 
         var templates: [String: PromptTemplate] = [:]
+        var invalidTemplates: [String: TemplateError] = [:]
         guard let enumerator = fileManager.enumerator(
             at: promptsDirectory,
             includingPropertiesForKeys: [.isRegularFileKey],
             options: [.skipsHiddenFiles]
         ) else {
-            return [:]
+            let empty = TemplateLoadResult(templates: [:], invalidTemplates: [:])
+            cachedTemplatesByRepo[key] = empty
+            return empty
         }
 
         for case let url as URL in enumerator where url.pathExtension.lowercased() == "md" {
-            let template = try parseTemplate(at: url)
-            if templates[template.id] != nil {
-                logger.warning("template.duplicate id=\(template.id, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public)")
+            do {
+                let template = try parseTemplate(at: url)
+                if templates[template.id] != nil {
+                    logger.warning("template.duplicate id=\(template.id, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public)")
+                }
+                templates[template.id] = template
+            } catch let templateError as TemplateError {
+                let invalidID = url.deletingPathExtension().lastPathComponent.lowercased()
+                invalidTemplates[invalidID] = templateError
+                logger.error("template.invalid id=\(invalidID, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public) reason=\(templateError.localizedDescription, privacy: .public)")
+            } catch {
+                let invalidID = url.deletingPathExtension().lastPathComponent.lowercased()
+                let templateError = TemplateError.invalidFrontmatter(url.lastPathComponent, error.localizedDescription)
+                invalidTemplates[invalidID] = templateError
+                logger.error("template.invalid id=\(invalidID, privacy: .public) file=\(url.path(percentEncoded: false), privacy: .public) reason=\(error.localizedDescription, privacy: .public)")
             }
-            templates[template.id] = template
         }
 
-        return templates
+        let loaded = TemplateLoadResult(templates: templates, invalidTemplates: invalidTemplates)
+        cachedTemplatesByRepo[key] = loaded
+        return loaded
     }
 
     func parseTemplate(at fileURL: URL) throws -> PromptTemplate {
@@ -273,6 +314,10 @@ final class PromptTemplateService {
         }
 
         throw TemplateError.invalidFrontmatter("inline", "Missing closing --- in frontmatter")
+    }
+
+    private func cacheKey(for repoRoot: URL) -> String {
+        repoRoot.standardizedFileURL.resolvingSymlinksInPath().path(percentEncoded: false)
     }
 
     enum TemplateError: Error, LocalizedError, Sendable, Equatable {

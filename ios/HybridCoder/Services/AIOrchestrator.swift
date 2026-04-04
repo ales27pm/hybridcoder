@@ -131,6 +131,7 @@ final class AIOrchestrator {
 
         repoRoot = url
         repoFiles = files
+        await promptTemplateService.invalidateCache(for: url)
         await refreshContextPolicies(repoRoot: url)
 
         await rebuildIndex()
@@ -149,6 +150,7 @@ final class AIOrchestrator {
         let files = await repoAccess.listSourceFiles(in: url)
         repoRoot = url
         repoFiles = files
+        await promptTemplateService.invalidateCache(for: url)
         await refreshContextPolicies(repoRoot: url)
         return true
     }
@@ -163,6 +165,7 @@ final class AIOrchestrator {
         indexingProgress = nil
         contextPolicySnapshot = .init(files: [])
         policyWorkingDirectory = nil
+        await promptTemplateService.clearCache()
         await searchIndex?.clear()
     }
 
@@ -258,7 +261,7 @@ final class AIOrchestrator {
         isProcessing = true
         defer { isProcessing = false }
 
-        let resolved = try resolveTemplateIfNeeded(query)
+        let resolved = try await resolveTemplateIfNeeded(query)
         let route = resolved.routeOverride ?? (try await resolveRoute(for: resolved.query))
         let context = await gatherContext(for: resolved.query, route: route)
         logProviderSelection(query: resolved.query, route: route, mode: "non-stream")
@@ -292,7 +295,7 @@ final class AIOrchestrator {
         isProcessing = true
         defer { isProcessing = false }
 
-        let resolved = try resolveTemplateIfNeeded(query)
+        let resolved = try await resolveTemplateIfNeeded(query)
         let route = resolved.routeOverride ?? (try await resolveRoute(for: resolved.query))
         let context = await gatherContext(for: resolved.query, route: route)
         logProviderSelection(query: resolved.query, route: route, mode: "stream")
@@ -320,9 +323,13 @@ final class AIOrchestrator {
         }
     }
 
-    private func resolveTemplateIfNeeded(_ query: String) throws -> ResolvedPromptQuery {
+    private func resolveTemplateIfNeeded(_ query: String) async throws -> ResolvedPromptQuery {
+        let repoRoot = self.repoRoot
+        let service = promptTemplateService
         do {
-            return try promptTemplateService.resolve(query: query, repoRoot: repoRoot)
+            return try await Task.detached(priority: .userInitiated) {
+                try await service.resolve(query: query, repoRoot: repoRoot)
+            }.value
         } catch let templateError as PromptTemplateService.TemplateError {
             throw OrchestratorError.templateResolutionFailed(templateError.localizedDescription)
         } catch {
