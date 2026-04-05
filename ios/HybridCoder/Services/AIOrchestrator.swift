@@ -146,12 +146,14 @@ final class AIOrchestrator {
 
     private func makeQwenCoderService(modelID: String) -> QwenCoderService {
         let downloadService = modelDownload
+        let tokenProvider: () -> String? = { [weak downloadService] in
+            guard let downloadService else { return nil }
+            let token = downloadService.huggingFaceToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            return token.isEmpty ? nil : token
+        }
         return QwenCoderService(
             modelName: modelID,
-            accessTokenProvider: {
-                let token = downloadService.huggingFaceToken.trimmingCharacters(in: .whitespacesAndNewlines)
-                return token.isEmpty ? nil : token
-            }
+            accessTokenProvider: tokenProvider
         )
     }
 
