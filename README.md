@@ -32,3 +32,27 @@ HybridCoder is **Foundation Models first and only** for generation/routing. If A
 - Simpler boot flow and status model for users.
 
 See `docs/architecture.md` for implementation details.
+
+## Prompt templates (slash commands)
+
+HybridCoder supports reusable prompt templates loaded from your repository at:
+
+- `.hybridcoder/prompts/*.md`
+
+Each markdown file can include optional YAML frontmatter keys:
+
+- `name` (template display name)
+- `description` (optional help text)
+- `route` (`explanation`, `codeGeneration`, `patchPlanning`, or `search`)
+
+Invoke templates in chat with slash commands:
+
+- `/refactor "ViewController.swift" fix unused variable`
+
+Interpolation syntax in template bodies:
+
+- `$1`, `$2`, ... for positional arguments
+- `${@}` for all arguments joined by spaces
+- `${@:N}` for arguments from position `N` onward
+
+If a template declares a `route` value, that route overrides automatic route classification for that query.

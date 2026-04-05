@@ -115,6 +115,7 @@ actor PromptTemplateService {
                         conflictingPath: newPath,
                         message: collisionMessage
                     )))
+                    continue
                 }
                 templates[template.id] = template
             } catch let templateError as TemplateError {
@@ -162,7 +163,7 @@ actor PromptTemplateService {
         }
 
         let route: Route?
-        if let routeText = parsed.metadata["route"], !routeText.isEmpty {
+        if let routeText = parsed.metadata["route"]?.trimmingCharacters(in: .whitespacesAndNewlines), !routeText.isEmpty {
             guard let parsedRoute = Route(rawValue: routeText) else {
                 throw TemplateError.invalidFrontmatter(fileURL.lastPathComponent, "Unsupported route: \(routeText)")
             }
@@ -190,10 +191,10 @@ actor PromptTemplateService {
     }
 
     func interpolate(template: PromptTemplate, arguments: [String]) throws -> String {
-        let escapedSentinel = "__HYBRIDCODER_ESCAPED_DOLLAR_BRACE_\(UUID().uuidString)__"
-        var working = template.body.replacingOccurrences(of: "\\${", with: escapedSentinel)
+        let escapedDollarSentinel = "__HYBRIDCODER_ESCAPED_DOLLAR_\(UUID().uuidString)__"
+        var working = template.body.replacingOccurrences(of: "\\$", with: escapedDollarSentinel)
 
-        let pattern = #"\$\{(@(?::\d+)?)|(\d+)\}"#
+        let pattern = #"\$\{(@(?::\d+)?)|(\d+)\}|\$(\d+)"#
         let regex = try NSRegularExpression(pattern: pattern)
         let matches = regex.matches(in: working, range: NSRange(working.startIndex..<working.endIndex, in: working))
 
@@ -201,10 +202,11 @@ actor PromptTemplateService {
             guard let fullRange = Range(match.range(at: 0), in: working) else { continue }
             let replacement: String
 
-            if let positionalRange = Range(match.range(at: 2), in: working) {
+            let positionalRange = Range(match.range(at: 2), in: working) ?? Range(match.range(at: 3), in: working)
+            if let positionalRange {
                 let token = String(working[positionalRange])
                 guard let index = Int(token), index > 0 else {
-                    throw TemplateError.malformedInterpolation(template.name, "Positional placeholders must be 1-based: ${\(token)}")
+                    throw TemplateError.malformedInterpolation(template.name, "Positional placeholders must be 1-based: $\(token)")
                 }
                 guard index <= arguments.count else {
                     throw TemplateError.missingRequiredArgument(template.name, requiredIndex: index, providedCount: arguments.count)
@@ -234,7 +236,7 @@ actor PromptTemplateService {
             working.replaceSubrange(fullRange, with: replacement)
         }
 
-        working = working.replacingOccurrences(of: escapedSentinel, with: "${")
+        working = working.replacingOccurrences(of: escapedDollarSentinel, with: "$")
         return working
     }
 

@@ -337,6 +337,10 @@ final class AIOrchestrator {
         contextPolicySnapshot.diagnostics + templateDiagnostics
     }
 
+    var contextPolicyDiagnostics: [DiscoveryDiagnostic] {
+        contextPolicySnapshot.diagnostics
+    }
+
     func processQuery(_ query: String, memory: ConversationMemoryContext? = nil) async throws -> AssistantResponse {
         isProcessing = true
         defer { isProcessing = false }
