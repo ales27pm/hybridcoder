@@ -65,8 +65,8 @@ struct SidebarMenuView: View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
                 statusDot(
-                    active: viewModel.activeRepositoryURL != nil,
-                    label: viewModel.activeRepositoryURL?.lastPathComponent ?? "No Repo"
+                    active: viewModel.hasActiveWorkspace,
+                    label: viewModel.activeWorkspaceLabel
                 )
                 Spacer()
                 indexChip
@@ -179,7 +179,7 @@ struct SidebarMenuView: View {
 
             menuItem(
                 icon: "hammer",
-                label: "Sandbox",
+                label: "Prototype",
                 section: .sandbox,
                 badge: 0
             )

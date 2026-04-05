@@ -189,8 +189,8 @@ struct ContentView: View {
 
         case .sandbox:
             Menu {
-                Button("New Sandbox Project", systemImage: "plus.rectangle.on.folder") {
-                    viewModel.showNewSandboxProject = true
+                Button("New Prototype", systemImage: "plus.rectangle.on.folder") {
+                    viewModel.prepareNewPrototypeProject()
                 }
                 Button("All Projects", systemImage: "square.grid.2x2") {
                     viewModel.showProjectHub = true
@@ -224,7 +224,8 @@ struct ContentView: View {
         case .fileViewer(let node):
             FileViewerView(
                 file: node,
-                repoAccess: viewModel.orchestrator.repoAccess
+                repoAccess: viewModel.orchestrator.repoAccess,
+                onSave: { viewModel.handleRepositoryFileSaved() }
             )
             .navigationTitle(node.name)
             .navigationBarTitleDisplayMode(.inline)
@@ -241,7 +242,7 @@ struct ContentView: View {
 
         case .sandbox:
             sandboxContent
-                .navigationTitle("Sandbox")
+                .navigationTitle("Prototype")
                 .navigationBarTitleDisplayMode(.inline)
         }
     }

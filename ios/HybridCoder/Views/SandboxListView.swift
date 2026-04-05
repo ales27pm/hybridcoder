@@ -37,11 +37,11 @@ struct SandboxListView: View {
                 .font(.system(size: 48, weight: .light))
                 .foregroundStyle(Theme.accent.opacity(0.4))
 
-            Text("Dev Sandbox")
+            Text("Prototype Lab")
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(.white)
 
-            Text("Create React Native / Expo projects,\nedit code, and preview live in Expo Snack.")
+            Text("Build isolated React Native / Expo snippets.\nThese prototypes are not synced to imported repositories.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.dimText)
                 .multilineTextAlignment(.center)
@@ -49,7 +49,7 @@ struct SandboxListView: View {
             Button {
                 viewModel.showNewProjectSheet = true
             } label: {
-                Label("New Project", systemImage: "plus.circle.fill")
+                Label("New Prototype", systemImage: "plus.circle.fill")
                     .font(.subheadline.weight(.medium))
             }
             .buttonStyle(.borderedProminent)
@@ -187,7 +187,7 @@ struct NewSandboxProjectSheet: View {
                 .padding(.top, 16)
             }
             .background(Theme.surfaceBg)
-            .navigationTitle("New Project")
+            .navigationTitle("New Prototype")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

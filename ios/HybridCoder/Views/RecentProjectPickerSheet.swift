@@ -95,14 +95,13 @@ struct RecentProjectPickerSheet: View {
 
     private var sandboxSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("SANDBOX PROJECTS")
+            Text("PROTOTYPES")
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundStyle(Theme.dimText)
 
             ForEach(viewModel.sandboxViewModel.projects) { project in
                 Button {
-                    viewModel.sandboxViewModel.openProject(project)
-                    viewModel.selectedSection = .sandbox
+                    viewModel.openPrototypeProject(project)
                     dismiss()
                 } label: {
                     HStack(spacing: 12) {
@@ -148,7 +147,7 @@ struct RecentProjectPickerSheet: View {
                 .font(.headline)
                 .foregroundStyle(.white)
 
-            Text("Import a repository from the Files app\nor create a new sandbox project.")
+            Text("Import a repository from the Files app\nor create a new prototype project.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.dimText)
                 .multilineTextAlignment(.center)

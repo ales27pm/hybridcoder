@@ -72,7 +72,7 @@ struct ChatView: View {
                     .tint(Theme.accent)
                     .controlSize(.small)
 
-                    Text("Import a repo or create a sandbox project to get started.")
+                    Text("Import a repo or create a prototype project to get started.")
                         .font(.caption2)
                         .foregroundStyle(Theme.dimText)
                 }

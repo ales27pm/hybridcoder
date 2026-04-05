@@ -4,10 +4,41 @@ import SwiftUI
 @Observable
 @MainActor
 final class AppViewModel {
+    enum RepositoryWorkspaceKind {
+        case unknown
+        case generic
+        case expo(packageName: String?, entryFile: String?)
+
+        var badgeText: String {
+            switch self {
+            case .unknown:
+                return "Workspace"
+            case .generic:
+                return "Editable Repo"
+            case .expo:
+                return "Expo Workspace"
+            }
+        }
+
+        var detailText: String {
+            switch self {
+            case .unknown:
+                return "Open a repository or prototype to begin."
+            case .generic:
+                return "Files are editable in-place. Reindex after structural changes if retrieval looks stale."
+            case .expo(let packageName, let entryFile):
+                let packageSegment = packageName.map { "Package: \($0). " } ?? ""
+                let entrySegment = entryFile.map { "Entry: \($0). " } ?? ""
+                return packageSegment + entrySegment + "Edit this repo directly, then run expo start against the same folder on your Mac for live reload."
+            }
+        }
+    }
+
     var selectedFile: FileNode?
     var selectedSection: SidebarSection = .chat
     var activeRepositoryURL: URL?
     var fileTree: FileNode?
+    var repositoryWorkspaceKind: RepositoryWorkspaceKind = .unknown
     var isImportingFolder: Bool = false
     var showSettings: Bool = false
     var showOnboarding: Bool = false
@@ -27,6 +58,35 @@ final class AppViewModel {
         case patches
         case models
         case sandbox
+    }
+
+    var hasActiveWorkspace: Bool {
+        activeRepositoryURL != nil || sandboxViewModel.activeProject != nil
+    }
+
+    var activeWorkspaceLabel: String {
+        if let url = activeRepositoryURL {
+            return url.lastPathComponent
+        }
+        if let prototype = sandboxViewModel.activeProject {
+            return "\(prototype.name) (Prototype)"
+        }
+        return "No Workspace"
+    }
+
+    var repositoryWorkspaceBadgeText: String {
+        repositoryWorkspaceKind.badgeText
+    }
+
+    var repositoryWorkspaceDetailText: String {
+        repositoryWorkspaceKind.detailText
+    }
+
+    var isRepositoryExpoWorkspace: Bool {
+        if case .expo = repositoryWorkspaceKind {
+            return true
+        }
+        return false
     }
 
     init() {
@@ -62,12 +122,16 @@ final class AppViewModel {
             return
         }
 
+        sandboxViewModel.closeProject()
         importError = nil
         activeRepositoryURL = url
+        selectedFile = nil
+        selectedSection = .chat
         orchestrator.setPolicyWorkingContext(url)
 
         Task {
             fileTree = await orchestrator.repoAccess.buildFileTree(at: url)
+            await inspectRepositoryWorkspace(at: url)
 
             try? await orchestrator.importRepo(url: url)
 
@@ -119,7 +183,31 @@ final class AppViewModel {
         fileTree = nil
         selectedFile = nil
         selectedSection = .chat
+        repositoryWorkspaceKind = .unknown
         importError = nil
+    }
+
+    func handleRepositoryFileSaved() {
+        refreshFileTree()
+        Task {
+            await orchestrator.rebuildIndex()
+        }
+    }
+
+    func openPrototypeProject(_ project: SandboxProject) {
+        if activeRepositoryURL != nil {
+            closeRepository()
+        }
+        sandboxViewModel.openProject(project)
+        selectedSection = .sandbox
+    }
+
+    func prepareNewPrototypeProject() {
+        if activeRepositoryURL != nil {
+            closeRepository()
+        }
+        showNewSandboxProject = true
+        selectedSection = .sandbox
     }
 
     func reindexRepository() {
@@ -141,6 +229,47 @@ final class AppViewModel {
 
         if let lastRepo = bookmarkService.repositories.sorted(by: { $0.lastOpened > $1.lastOpened }).first {
             openRepository(lastRepo)
+        }
+    }
+
+    private func inspectRepositoryWorkspace(at url: URL) async {
+        let packageURL = url.appendingPathComponent("package.json")
+        let appJSONURL = url.appendingPathComponent("app.json")
+        let appConfigJSURL = url.appendingPathComponent("app.config.js")
+        let appConfigTSURL = url.appendingPathComponent("app.config.ts")
+        let entryCandidates = ["App.tsx", "App.js", "index.ts", "index.tsx", "index.js"]
+        let fileManager = FileManager.default
+
+        var packageName: String?
+        var hasExpoDependency = false
+
+        if let packageData = await orchestrator.repoAccess.readData(at: packageURL),
+           let root = try? JSONSerialization.jsonObject(with: packageData) as? [String: Any] {
+            packageName = root["name"] as? String
+
+            let dependencyBlocks = [root["dependencies"], root["devDependencies"], root["peerDependencies"]]
+                .compactMap { $0 as? [String: Any] }
+
+            hasExpoDependency = dependencyBlocks.contains { $0.keys.contains("expo") }
+
+            if !hasExpoDependency,
+               let scripts = root["scripts"] as? [String: String] {
+                hasExpoDependency = scripts.values.contains { $0.localizedCaseInsensitiveContains("expo") }
+            }
+        }
+
+        let hasExpoConfig = [appJSONURL, appConfigJSURL, appConfigTSURL].contains {
+            fileManager.fileExists(atPath: $0.path(percentEncoded: false))
+        }
+
+        let entryFile = entryCandidates.first {
+            fileManager.fileExists(atPath: url.appendingPathComponent($0).path(percentEncoded: false))
+        }
+
+        if hasExpoDependency || hasExpoConfig {
+            repositoryWorkspaceKind = .expo(packageName: packageName, entryFile: entryFile)
+        } else {
+            repositoryWorkspaceKind = .generic
         }
     }
 }

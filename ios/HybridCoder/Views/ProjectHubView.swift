@@ -63,6 +63,15 @@ struct ProjectHubView: View {
                                     .font(.caption2)
                                     .foregroundStyle(Theme.dimText)
                             }
+
+                            Text(viewModel.repositoryWorkspaceBadgeText)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Theme.accent.opacity(0.8))
+
+                            Text(viewModel.repositoryWorkspaceDetailText)
+                                .font(.caption2)
+                                .foregroundStyle(Theme.dimText)
+                                .lineLimit(3)
                         }
 
                         Spacer()
@@ -89,7 +98,7 @@ struct ProjectHubView: View {
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.white)
 
-                            Text("\(project.files.count) file\(project.files.count == 1 ? "" : "s") · Sandbox")
+                            Text("\(project.files.count) file\(project.files.count == 1 ? "" : "s") · Prototype")
                                 .font(.caption2)
                                 .foregroundStyle(Theme.dimText)
                         }
@@ -126,10 +135,9 @@ struct ProjectHubView: View {
                 ActionCard(
                     icon: "plus.rectangle.on.folder",
                     label: "New Project",
-                    description: "Sandbox project"
+                    description: "Isolated prototype"
                 ) {
-                    viewModel.showNewSandboxProject = true
-                    viewModel.selectedSection = .sandbox
+                    viewModel.prepareNewPrototypeProject()
                     dismiss()
                 }
 
@@ -204,7 +212,7 @@ struct ProjectHubView: View {
     private var recentSandboxProjects: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("SANDBOX PROJECTS")
+                Text("PROTOTYPES")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(Theme.dimText)
 
@@ -228,8 +236,7 @@ struct ProjectHubView: View {
                         project: project,
                         isActive: viewModel.sandboxViewModel.activeProject?.id == project.id
                     ) {
-                        viewModel.sandboxViewModel.openProject(project)
-                        viewModel.selectedSection = .sandbox
+                        viewModel.openPrototypeProject(project)
                         dismiss()
                     }
                 }

@@ -64,7 +64,7 @@ struct SandboxEditorView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
                             .font(.caption.weight(.semibold))
-                        Text("Projects")
+                        Text("Prototypes")
                             .font(.subheadline)
                     }
                     .foregroundStyle(Theme.accent)
@@ -135,7 +135,7 @@ struct SandboxEditorView: View {
                         .controlSize(.large)
                         .tint(Theme.accent)
 
-                    Text("Loading Expo Snack…")
+                    Text("Loading prototype preview…")
                         .font(.caption)
                         .foregroundStyle(Theme.dimText)
                 }
