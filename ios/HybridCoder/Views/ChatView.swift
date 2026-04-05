@@ -2,17 +2,16 @@ import SwiftUI
 
 struct ChatView: View {
     @Bindable var viewModel: ChatViewModel
-    /// The orchestrator drives AI interactions and holds repo and model state.
     let orchestrator: AIOrchestrator
-    /// URL of the active repository, if any. When `nil`, the current workspace may be a sandbox.
     let repositoryURL: URL?
-    /// Indicates whether there is an active workspace (either a repository or a sandbox project).
-    let hasActiveWorkspace: Bool
-    /// Called when the user chooses to open the project hub.
     var onOpenProjectHub: () -> Void = {}
-    /// Called when the user triggers a reindex operation on a repository.
     var onReindex: () -> Void = {}
     @FocusState private var isInputFocused: Bool
+
+    /// Derives workspace state from existing chat inputs to avoid duplicated state wiring.
+    private var hasActiveWorkspace: Bool {
+        repositoryURL != nil || orchestrator.isRepoLoaded
+    }
 
     var body: some View {
         VStack(spacing: 0) {
