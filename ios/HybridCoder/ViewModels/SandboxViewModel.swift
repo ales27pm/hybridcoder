@@ -8,6 +8,7 @@ final class SandboxViewModel {
     private(set) var activeProject: SandboxProject?
     private(set) var isLoading: Bool = false
     private(set) var errorMessage: String?
+    var onActiveProjectChanged: ((SandboxProject?) -> Void)?
     var showNewProjectSheet: Bool = false
     var showDeleteConfirmation: Bool = false
     var projectToDelete: SandboxProject?
@@ -48,65 +49,81 @@ final class SandboxViewModel {
         )
         project.lastOpenedAt = Date()
         projects.insert(project, at: 0)
+        let previous = activeProject
         activeProject = project
+        notifyActiveProjectChangedIfNeeded(previous: previous)
         await saveProjects()
     }
 
     func openProject(_ project: SandboxProject) {
         if let idx = projects.firstIndex(where: { $0.id == project.id }) {
             projects[idx].lastOpenedAt = Date()
+            let previous = activeProject
             activeProject = projects[idx]
+            notifyActiveProjectChangedIfNeeded(previous: previous)
             Task { await saveProjects() }
         }
     }
 
     func closeProject() {
+        let previous = activeProject
         activeProject = nil
+        notifyActiveProjectChangedIfNeeded(previous: previous)
     }
 
     func deleteProject(_ project: SandboxProject) async {
+        let previous = activeProject
         projects.removeAll { $0.id == project.id }
         if activeProject?.id == project.id {
             activeProject = nil
         }
+        notifyActiveProjectChangedIfNeeded(previous: previous)
         await saveProjects()
     }
 
     func updateProjectFile(_ projectID: UUID, fileID: UUID, content: String) async {
+        let previous = activeProject
         guard let pIdx = projects.firstIndex(where: { $0.id == projectID }),
               let fIdx = projects[pIdx].files.firstIndex(where: { $0.id == fileID }) else { return }
         projects[pIdx].files[fIdx].content = content
         if activeProject?.id == projectID {
             activeProject = projects[pIdx]
         }
+        notifyActiveProjectChangedIfNeeded(previous: previous)
         await saveProjects()
     }
 
     func addFileToProject(_ projectID: UUID, name: String, content: String = "", language: String = "javascript") async {
+        let previous = activeProject
         guard let pIdx = projects.firstIndex(where: { $0.id == projectID }) else { return }
         let file = SandboxFile(name: name, content: content, language: language)
         projects[pIdx].files.append(file)
         if activeProject?.id == projectID {
             activeProject = projects[pIdx]
         }
+        notifyActiveProjectChangedIfNeeded(previous: previous)
         await saveProjects()
     }
 
     func deleteFileFromProject(_ projectID: UUID, fileID: UUID) async {
+        let previous = activeProject
         guard let pIdx = projects.firstIndex(where: { $0.id == projectID }) else { return }
         projects[pIdx].files.removeAll { $0.id == fileID }
         if activeProject?.id == projectID {
             activeProject = projects[pIdx]
         }
+        notifyActiveProjectChangedIfNeeded(previous: previous)
         await saveProjects()
     }
 
     func renameProject(_ projectID: UUID, newName: String) async {
+        let previous = activeProject
         guard let pIdx = projects.firstIndex(where: { $0.id == projectID }) else { return }
         projects[pIdx].name = newName
         if activeProject?.id == projectID {
             activeProject = projects[pIdx]
         }
+        notifyActiveProjectChangedIfNeeded(previous: previous)
         await saveProjects()
     }
 
@@ -153,5 +170,14 @@ final class SandboxViewModel {
         } catch {
             logger.error("Failed to save sandbox projects: \(error.localizedDescription)")
         }
+    }
+
+    private func notifyActiveProjectChanged() {
+        onActiveProjectChanged?(activeProject)
+    }
+
+    private func notifyActiveProjectChangedIfNeeded(previous: SandboxProject?) {
+        guard previous != activeProject else { return }
+        notifyActiveProjectChanged()
     }
 }

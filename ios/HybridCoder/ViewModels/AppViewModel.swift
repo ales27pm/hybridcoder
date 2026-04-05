@@ -46,6 +46,7 @@ final class AppViewModel {
     var showRecentPicker: Bool = false
     var showNewSandboxProject: Bool = false
     var importError: String?
+    private var sandboxWorkspaceTransitionGeneration: UInt64 = 0
 
     let orchestrator: AIOrchestrator
     let bookmarkService: BookmarkService
@@ -103,6 +104,22 @@ final class AppViewModel {
 
         chat.onPatchApplied = { [weak self] in
             self?.refreshFileTree()
+        }
+
+        sandboxViewModel.onActiveProjectChanged = { [weak self] project in
+            guard let self else { return }
+            self.sandboxWorkspaceTransitionGeneration &+= 1
+            let transitionGeneration = self.sandboxWorkspaceTransitionGeneration
+            Task { @MainActor in
+                guard transitionGeneration == self.sandboxWorkspaceTransitionGeneration else { return }
+                if let project {
+                    guard self.sandboxViewModel.activeProject?.id == project.id else { return }
+                    await self.orchestrator.openPrototypeWorkspace(project)
+                } else {
+                    guard self.sandboxViewModel.activeProject == nil, self.activeRepositoryURL == nil else { return }
+                    await self.orchestrator.closePrototypeWorkspace()
+                }
+            }
         }
     }
 
