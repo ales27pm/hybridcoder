@@ -66,6 +66,7 @@ final class AIOrchestrator {
     private var workspaceStateGeneration: UInt64 = 0
     private var prototypeRebuildRequestedGeneration: UInt64 = 0
     private var prototypeRebuildCompletedGeneration: UInt64 = 0
+    private var prototypeRebuildQueuedWhileIndexing: Bool = false
 
     var isRepoLoaded: Bool { repoRoot != nil }
     var isPrototypeLoaded: Bool { activePrototypeProject != nil }
@@ -461,6 +462,10 @@ final class AIOrchestrator {
         }
 
         isIndexing = false
+        if prototypeRebuildQueuedWhileIndexing {
+            prototypeRebuildQueuedWhileIndexing = false
+            await rebuildPrototypeIndex()
+        }
     }
 
     private func rebuildPrototypeIndex() async {
@@ -476,7 +481,10 @@ final class AIOrchestrator {
             return
         }
 
-        guard !isIndexing else { return }
+        guard !isIndexing else {
+            prototypeRebuildQueuedWhileIndexing = true
+            return
+        }
         isIndexing = true
 
         while prototypeRebuildCompletedGeneration < prototypeRebuildRequestedGeneration {
@@ -521,6 +529,10 @@ final class AIOrchestrator {
 
         indexingProgress = nil
         isIndexing = false
+        if prototypeRebuildQueuedWhileIndexing || prototypeRebuildCompletedGeneration < prototypeRebuildRequestedGeneration {
+            prototypeRebuildQueuedWhileIndexing = false
+            await rebuildPrototypeIndex()
+        }
     }
 
     func searchCode(query: String, topK: Int = 5) async throws -> [SearchHit] {
@@ -538,19 +550,29 @@ final class AIOrchestrator {
         contextPolicySnapshot.diagnostics
     }
 
-    nonisolated static func expectedExecutionProviders(for route: Route, executesPatch: Bool = false) -> [ExecutionProvider] {
+    nonisolated static func expectedExecutionProviders(
+        for route: Route,
+        executesPatch: Bool = false,
+        includesRouteClassifier: Bool = true
+    ) -> [ExecutionProvider] {
+        let providers: [ExecutionProvider]
         switch route {
         case .explanation:
-            return [.routeClassifier, .semanticSearch, .foundationModel]
+            providers = [.semanticSearch, .foundationModel]
         case .codeGeneration:
-            return [.routeClassifier, .semanticSearch, .qwenCodeGeneration]
+            providers = [.semanticSearch, .qwenCodeGeneration]
         case .patchPlanning:
-            return executesPatch
-                ? [.routeClassifier, .semanticSearch, .foundationModel, .patchEngine]
-                : [.routeClassifier, .semanticSearch, .foundationModel]
+            providers = executesPatch
+                ? [.semanticSearch, .foundationModel, .patchEngine]
+                : [.semanticSearch, .foundationModel]
         case .search:
-            return [.routeClassifier, .semanticSearch]
+            providers = [.semanticSearch]
         }
+
+        if includesRouteClassifier {
+            return [.routeClassifier] + providers
+        }
+        return providers
     }
 
     func processQuery(_ query: String, memory: ConversationMemoryContext? = nil) async throws -> AssistantResponse {
@@ -565,7 +587,7 @@ final class AIOrchestrator {
             route = try await resolveRoute(for: resolved.query)
         }
         let context = await gatherContext(for: resolved.query, route: route, memory: memory)
-        recordExecutionTrace(route: route)
+        recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
         logProviderSelection(query: resolved.query, route: route, mode: "non-stream")
 
         switch route {
@@ -605,7 +627,7 @@ final class AIOrchestrator {
             route = try await resolveRoute(for: resolved.query)
         }
         let context = await gatherContext(for: resolved.query, route: route, memory: memory)
-        recordExecutionTrace(route: route)
+        recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
         logProviderSelection(query: resolved.query, route: route, mode: "stream")
 
         switch route {
@@ -687,7 +709,7 @@ final class AIOrchestrator {
 
         isProcessing = true
         defer { isProcessing = false }
-        recordExecutionTrace(route: .patchPlanning, executesPatch: true)
+        recordExecutionTrace(route: .patchPlanning, executesPatch: true, includesRouteClassifier: false)
 
         let result = await engine.apply(plan, repoRoot: root)
 
@@ -905,9 +927,13 @@ final class AIOrchestrator {
         logger.info("route.selected provider=\(provider, privacy: .public) route=\(route.rawValue, privacy: .public) mode=\(mode, privacy: .public) repoLoaded=\(self.isRepoLoaded, privacy: .public) query=\(query, privacy: .private)")
     }
 
-    private func recordExecutionTrace(route: Route, executesPatch: Bool = false) {
+    private func recordExecutionTrace(route: Route, executesPatch: Bool = false, includesRouteClassifier: Bool = true) {
         lastResolvedRoute = route
-        lastExecutionProviders = Self.expectedExecutionProviders(for: route, executesPatch: executesPatch)
+        lastExecutionProviders = Self.expectedExecutionProviders(
+            for: route,
+            executesPatch: executesPatch,
+            includesRouteClassifier: includesRouteClassifier
+        )
     }
 
     private func workspaceFileContent(for file: RepoFile) async -> String? {

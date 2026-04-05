@@ -9,6 +9,7 @@ struct WorkflowDiagnosticsTests {
         #expect(AIOrchestrator.expectedExecutionProviders(for: .codeGeneration) == [.routeClassifier, .semanticSearch, .qwenCodeGeneration])
         #expect(AIOrchestrator.expectedExecutionProviders(for: .patchPlanning) == [.routeClassifier, .semanticSearch, .foundationModel])
         #expect(AIOrchestrator.expectedExecutionProviders(for: .patchPlanning, executesPatch: true) == [.routeClassifier, .semanticSearch, .foundationModel, .patchEngine])
+        #expect(AIOrchestrator.expectedExecutionProviders(for: .patchPlanning, includesRouteClassifier: false) == [.semanticSearch, .foundationModel])
     }
 
     @Test func promptContextBudgetPreservesCodeSectionWhenPolicyAndMemoryAreLarge() throws {
