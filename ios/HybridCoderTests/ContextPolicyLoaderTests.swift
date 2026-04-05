@@ -192,4 +192,32 @@ struct ContextPolicyLoaderTests {
         #expect(clipped.count <= 60)
         #expect(clipped.contains("POLICY FILE"))
     }
+
+    @Test("Unreadable policy entries surface diagnostics using repository-relative paths")
+    func unreadablePolicyEntryUsesRelativeSourcePath() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repoRoot = root.appendingPathComponent("repo", isDirectory: true)
+        let nested = repoRoot.appendingPathComponent("Sources/App", isDirectory: true)
+
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let invalidPolicyPath = repoRoot.appendingPathComponent("Sources/AGENTS.md", isDirectory: true)
+        try FileManager.default.createDirectory(at: invalidPolicyPath, withIntermediateDirectories: true)
+
+        let loader = ContextPolicyLoader()
+        let snapshot = await loader.loadPolicyFiles(startingAt: nested, stopAt: repoRoot)
+
+        #expect(snapshot.files.isEmpty)
+        let unreadableWarning = snapshot.diagnostics.first(where: { diagnostic in
+            if case let .warning(warning) = diagnostic {
+                return warning.sourcePath == "Sources/AGENTS.md"
+            }
+            return false
+        })
+        #expect(unreadableWarning != nil)
+        if case let .warning(warning) = unreadableWarning {
+            #expect(warning.message.localizedCaseInsensitiveContains("directory"))
+        }
+    }
 }

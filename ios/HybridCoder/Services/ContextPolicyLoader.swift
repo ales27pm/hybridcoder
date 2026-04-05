@@ -121,7 +121,7 @@ final class ContextPolicyLoader {
                 } catch {
                     warnings.append(LoadWarning(
                         fileName: fileName,
-                        sourcePath: fileURL.lastPathComponent,
+                        sourcePath: makeDisplayPath(fileURL: fileURL, rootURL: root),
                         message: error.localizedDescription
                     ))
                 }

@@ -10,10 +10,10 @@ struct AIOrchestratorContextAssemblyTests {
             rawPolicyText: String(repeating: "P", count: 10_000),
             conversationMemoryBlock: "",
             codeParts: ["--- file.swift ---\nlet answer = 42"],
-            totalLimit: 2500,
-            minCodeBudget: 1600,
-            maxPolicyBudget: 700,
-            maxConversationBudget: 1000
+            totalLimit: PromptContextBudget.downstreamContextCap,
+            minCodeBudget: PromptContextBudget.minimumCodeContextBudget,
+            maxPolicyBudget: PromptContextBudget.maximumPolicyContextBudget,
+            maxConversationBudget: PromptContextBudget.maximumConversationContextBudget
         )
 
         #expect(context.contains("<policy_context>"))
@@ -27,10 +27,10 @@ struct AIOrchestratorContextAssemblyTests {
             rawPolicyText: "repo policy",
             conversationMemoryBlock: "",
             codeParts: [],
-            totalLimit: 2500,
-            minCodeBudget: 1600,
-            maxPolicyBudget: 700,
-            maxConversationBudget: 1000
+            totalLimit: PromptContextBudget.downstreamContextCap,
+            minCodeBudget: PromptContextBudget.minimumCodeContextBudget,
+            maxPolicyBudget: PromptContextBudget.maximumPolicyContextBudget,
+            maxConversationBudget: PromptContextBudget.maximumConversationContextBudget
         )
 
         #expect(context.contains("repo policy"))
@@ -43,10 +43,10 @@ struct AIOrchestratorContextAssemblyTests {
             rawPolicyText: "",
             conversationMemoryBlock: "<conversation_memory>\nsummary\n</conversation_memory>",
             codeParts: ["--- file.swift ---\nlet answer = 42"],
-            totalLimit: 2500,
-            minCodeBudget: 1600,
-            maxPolicyBudget: 700,
-            maxConversationBudget: 1000
+            totalLimit: PromptContextBudget.downstreamContextCap,
+            minCodeBudget: PromptContextBudget.minimumCodeContextBudget,
+            maxPolicyBudget: PromptContextBudget.maximumPolicyContextBudget,
+            maxConversationBudget: PromptContextBudget.maximumConversationContextBudget
         )
 
         #expect(context.contains("<conversation_memory>"))
@@ -66,10 +66,10 @@ struct AIOrchestratorContextAssemblyTests {
             rawPolicyText: "policy",
             conversationMemoryBlock: String(repeating: "M", count: 5000),
             codeParts: ["--- file.swift ---\n\(String(repeating: "C", count: 2200))"],
-            totalLimit: 2500,
-            minCodeBudget: 1600,
-            maxPolicyBudget: 700,
-            maxConversationBudget: 1000
+            totalLimit: PromptContextBudget.downstreamContextCap,
+            minCodeBudget: PromptContextBudget.minimumCodeContextBudget,
+            maxPolicyBudget: PromptContextBudget.maximumPolicyContextBudget,
+            maxConversationBudget: PromptContextBudget.maximumConversationContextBudget
         )
 
         #expect(context.contains("--- file.swift ---"))
