@@ -46,6 +46,23 @@ struct PromptTemplateServiceTests {
         #expect(result == "title=feat\nall=feat api tests\nrest=api tests")
     }
 
+    @Test("Interpolation supports pi-mono style $1 positional placeholders")
+    func interpolationSupportsPiMonoPositionalSyntax() async throws {
+        let service = PromptTemplateService()
+        let template = PromptTemplate(
+            id: "refactor",
+            fileURL: URL(fileURLWithPath: "/tmp/refactor.md"),
+            name: "refactor",
+            description: nil,
+            route: .codeGeneration,
+            body: "Refactor $1 and then run checks for ${@:2}"
+        )
+
+        let result = try await service.interpolate(template: template, arguments: ["ViewController.swift", "fix", "unused-variable"])
+
+        #expect(result == "Refactor ViewController.swift and then run checks for fix unused-variable")
+    }
+
     @Test("Interpolation preserves escaped placeholders and handles empty variadic args")
     func interpolationEscapesAndEmptyArgs() async throws {
         let service = PromptTemplateService()

@@ -1,8 +1,10 @@
+import Darwin
 import Foundation
 import CoreMLPipelines
 
 actor QwenCoderService {
     let modelName: String
+    private let accessTokenProvider: @Sendable () -> String?
 
     private(set) var isLoaded: Bool = false
     private(set) var isLoading: Bool = false
@@ -15,8 +17,12 @@ actor QwenCoderService {
     private var loadingTask: Task<TextGenerationPipeline, Error>?
     private var shouldUnloadAfterGeneration: Bool = false
 
-    init(modelName: String = "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit") {
+    init(
+        modelName: String = "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit",
+        accessTokenProvider: @escaping @Sendable () -> String? = { nil }
+    ) {
         self.modelName = modelName
+        self.accessTokenProvider = accessTokenProvider
     }
 
     func warmUp(progressHandler: (@Sendable (Double) -> Void)? = nil) async throws {
@@ -30,6 +36,7 @@ actor QwenCoderService {
             isLoading = false
         }
 
+        configureDownloadEnvironment()
         let pipeline = try await loadPipelineIfNeeded()
         loadProgress = 0.7
         progressHandler?(0.7)
@@ -98,6 +105,20 @@ actor QwenCoderService {
             throw QwenError.generationInProgress
         }
         performUnload()
+    }
+
+    private func configureDownloadEnvironment() {
+        guard let rawToken = accessTokenProvider() else {
+            return
+        }
+        let token = rawToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            return
+        }
+
+        setenv("HF_TOKEN", token, 1)
+        setenv("HUGGING_FACE_HUB_TOKEN", token, 1)
+        setenv("HUGGINGFACE_HUB_TOKEN", token, 1)
     }
 
     private func loadPipelineIfNeeded() async throws -> TextGenerationPipeline {

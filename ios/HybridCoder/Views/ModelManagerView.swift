@@ -241,7 +241,8 @@ struct ModelManagerView: View {
     private var qwenCoderModelCard: some View {
         let modelID = orchestrator.modelRegistry.activeCodeGenerationModelID
         let model = orchestrator.modelRegistry.entry(for: modelID)
-        let status = model?.loadState ?? .unloaded
+        let loadState = model?.loadState ?? .unloaded
+        let installState = model?.installState ?? .notInstalled
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -255,15 +256,46 @@ struct ModelManagerView: View {
 
                 Spacer()
 
-                qwenStatusBadge(status: status)
+                qwenStatusBadge(installState: installState, loadState: loadState)
             }
 
-            Text("Code-generation runtime loaded via CoreMLPipelines. This is separate from the embedding downloader/compiler flow.")
+            Text("Qwen is hydrated by CoreMLPipelines on first warm-up. The Hugging Face token above is forwarded before model load so gated downloads can authenticate.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
 
+            if case .downloading(let progress) = installState {
+                VStack(spacing: 4) {
+                    ProgressView(value: progress)
+                        .tint(Theme.accent)
+
+                    HStack {
+                        Text("Downloading / warming code model…")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.dimText)
+                        Spacer()
+                        Text("\(Int(progress * 100))%")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(Theme.accent)
+                    }
+                }
+            }
+
+            if case .failed(let reason) = loadState {
+                Text(reason)
+                    .font(.caption2)
+                    .foregroundStyle(.red.opacity(0.85))
+            }
+
             HStack {
-                Button("Warm Up Code Model") {
+                Text(qwenInstallSummary(installState: installState, loadState: loadState))
+                    .font(.caption2)
+                    .foregroundStyle(Theme.dimText)
+
+                Spacer()
+            }
+
+            HStack {
+                Button(qwenPrimaryActionTitle(installState: installState, loadState: loadState)) {
                     Task {
                         do {
                             try await orchestrator.warmUpCodeGenerationModel()
@@ -276,10 +308,20 @@ struct ModelManagerView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.accent)
                 .controlSize(.small)
+                .disabled(qwenIsBusy(installState: installState, loadState: loadState))
 
                 Button("Unload") {
                     Task {
                         await orchestrator.unloadCodeGenerationModel()
+                    }
+                }
+                .font(.caption.weight(.medium))
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button("Reset State") {
+                    Task {
+                        await orchestrator.resetCodeGenerationModelState()
                     }
                 }
                 .font(.caption.weight(.medium))
@@ -295,17 +337,24 @@ struct ModelManagerView: View {
         )
     }
 
-    private func qwenStatusBadge(status: ModelRegistry.LoadState) -> some View {
+    private func qwenStatusBadge(installState: ModelRegistry.InstallState, loadState: ModelRegistry.LoadState) -> some View {
         let tuple: (String, Color) = {
-            switch status {
+            switch loadState {
             case .loaded:
                 return ("Ready", Theme.accent)
             case .loading:
                 return ("Loading", .orange)
-            case .failed(_):
+            case .failed:
                 return ("Failed", .red)
             case .unloaded:
-                return ("Unloaded", .orange)
+                switch installState {
+                case .installed:
+                    return ("Downloaded", Theme.accent.opacity(0.8))
+                case .downloading:
+                    return ("Downloading", .orange)
+                case .notInstalled:
+                    return ("Not Downloaded", .orange)
+                }
             }
         }()
 
@@ -315,6 +364,44 @@ struct ModelManagerView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(tuple.1.opacity(0.15), in: .capsule)
+    }
+
+    private func qwenPrimaryActionTitle(installState: ModelRegistry.InstallState, loadState: ModelRegistry.LoadState) -> String {
+        switch (installState, loadState) {
+        case (_, .loaded):
+            return "Re-Warm Code Model"
+        case (.installed, _):
+            return "Warm Up Code Model"
+        case (.downloading, _), (_, .loading):
+            return "Downloading…"
+        case (.notInstalled, _):
+            return "Download & Warm Up"
+        }
+    }
+
+    private func qwenInstallSummary(installState: ModelRegistry.InstallState, loadState: ModelRegistry.LoadState) -> String {
+        switch (installState, loadState) {
+        case (_, .loaded):
+            return "Downloaded and loaded."
+        case (.installed, .unloaded):
+            return "Downloaded. Warm up to use it for code generation."
+        case (.installed, .failed):
+            return "Previously downloaded, but the latest warm-up failed."
+        case (.downloading, _), (_, .loading):
+            return "Hydrating model assets and preparing the runtime."
+        case (.notInstalled, _):
+            return "Not downloaded yet in this app install."
+        }
+    }
+
+    private func qwenIsBusy(installState: ModelRegistry.InstallState, loadState: ModelRegistry.LoadState) -> Bool {
+        if case .downloading = installState {
+            return true
+        }
+        if case .loading = loadState {
+            return true
+        }
+        return false
     }
 
     private var tokenGuidanceText: String {

@@ -129,28 +129,44 @@ struct SettingsView: View {
                     .font(.subheadline)
                     .foregroundStyle(Theme.dimText)
             } else {
-                ForEach(orchestrator.discoveryDiagnostics) { diagnostic in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(diagnostic.severity.rawValue.capitalized)
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(severityColor(diagnostic.severity))
-                            Spacer()
-                            Text(diagnostic.sourcePath)
-                                .font(.caption2)
-                                .foregroundStyle(Theme.dimText)
-                                .lineLimit(1)
-                        }
+                if !orchestrator.templateDiagnostics.isEmpty {
+                    diagnosticsGroup(title: "Prompt Templates", diagnostics: orchestrator.templateDiagnostics)
+                }
 
-                        Text(diagnostic.actionableMessage)
-                            .font(.subheadline)
-                            .foregroundStyle(.white)
-                    }
-                    .padding(.vertical, 4)
+                if !orchestrator.contextPolicyDiagnostics.isEmpty {
+                    diagnosticsGroup(title: "Context Policies", diagnostics: orchestrator.contextPolicyDiagnostics)
                 }
             }
         } header: {
             Text("Diagnostics")
+        }
+    }
+
+    @ViewBuilder
+    private func diagnosticsGroup(title: String, diagnostics: [DiscoveryDiagnostic]) -> some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(Theme.dimText)
+            .textCase(nil)
+
+        ForEach(diagnostics) { diagnostic in
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(diagnostic.severity.rawValue.capitalized)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(severityColor(diagnostic.severity))
+                    Spacer()
+                    Text(diagnostic.sourcePath)
+                        .font(.caption2)
+                        .foregroundStyle(Theme.dimText)
+                        .lineLimit(1)
+                }
+
+                Text(diagnostic.actionableMessage)
+                    .font(.subheadline)
+                    .foregroundStyle(.white)
+            }
+            .padding(.vertical, 4)
         }
     }
 
