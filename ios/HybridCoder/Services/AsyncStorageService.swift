@@ -31,12 +31,8 @@ actor AsyncStorageService {
         let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
         let rc = sqlite3_open_v2(url.path, &handle, flags, nil)
         if rc != SQLITE_OK {
-            let reason: String
             if let handle {
-                reason = String(cString: sqlite3_errmsg(handle))
                 sqlite3_close(handle)
-            } else {
-                reason = "sqlite3_open_v2 failed with code \(rc)"
             }
             throw StorageError.databaseUnavailable
         }
@@ -202,9 +198,9 @@ actor AsyncStorageService {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
-    private var lastError: String { String(cString: sqlite3_errmsg(db)) }
+    private nonisolated var lastError: String { String(cString: sqlite3_errmsg(db)) }
 
-    private func exec(_ sql: String) throws {
+    private nonisolated func exec(_ sql: String) throws {
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
             throw StorageError.writeFailed(lastError)
         }

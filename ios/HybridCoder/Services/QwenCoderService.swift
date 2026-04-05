@@ -2,9 +2,11 @@ import Darwin
 import Foundation
 import CoreMLPipelines
 
+extension TextGenerationPipeline: @unchecked @retroactive Sendable {}
+
 actor QwenCoderService {
     let modelName: String
-    private let accessTokenProvider: @Sendable () -> String?
+    private let accessTokenProvider: () -> String?
 
     private(set) var isLoaded: Bool = false
     private(set) var isLoading: Bool = false
@@ -19,7 +21,7 @@ actor QwenCoderService {
 
     init(
         modelName: String = "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit",
-        accessTokenProvider: @escaping @Sendable () -> String? = { nil }
+        accessTokenProvider: @escaping () -> String? = { nil }
     ) {
         self.modelName = modelName
         self.accessTokenProvider = accessTokenProvider

@@ -303,7 +303,7 @@ private final class SQLiteIndexStore {
 
     private let db: OpaquePointer
 
-    init(databaseURL: URL) throws {
+    nonisolated init(databaseURL: URL) throws {
         let directory = databaseURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
@@ -328,11 +328,11 @@ private final class SQLiteIndexStore {
         try createSchema()
     }
 
-    deinit {
+    nonisolated deinit {
         sqlite3_close(db)
     }
 
-    static func makeDefault() throws -> SQLiteIndexStore {
+    nonisolated static func makeDefault() throws -> SQLiteIndexStore {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         let url = appSupport
@@ -354,7 +354,7 @@ private final class SQLiteIndexStore {
         }
     }
 
-    func loadSnapshot() throws -> Snapshot {
+    nonisolated func loadSnapshot() throws -> Snapshot {
         let chunkList = try loadChunks()
         let chunkMap = Dictionary(uniqueKeysWithValues: chunkList.map { ($0.id, $0) })
         let records = try loadEmbeddings()
@@ -369,25 +369,25 @@ private final class SQLiteIndexStore {
         )
     }
 
-    func beginTransaction() throws {
+    nonisolated func beginTransaction() throws {
         try exec("BEGIN TRANSACTION;")
     }
 
-    func commitTransaction() throws {
+    nonisolated func commitTransaction() throws {
         try exec("COMMIT;")
     }
 
-    func rollbackTransaction() throws {
+    nonisolated func rollbackTransaction() throws {
         try exec("ROLLBACK;")
     }
 
-    func reset() throws {
+    nonisolated func reset() throws {
         try exec("DELETE FROM embeddings;")
         try exec("DELETE FROM chunks;")
         try exec("DELETE FROM metadata;")
     }
 
-    func clearAllAtomically() throws {
+    nonisolated func clearAllAtomically() throws {
         try beginTransaction()
         do {
             try reset()
@@ -399,7 +399,7 @@ private final class SQLiteIndexStore {
         }
     }
 
-    func persistChunk(_ chunk: SourceChunk) throws {
+    nonisolated func persistChunk(_ chunk: SourceChunk) throws {
         let sql = """
         INSERT INTO chunks (id, file_id, file_path, content, start_line, end_line, language, estimated_tokens)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?);
@@ -425,7 +425,7 @@ private final class SQLiteIndexStore {
         }
     }
 
-    func persistEmbedding(_ record: EmbeddingRecord) throws {
+    nonisolated func persistEmbedding(_ record: EmbeddingRecord) throws {
         let sql = """
         INSERT INTO embeddings (id, chunk_id, file_path, vector_blob, model_identifier, created_at)
         VALUES (?, ?, ?, ?, ?, ?);
@@ -453,7 +453,7 @@ private final class SQLiteIndexStore {
         }
     }
 
-    func persistMetadata(totalFileCount: Int, lastIndexedAt: Date?, languageCounts: [String: Int]) throws {
+    nonisolated func persistMetadata(totalFileCount: Int, lastIndexedAt: Date?, languageCounts: [String: Int]) throws {
         try writeMetadata(key: "totalFileCount", value: String(totalFileCount))
 
         if let lastIndexedAt {
@@ -467,7 +467,7 @@ private final class SQLiteIndexStore {
         try writeMetadata(key: "languageCounts", value: languageJSON)
     }
 
-    private func loadChunks() throws -> [SourceChunk] {
+    private nonisolated func loadChunks() throws -> [SourceChunk] {
         let sql = """
         SELECT id, file_id, file_path, content, start_line, end_line, language, estimated_tokens
         FROM chunks;
@@ -515,7 +515,7 @@ private final class SQLiteIndexStore {
         return chunks
     }
 
-    private func loadEmbeddings() throws -> [EmbeddingRecord] {
+    private nonisolated func loadEmbeddings() throws -> [EmbeddingRecord] {
         let sql = """
         SELECT id, chunk_id, file_path, vector_blob, model_identifier, created_at
         FROM embeddings;
@@ -568,7 +568,7 @@ private final class SQLiteIndexStore {
         return records
     }
 
-    private func loadMetadata() throws -> (totalFileCount: Int, lastIndexedAt: Date?, languageCounts: [String: Int]) {
+    private nonisolated func loadMetadata() throws -> (totalFileCount: Int, lastIndexedAt: Date?, languageCounts: [String: Int]) {
         let sql = "SELECT key, value FROM metadata;"
 
         var statement: OpaquePointer?
@@ -610,7 +610,7 @@ private final class SQLiteIndexStore {
         return (totalFileCount, lastIndexedAt, languageCounts)
     }
 
-    private func writeMetadata(key: String, value: String) throws {
+    private nonisolated func writeMetadata(key: String, value: String) throws {
         let sql = "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?);"
 
         var statement: OpaquePointer?
@@ -627,7 +627,7 @@ private final class SQLiteIndexStore {
         }
     }
 
-    private func createSchema() throws {
+    private nonisolated func createSchema() throws {
         try exec("""
         CREATE TABLE IF NOT EXISTS chunks (
             id TEXT PRIMARY KEY,
@@ -664,18 +664,18 @@ private final class SQLiteIndexStore {
         try exec("CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(file_path);")
     }
 
-    private func exec(_ sql: String) throws {
+    private nonisolated func exec(_ sql: String) throws {
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
             throw StoreError.executeFailed(lastErrorMessage)
         }
     }
 
-    private var lastErrorMessage: String {
+    private nonisolated var lastErrorMessage: String {
         String(cString: sqlite3_errmsg(db))
     }
 
 
-    private func bindText(_ value: String, to statement: OpaquePointer?, index: Int32) throws {
+    private nonisolated func bindText(_ value: String, to statement: OpaquePointer?, index: Int32) throws {
         let result = value.withCString { pointer in
             sqlite3_bind_text(statement, index, pointer, -1, SQLITE_TRANSIENT)
         }
@@ -684,13 +684,13 @@ private final class SQLiteIndexStore {
         }
     }
 
-    private static func encodeVector(_ vector: [Float]) -> Data {
+    private nonisolated static func encodeVector(_ vector: [Float]) -> Data {
         vector.withUnsafeBufferPointer { buffer in
             Data(buffer: buffer)
         }
     }
 
-    private static func decodeVector(_ data: Data) -> [Float] {
+    private nonisolated static func decodeVector(_ data: Data) -> [Float] {
         guard !data.isEmpty else { return [] }
         let count = data.count / MemoryLayout<Float>.stride
         var floats = [Float](repeating: 0, count: count)

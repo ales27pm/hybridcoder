@@ -75,7 +75,7 @@ actor SQLiteService {
     var databasePath: String { dbURL.path }
 
     @discardableResult
-    func execute(_ sql: String, params: [Value] = []) throws -> Int {
+    nonisolated func execute(_ sql: String, params: [Value] = []) throws -> Int {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw SQLiteError.prepareFailed(lastError)
@@ -92,7 +92,7 @@ actor SQLiteService {
         return Int(sqlite3_changes(db))
     }
 
-    func query(_ sql: String, params: [Value] = []) throws -> [Row] {
+    nonisolated func query(_ sql: String, params: [Value] = []) throws -> [Row] {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw SQLiteError.prepareFailed(lastError)
@@ -120,7 +120,7 @@ actor SQLiteService {
         return rows
     }
 
-    func queryScalar(_ sql: String, params: [Value] = []) throws -> Value {
+    nonisolated func queryScalar(_ sql: String, params: [Value] = []) throws -> Value {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw SQLiteError.prepareFailed(lastError)
@@ -135,22 +135,22 @@ actor SQLiteService {
         return readColumn(stmt, index: 0)
     }
 
-    func transaction(_ block: () throws -> Void) throws {
+    nonisolated func transaction(_ block: () throws -> Void) throws {
         try execute("BEGIN TRANSACTION;")
         do {
             try block()
             try execute("COMMIT;")
         } catch {
-            try? execute("ROLLBACK;")
+            _ = try? execute("ROLLBACK;")
             throw error
         }
     }
 
-    var lastInsertRowID: Int64 { sqlite3_last_insert_rowid(db) }
+    nonisolated var lastInsertRowID: Int64 { sqlite3_last_insert_rowid(db) }
 
-    private var lastError: String { String(cString: sqlite3_errmsg(db)) }
+    private nonisolated var lastError: String { String(cString: sqlite3_errmsg(db)) }
 
-    private func bindParams(_ params: [Value], to stmt: OpaquePointer?) throws {
+    private nonisolated func bindParams(_ params: [Value], to stmt: OpaquePointer?) throws {
         for (i, param) in params.enumerated() {
             let idx = Int32(i + 1)
             let rc: Int32
@@ -176,7 +176,7 @@ actor SQLiteService {
         }
     }
 
-    private func readColumn(_ stmt: OpaquePointer?, index: Int32) -> Value {
+    private nonisolated func readColumn(_ stmt: OpaquePointer?, index: Int32) -> Value {
         switch sqlite3_column_type(stmt, index) {
         case SQLITE_TEXT:
             guard let cStr = sqlite3_column_text(stmt, index) else { return .null }
