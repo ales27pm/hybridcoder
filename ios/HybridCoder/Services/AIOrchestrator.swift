@@ -37,6 +37,8 @@ final class AIOrchestrator {
     private(set) var warmUpError: String?
     private(set) var indexingProgress: (completed: Int, total: Int)?
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "AIOrchestrator")
+    private var codeGenerationLifecycleToken: UInt64 = 0
+    private var isCodeGenerationWarmUpInFlight: Bool = false
 
     var isRepoLoaded: Bool { repoRoot != nil }
 
@@ -132,22 +134,42 @@ final class AIOrchestrator {
     }
 
     func warmUpCodeGenerationModel() async throws {
-        _ = try await ensureQwenCoderLoaded()
+        guard !isCodeGenerationWarmUpInFlight else { return }
+
+        isCodeGenerationWarmUpInFlight = true
+        codeGenerationLifecycleToken &+= 1
+        let token = codeGenerationLifecycleToken
+        modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loading)
+
+        defer {
+            if codeGenerationLifecycleToken == token {
+                isCodeGenerationWarmUpInFlight = false
+            }
+        }
+
+        do {
+            _ = try await ensureQwenCoderLoaded()
+            guard codeGenerationLifecycleToken == token else { return }
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loaded)
+        } catch {
+            guard codeGenerationLifecycleToken == token else { return }
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .failed(error.localizedDescription))
+            warmUpError = error.localizedDescription
+            throw error
+        }
     }
 
     func unloadCodeGenerationModel() async {
+        codeGenerationLifecycleToken &+= 1
+        isCodeGenerationWarmUpInFlight = false
+
         guard let service = qwenCoderService else {
             modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
             return
         }
 
-        do {
-            try await service.unload()
-            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
-        } catch {
-            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loading)
-            warmUpError = error.localizedDescription
-        }
+        _ = try? await service.unload()
+        modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
     }
 
     func importRepo(url: URL) async throws {
@@ -464,7 +486,7 @@ final class AIOrchestrator {
             throw OrchestratorError.routeResolutionFailed("Unsupported route \"\(decision.route)\" from Foundation Models.")
         }
 
-        logger.info("route.classifier provider=FoundationModels route=\(route.rawValue, privacy: .public) confidence=\(decision.confidence) query=\(query, privacy: .public)")
+        logger.info("route.classifier provider=FoundationModels route=\(route.rawValue, privacy: .public) confidence=\(decision.confidence) query=\(query, privacy: .private)")
         return route
     }
 
@@ -624,7 +646,14 @@ final class AIOrchestrator {
 
 
     private func requireQwenCoder() async throws -> QwenCoderService {
-        try await ensureQwenCoderLoaded()
+        do {
+            let coder = try await ensureQwenCoderLoaded()
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loaded)
+            return coder
+        } catch {
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .failed(error.localizedDescription))
+            throw error
+        }
     }
 
     private func ensureQwenCoderLoaded() async throws -> QwenCoderService {
@@ -637,24 +666,20 @@ final class AIOrchestrator {
         }
 
         if await coder.isLoaded {
-            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loaded)
             return coder
         }
 
-        modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loading)
         do {
             try await coder.warmUp()
-            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loaded)
             return coder
         } catch {
-            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .failed(error.localizedDescription))
             throw OrchestratorError.codeGenerationModelUnavailable(error.localizedDescription)
         }
     }
 
     private func logProviderSelection(query: String, route: Route, mode: String) {
         let provider: String = route == .codeGeneration ? "QwenCoreMLPipelines" : "FoundationModels"
-        logger.info("route.selected provider=\(provider, privacy: .public) route=\(route.rawValue, privacy: .public) mode=\(mode, privacy: .public) repoLoaded=\(self.isRepoLoaded, privacy: .public) query=\(query, privacy: .public)")
+        logger.info("route.selected provider=\(provider, privacy: .public) route=\(route.rawValue, privacy: .public) mode=\(mode, privacy: .public) repoLoaded=\(self.isRepoLoaded, privacy: .public) query=\(query, privacy: .private)")
     }
 
     private func extractCodeBlocks(from text: String) -> [CodeBlock] {

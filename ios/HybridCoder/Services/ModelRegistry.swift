@@ -194,7 +194,7 @@ final class ModelRegistry {
     func hasAnyGenerationModelReady() -> Bool {
         // Readiness gate for chat execution must align with route resolution,
         // which requires the orchestration (Foundation Models) runtime.
-        isReady(modelID: activeGenerationModelID)
+        return isReady(modelID: activeGenerationModelID)
     }
 
     nonisolated static var downloadedModelsRoot: URL {
