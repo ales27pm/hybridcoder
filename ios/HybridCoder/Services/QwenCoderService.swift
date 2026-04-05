@@ -1,25 +1,24 @@
 import Foundation
 import CoreMLPipelines
 
-@Observable
-@MainActor
-final class QwenCoderService {
+actor QwenCoderService {
     let modelName: String
 
-    var isLoaded: Bool = false
-    var isLoading: Bool = false
-    var isGenerating: Bool = false
-    var loadError: String?
-    var tokensPerSecond: Double = 0
-    var loadProgress: Double = 0
+    private(set) var isLoaded: Bool = false
+    private(set) var isLoading: Bool = false
+    private(set) var isGenerating: Bool = false
+    private(set) var loadError: String?
+    private(set) var tokensPerSecond: Double = 0
+    private(set) var loadProgress: Double = 0
 
     private var pipeline: TextGenerationPipeline?
+    private var shouldUnloadAfterGeneration: Bool = false
 
     init(modelName: String = "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit") {
         self.modelName = modelName
     }
 
-    func warmUp(progressHandler: ((Double) -> Void)? = nil) async throws {
+    func warmUp(progressHandler: (@Sendable (Double) -> Void)? = nil) async throws {
         progressHandler?(0.1)
         let pipeline = try await loadPipelineIfNeeded()
         loadProgress = 0.7
@@ -50,7 +49,7 @@ final class QwenCoderService {
         userPrompt: String,
         maxTokens: Int = 1024,
         temperature: Float = 0.2,
-        onChunk: @escaping (String) -> Void
+        onChunk: (@MainActor @Sendable (String) -> Void)?
     ) async throws -> GenerationResult {
         return try await generateInternal(
             messages: Self.messages(systemPrompt: systemPrompt, userPrompt: userPrompt),
@@ -71,7 +70,7 @@ final class QwenCoderService {
     func generateCodeStreaming(
         prompt: String,
         context: String,
-        onChunk: @escaping (String) -> Void
+        onChunk: @MainActor @escaping @Sendable (String) -> Void
     ) async throws -> GenerationResult {
         try await generateStreaming(
             systemPrompt: PromptBuilder.qwenCodeGenerationSystem(),
@@ -80,14 +79,12 @@ final class QwenCoderService {
         )
     }
 
-    func unload() {
-        pipeline = nil
-        isLoaded = false
-        isLoading = false
-        isGenerating = false
-        tokensPerSecond = 0
-        loadProgress = 0
-        loadError = nil
+    func unload() async throws {
+        if isGenerating {
+            shouldUnloadAfterGeneration = true
+            throw QwenError.generationInProgress
+        }
+        performUnload()
     }
 
     private func loadPipelineIfNeeded() async throws -> TextGenerationPipeline {
@@ -109,7 +106,7 @@ final class QwenCoderService {
 
         do {
             let loaded = try await TextGenerationPipeline(modelName: modelName, prewarm: false)
-            self.pipeline = loaded
+            pipeline = loaded
             isLoaded = true
             loadError = nil
             loadProgress = max(loadProgress, 0.6)
@@ -125,7 +122,7 @@ final class QwenCoderService {
         messages: [[String: String]],
         maxTokens: Int,
         temperature: Float,
-        onChunk: ((String) -> Void)?
+        onChunk: (@MainActor @Sendable (String) -> Void)?
     ) async throws -> GenerationResult {
         guard !isGenerating else {
             throw QwenError.alreadyGenerating
@@ -134,16 +131,28 @@ final class QwenCoderService {
         _ = temperature // Current CoreMLPipelines API uses greedy sampling.
         let pipeline = try await loadPipelineIfNeeded()
         isGenerating = true
-        defer { isGenerating = false }
 
         let startedAt = Date()
         var fullText = ""
 
+        defer {
+            isGenerating = false
+            if shouldUnloadAfterGeneration {
+                shouldUnloadAfterGeneration = false
+                performUnload()
+            }
+        }
+
         do {
             let stream = pipeline.generate(messages: messages, maxNewTokens: maxTokens)
             for try await chunk in stream {
+                try Task.checkCancellation()
                 fullText += chunk
-                onChunk?(chunk)
+                if let onChunk {
+                    await MainActor.run {
+                        onChunk(chunk)
+                    }
+                }
             }
 
             let elapsed = max(Date().timeIntervalSince(startedAt), 0.001)
@@ -157,9 +166,20 @@ final class QwenCoderService {
                 tokensPerSecond: tps,
                 elapsedSeconds: elapsed
             )
+        } catch is CancellationError {
+            throw QwenError.cancelled
         } catch {
             throw QwenError.generationFailed(error.localizedDescription)
         }
+    }
+
+    private func performUnload() {
+        pipeline = nil
+        isLoaded = false
+        isLoading = false
+        tokensPerSecond = 0
+        loadProgress = 0
+        loadError = nil
     }
 
     private static func messages(systemPrompt: String, userPrompt: String) -> [[String: String]] {
@@ -173,30 +193,33 @@ final class QwenCoderService {
         max(text.split(whereSeparator: \.isWhitespace).count, 1)
     }
 
-    nonisolated struct GenerationResult: Sendable {
+    struct GenerationResult: Sendable {
         let text: String
         let tokenCount: Int
         let tokensPerSecond: Double
         let elapsedSeconds: Double
     }
 
-    nonisolated enum QwenError: Error, LocalizedError, Sendable {
+    enum QwenError: Error, LocalizedError, Sendable {
         case pipelineUnavailable(String)
         case alreadyLoading
-        case modelNotLoaded
         case alreadyGenerating
+        case generationInProgress
+        case cancelled
         case generationFailed(String)
 
-        nonisolated var errorDescription: String? {
+        var errorDescription: String? {
             switch self {
             case .pipelineUnavailable(let reason):
                 return "CoreMLPipelines model is unavailable: \(reason)"
             case .alreadyLoading:
                 return "Qwen coder model is already loading."
-            case .modelNotLoaded:
-                return "Qwen coder model is not loaded."
             case .alreadyGenerating:
                 return "A Qwen generation is already in progress."
+            case .generationInProgress:
+                return "Cannot unload Qwen while generation is in progress."
+            case .cancelled:
+                return "Qwen generation was cancelled."
             case .generationFailed(let reason):
                 return "Qwen generation failed: \(reason)"
             }

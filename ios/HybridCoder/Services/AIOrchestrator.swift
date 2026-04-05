@@ -135,9 +135,19 @@ final class AIOrchestrator {
         _ = try await ensureQwenCoderLoaded()
     }
 
-    func unloadCodeGenerationModel() {
-        qwenCoderService?.unload()
-        modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
+    func unloadCodeGenerationModel() async {
+        guard let service = qwenCoderService else {
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
+            return
+        }
+
+        do {
+            try await service.unload()
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
+        } catch {
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loading)
+            warmUpError = error.localizedDescription
+        }
     }
 
     func importRepo(url: URL) async throws {
@@ -626,7 +636,7 @@ final class AIOrchestrator {
             throw OrchestratorError.codeGenerationModelUnavailable("Qwen coder service is not initialized.")
         }
 
-        if coder.isLoaded {
+        if await coder.isLoaded {
             modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loaded)
             return coder
         }

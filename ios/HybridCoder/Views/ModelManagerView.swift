@@ -278,7 +278,9 @@ struct ModelManagerView: View {
                 .controlSize(.small)
 
                 Button("Unload") {
-                    orchestrator.unloadCodeGenerationModel()
+                    Task {
+                        await orchestrator.unloadCodeGenerationModel()
+                    }
                 }
                 .font(.caption.weight(.medium))
                 .buttonStyle(.bordered)
