@@ -3,19 +3,14 @@ import SwiftUI
 struct ChatView: View {
     @Bindable var viewModel: ChatViewModel
     let orchestrator: AIOrchestrator
-    let repositoryURL: URL?
+    let hasActiveWorkspace: Bool
     var onOpenProjectHub: () -> Void = {}
     var onReindex: () -> Void = {}
     @FocusState private var isInputFocused: Bool
 
-    /// Derives workspace state from existing chat inputs to avoid duplicated state wiring.
-    private var hasActiveWorkspace: Bool {
-        repositoryURL != nil || orchestrator.isRepoLoaded
-    }
-
     /// True only when the active workspace is repository-backed.
     private var isRepositoryBackedWorkspace: Bool {
-        repositoryURL != nil || orchestrator.isRepoLoaded
+        orchestrator.isRepoLoaded
     }
 
     var body: some View {

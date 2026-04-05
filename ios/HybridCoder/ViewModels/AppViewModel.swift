@@ -62,7 +62,7 @@ final class AppViewModel {
 
     /// Indicates whether there is any active workspace, either a repository or a sandbox project.
     var hasActiveWorkspace: Bool {
-        activeRepositoryURL != nil || sandboxViewModel.activeProject != nil
+        orchestrator.isRepoLoaded || sandboxViewModel.activeProject != nil
     }
 
     var activeWorkspaceLabel: String {
