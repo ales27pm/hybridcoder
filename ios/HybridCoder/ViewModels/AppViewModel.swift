@@ -196,11 +196,16 @@ final class AppViewModel {
     }
 
     func openPrototypeProject(_ project: SandboxProject) {
+        // Close any open repository when switching to a prototype.
         if activeRepositoryURL != nil {
             closeRepository()
         }
+        // Open the selected prototype project.
         sandboxViewModel.openProject(project)
-        selectedSection = .sandbox
+        // Treat a prototype as an active workspace for chat. Default to the chat section so
+        // that users can immediately ask questions about their prototype code. They can still
+        // switch to the prototype editor via the sidebar if needed.
+        selectedSection = .chat
     }
 
     func prepareNewPrototypeProject() {
