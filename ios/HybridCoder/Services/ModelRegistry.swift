@@ -111,7 +111,7 @@ final class ModelRegistry {
                 remoteBaseURL: nil,
                 files: [],
                 isAvailable: true,
-                installState: .installed,
+                installState: .notInstalled,
                 loadState: .unloaded
             )
         ]
@@ -216,6 +216,36 @@ final class ModelRegistry {
 
     func tokenizerFolderName(for modelID: String) -> String {
         modelID.replacingOccurrences(of: "/", with: "__") + "__tokenizer"
+    }
+
+    func codeGenerationInstallMarkerURL(for modelID: String) -> URL {
+        downloadedModelDirectory(for: modelID).appendingPathComponent(".install-state.json")
+    }
+
+    func isCodeGenerationModelMarkedInstalled(modelID: String) -> Bool {
+        FileManager.default.fileExists(atPath: codeGenerationInstallMarkerURL(for: modelID).path(percentEncoded: false))
+    }
+
+    func markCodeGenerationModelInstalled(modelID: String) {
+        let markerURL = codeGenerationInstallMarkerURL(for: modelID)
+        let parent = markerURL.deletingLastPathComponent()
+        let formatter = ISO8601DateFormatter()
+        let payload = """
+        {"modelID":"\(modelID)","installedAt":"\(formatter.string(from: Date()))"}
+        """
+
+        do {
+            try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+            try payload.write(to: markerURL, atomically: true, encoding: .utf8)
+        } catch {
+            // Best-effort marker only. The real source of truth is a successful pipeline warm-up.
+        }
+    }
+
+    func clearCodeGenerationInstallMarker(modelID: String) {
+        let markerURL = codeGenerationInstallMarkerURL(for: modelID)
+        guard FileManager.default.fileExists(atPath: markerURL.path(percentEncoded: false)) else { return }
+        try? FileManager.default.removeItem(at: markerURL)
     }
 
     private func mutate(modelID: String, _ update: (inout Entry) -> Void) {

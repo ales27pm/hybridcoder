@@ -117,7 +117,7 @@ final class AIOrchestrator {
         }
 
         if qwenCoderService == nil {
-            qwenCoderService = QwenCoderService(modelName: modelRegistry.activeCodeGenerationModelID)
+            qwenCoderService = makeQwenCoderService(modelID: modelRegistry.activeCodeGenerationModelID)
             modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
         }
 
@@ -138,6 +138,34 @@ final class AIOrchestrator {
 
     func refreshRegistryInstallState() async {
         await modelDownload.refreshInstallState(modelID: modelRegistry.activeEmbeddingModelID)
+
+        let codeGenerationModelID = modelRegistry.activeCodeGenerationModelID
+        let qwenInstalled = modelRegistry.isCodeGenerationModelMarkedInstalled(modelID: codeGenerationModelID)
+        modelRegistry.setInstallState(for: codeGenerationModelID, qwenInstalled ? .installed : .notInstalled)
+    }
+
+    private func makeQwenCoderService(modelID: String) -> QwenCoderService {
+        let downloadService = modelDownload
+        return QwenCoderService(
+            modelName: modelID,
+            accessTokenProvider: {
+                let token = downloadService.huggingFaceToken.trimmingCharacters(in: .whitespacesAndNewlines)
+                return token.isEmpty ? nil : token
+            }
+        )
+    }
+
+    private func ensureQwenServiceMatchesActiveModel() async -> QwenCoderService {
+        let activeModelID = modelRegistry.activeCodeGenerationModelID
+
+        if let existing = qwenCoderService,
+           await existing.modelName == activeModelID {
+            return existing
+        }
+
+        let service = makeQwenCoderService(modelID: activeModelID)
+        qwenCoderService = service
+        return service
     }
 
     func warmUpCodeGenerationModel() async throws {
@@ -146,7 +174,11 @@ final class AIOrchestrator {
         isCodeGenerationWarmUpInFlight = true
         codeGenerationLifecycleToken &+= 1
         let token = codeGenerationLifecycleToken
-        modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loading)
+        let activeModelID = modelRegistry.activeCodeGenerationModelID
+        let wasInstalled = modelRegistry.isCodeGenerationModelMarkedInstalled(modelID: activeModelID)
+
+        modelRegistry.setInstallState(for: activeModelID, .downloading(progress: 0.05))
+        modelRegistry.setLoadState(for: activeModelID, .loading)
 
         defer {
             if codeGenerationLifecycleToken == token {
@@ -155,12 +187,24 @@ final class AIOrchestrator {
         }
 
         do {
-            _ = try await ensureQwenCoderLoaded()
+            let service = await ensureQwenServiceMatchesActiveModel()
+            try await service.warmUp { [weak self] progress in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let bounded = min(max(progress, 0.05), 0.99)
+                    self.modelRegistry.setInstallState(for: activeModelID, .downloading(progress: bounded))
+                }
+            }
             guard codeGenerationLifecycleToken == token else { return }
-            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loaded)
+
+            modelRegistry.markCodeGenerationModelInstalled(modelID: activeModelID)
+            modelRegistry.setInstallState(for: activeModelID, .installed)
+            modelRegistry.setLoadState(for: activeModelID, .loaded)
+            warmUpError = nil
         } catch {
             guard codeGenerationLifecycleToken == token else { return }
-            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .failed(error.localizedDescription))
+            modelRegistry.setInstallState(for: activeModelID, wasInstalled ? .installed : .notInstalled)
+            modelRegistry.setLoadState(for: activeModelID, .failed(error.localizedDescription))
             warmUpError = error.localizedDescription
             throw error
         }
@@ -177,6 +221,15 @@ final class AIOrchestrator {
 
         _ = try? await service.unload()
         modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
+    }
+
+    func resetCodeGenerationModelState() async {
+        await unloadCodeGenerationModel()
+        let activeModelID = modelRegistry.activeCodeGenerationModelID
+        modelRegistry.clearCodeGenerationInstallMarker(modelID: activeModelID)
+        modelRegistry.setInstallState(for: activeModelID, .notInstalled)
+        modelRegistry.setLoadState(for: activeModelID, .unloaded)
+        warmUpError = nil
     }
 
     func importRepo(url: URL) async throws {
@@ -669,17 +722,7 @@ final class AIOrchestrator {
 
     private func ensureQwenCoderLoaded() async throws -> QwenCoderService {
         let activeModelID = modelRegistry.activeCodeGenerationModelID
-
-        if let existing = qwenCoderService,
-           await existing.modelName != activeModelID {
-            qwenCoderService = QwenCoderService(modelName: activeModelID)
-        }
-
-        if qwenCoderService == nil {
-            qwenCoderService = QwenCoderService(modelName: activeModelID)
-        }
-
-        let coder = qwenCoderService!
+        let coder = await ensureQwenServiceMatchesActiveModel()
 
         if await coder.isLoaded {
             return coder
@@ -687,6 +730,8 @@ final class AIOrchestrator {
 
         do {
             try await coder.warmUp()
+            modelRegistry.markCodeGenerationModelInstalled(modelID: activeModelID)
+            modelRegistry.setInstallState(for: activeModelID, .installed)
             return coder
         } catch {
             throw OrchestratorError.codeGenerationModelUnavailable(error.localizedDescription)
