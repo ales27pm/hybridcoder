@@ -37,7 +37,7 @@ final class QwenCoderService {
         maxTokens: Int = 1024,
         temperature: Float = 0.2
     ) async throws -> GenerationResult {
-        try await generateInternal(
+        return try await generateInternal(
             messages: Self.messages(systemPrompt: systemPrompt, userPrompt: userPrompt),
             maxTokens: maxTokens,
             temperature: temperature,
@@ -52,7 +52,7 @@ final class QwenCoderService {
         temperature: Float = 0.2,
         onChunk: @escaping (String) -> Void
     ) async throws -> GenerationResult {
-        try await generateInternal(
+        return try await generateInternal(
             messages: Self.messages(systemPrompt: systemPrompt, userPrompt: userPrompt),
             maxTokens: maxTokens,
             temperature: temperature,
@@ -143,7 +143,7 @@ final class QwenCoderService {
             let stream = pipeline.generate(messages: messages, maxNewTokens: maxTokens)
             for try await chunk in stream {
                 fullText += chunk
-                onChunk?(fullText)
+                onChunk?(chunk)
             }
 
             let elapsed = max(Date().timeIntervalSince(startedAt), 0.001)

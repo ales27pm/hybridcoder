@@ -132,18 +132,7 @@ final class AIOrchestrator {
     }
 
     func warmUpCodeGenerationModel() async throws {
-        if qwenCoderService == nil {
-            qwenCoderService = QwenCoderService(modelName: modelRegistry.activeCodeGenerationModelID)
-        }
-
-        modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loading)
-        do {
-            try await qwenCoderService?.warmUp()
-            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loaded)
-        } catch {
-            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .failed(error.localizedDescription))
-            throw OrchestratorError.codeGenerationModelUnavailable(error.localizedDescription)
-        }
+        _ = try await ensureQwenCoderLoaded()
     }
 
     func unloadCodeGenerationModel() {
@@ -404,8 +393,10 @@ final class AIOrchestrator {
         switch route {
         case .codeGeneration:
             let coder = try await requireQwenCoder()
-            let result = try await coder.generateCodeStreaming(prompt: query, context: context) { partial in
-                onPartial(partial)
+            var accumulated = ""
+            let result = try await coder.generateCodeStreaming(prompt: query, context: context) { delta in
+                accumulated += delta
+                onPartial(accumulated)
             }
             return result.text
 
@@ -623,6 +614,10 @@ final class AIOrchestrator {
 
 
     private func requireQwenCoder() async throws -> QwenCoderService {
+        try await ensureQwenCoderLoaded()
+    }
+
+    private func ensureQwenCoderLoaded() async throws -> QwenCoderService {
         if qwenCoderService == nil {
             qwenCoderService = QwenCoderService(modelName: modelRegistry.activeCodeGenerationModelID)
         }
@@ -631,19 +626,20 @@ final class AIOrchestrator {
             throw OrchestratorError.codeGenerationModelUnavailable("Qwen coder service is not initialized.")
         }
 
-        if !coder.isLoaded {
-            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loading)
-            do {
-                try await coder.warmUp()
-                modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loaded)
-            } catch {
-                modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .failed(error.localizedDescription))
-                throw OrchestratorError.codeGenerationModelUnavailable(error.localizedDescription)
-            }
+        if coder.isLoaded {
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loaded)
+            return coder
         }
 
-        modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loaded)
-        return coder
+        modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loading)
+        do {
+            try await coder.warmUp()
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loaded)
+            return coder
+        } catch {
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .failed(error.localizedDescription))
+            throw OrchestratorError.codeGenerationModelUnavailable(error.localizedDescription)
+        }
     }
 
     private func logProviderSelection(query: String, route: Route, mode: String) {
