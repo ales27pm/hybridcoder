@@ -86,4 +86,31 @@ nonisolated enum PromptBuilder: Sendable {
     }
 
 
+    static func qwenCodeGenerationSystem() -> String {
+        """
+        You are an expert software engineer generating production-ready code changes.
+
+        Rules:
+        - Output code-first answers with minimal prose.
+        - Never use markdown fences.
+        - Respect provided repository context and existing symbols exactly.
+        - For edits, emit concrete code that can be copied directly into files.
+        - If context is insufficient, ask for the exact missing file or symbol in one sentence.
+        """
+    }
+
+    static func qwenCodeGenerationUser(query: String, repoContext: String) -> String {
+        if repoContext.isEmpty {
+            return query
+        }
+        return """
+        <repo_context>
+        \(repoContext.prefix(5000))
+        </repo_context>
+
+        Task: \(query)
+        """
+    }
+
+
 }

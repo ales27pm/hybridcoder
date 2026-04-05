@@ -7,7 +7,27 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A1B2C3D4E5F60123456789AD /* CoreMLPipelines in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60123456789AC /* CoreMLPipelines */; };
 /* End PBXBuildFile section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A1B2C3D4E5F60123456789AB /* XCRemoteSwiftPackageReference "CoreMLPipelines" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/finnvoor/CoreMLPipelines";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.1.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A1B2C3D4E5F60123456789AC /* CoreMLPipelines */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A1B2C3D4E5F60123456789AB /* XCRemoteSwiftPackageReference "CoreMLPipelines" */;
+			productName = CoreMLPipelines;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin PBXContainerItemProxy section */
 		105FC58A2E9EAD3200EA8BCF /* PBXContainerItemProxy */ = {
@@ -55,6 +75,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1B2C3D4E5F60123456789AD /* CoreMLPipelines in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -115,6 +136,7 @@
 			);
 			name = HybridCoder;
 			packageProductDependencies = (
+				A1B2C3D4E5F60123456789AC /* CoreMLPipelines */,
 			);
 			productName = HybridCoder;
 			productReference = 105FC57A2E9EAD3100EA8BCF /* HybridCoder.app */;
@@ -200,6 +222,7 @@
 			mainGroup = 105FC5712E9EAD3100EA8BCF;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				A1B2C3D4E5F60123456789AB /* XCRemoteSwiftPackageReference "CoreMLPipelines" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 105FC57B2E9EAD3100EA8BCF /* Products */;

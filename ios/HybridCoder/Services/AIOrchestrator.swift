@@ -22,6 +22,7 @@ final class AIOrchestrator {
     private(set) var searchIndex: SemanticSearchIndex?
     private(set) var patchEngine: PatchEngine?
     private(set) var foundationModel: AnyObject?
+    private(set) var qwenCoderService: QwenCoderService?
     private(set) var contextPolicySnapshot: ContextPolicySnapshot = .init(files: [])
     private(set) var templateDiagnostics: [DiscoveryDiagnostic] = []
     private(set) var policyWorkingDirectory: URL?
@@ -36,6 +37,8 @@ final class AIOrchestrator {
     private(set) var warmUpError: String?
     private(set) var indexingProgress: (completed: Int, total: Int)?
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "AIOrchestrator")
+    private var codeGenerationLifecycleToken: UInt64 = 0
+    private var isCodeGenerationWarmUpInFlight: Bool = false
 
     var isRepoLoaded: Bool { repoRoot != nil }
 
@@ -106,6 +109,11 @@ final class AIOrchestrator {
             foundationModel = fm
         }
 
+        if qwenCoderService == nil {
+            qwenCoderService = QwenCoderService(modelName: modelRegistry.activeCodeGenerationModelID)
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
+        }
+
         isWarmingUp = false
     }
 
@@ -123,6 +131,45 @@ final class AIOrchestrator {
 
     func refreshRegistryInstallState() async {
         await modelDownload.refreshInstallState(modelID: modelRegistry.activeEmbeddingModelID)
+    }
+
+    func warmUpCodeGenerationModel() async throws {
+        guard !isCodeGenerationWarmUpInFlight else { return }
+
+        isCodeGenerationWarmUpInFlight = true
+        codeGenerationLifecycleToken &+= 1
+        let token = codeGenerationLifecycleToken
+        modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loading)
+
+        defer {
+            if codeGenerationLifecycleToken == token {
+                isCodeGenerationWarmUpInFlight = false
+            }
+        }
+
+        do {
+            _ = try await ensureQwenCoderLoaded()
+            guard codeGenerationLifecycleToken == token else { return }
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loaded)
+        } catch {
+            guard codeGenerationLifecycleToken == token else { return }
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .failed(error.localizedDescription))
+            warmUpError = error.localizedDescription
+            throw error
+        }
+    }
+
+    func unloadCodeGenerationModel() async {
+        codeGenerationLifecycleToken &+= 1
+        isCodeGenerationWarmUpInFlight = false
+
+        guard let service = qwenCoderService else {
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
+            return
+        }
+
+        _ = try? await service.unload()
+        modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
     }
 
     func importRepo(url: URL) async throws {
@@ -375,18 +422,29 @@ final class AIOrchestrator {
     }
 
     private func streamText(query: String, context: String, route: Route, onPartial: @escaping (String) -> Void) async throws -> String {
-        let fm = try requireFoundationModel()
-        var fullText = ""
-        let stream = fm.streamAnswer(query: query, context: context, route: route)
-        for try await chunk in stream {
-            fullText = chunk
-            onPartial(chunk)
-        }
-        if !fullText.isEmpty {
-            return fullText
-        }
+        switch route {
+        case .codeGeneration:
+            let coder = try await requireQwenCoder()
+            var accumulated = ""
+            let result = try await coder.generateCodeStreaming(prompt: query, context: context) { delta in
+                accumulated += delta
+                onPartial(accumulated)
+            }
+            return result.text
 
-        throw OrchestratorError.noModelAvailable
+        case .explanation, .patchPlanning, .search:
+            let fm = try requireFoundationModel()
+            var fullText = ""
+            let stream = fm.streamAnswer(query: query, context: context, route: route)
+            for try await chunk in stream {
+                fullText = chunk
+                onPartial(chunk)
+            }
+            if !fullText.isEmpty {
+                return fullText
+            }
+            throw OrchestratorError.noModelAvailable
+        }
     }
 
     func planPatch(query: String) async throws -> PatchPlan {
@@ -428,7 +486,7 @@ final class AIOrchestrator {
             throw OrchestratorError.routeResolutionFailed("Unsupported route \"\(decision.route)\" from Foundation Models.")
         }
 
-        logger.info("route.classifier provider=FoundationModels route=\(route.rawValue, privacy: .public) confidence=\(decision.confidence) query=\(query, privacy: .public)")
+        logger.info("route.classifier provider=FoundationModels route=\(route.rawValue, privacy: .public) confidence=\(decision.confidence) query=\(query, privacy: .private)")
         return route
     }
 
@@ -566,8 +624,8 @@ final class AIOrchestrator {
     }
 
     private func generateCode(query: String, context: String) async throws -> String {
-        let fm = try requireFoundationModel()
-        return try await fm.generateAnswer(query: query, context: context, route: .codeGeneration)
+        let coder = try await requireQwenCoder()
+        return try await coder.generateCode(prompt: query, context: context)
     }
 
     private func generatePatchPlan(query: String, context: String) async throws -> PatchPlan {
@@ -586,8 +644,47 @@ final class AIOrchestrator {
         return fm
     }
 
+
+    private func requireQwenCoder() async throws -> QwenCoderService {
+        do {
+            let coder = try await ensureQwenCoderLoaded()
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loaded)
+            return coder
+        } catch {
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .failed(error.localizedDescription))
+            throw error
+        }
+    }
+
+    private func ensureQwenCoderLoaded() async throws -> QwenCoderService {
+        let activeModelID = modelRegistry.activeCodeGenerationModelID
+
+        if let existing = qwenCoderService,
+           await existing.modelName != activeModelID {
+            qwenCoderService = QwenCoderService(modelName: activeModelID)
+        }
+
+        if qwenCoderService == nil {
+            qwenCoderService = QwenCoderService(modelName: activeModelID)
+        }
+
+        let coder = qwenCoderService!
+
+        if await coder.isLoaded {
+            return coder
+        }
+
+        do {
+            try await coder.warmUp()
+            return coder
+        } catch {
+            throw OrchestratorError.codeGenerationModelUnavailable(error.localizedDescription)
+        }
+    }
+
     private func logProviderSelection(query: String, route: Route, mode: String) {
-        logger.info("route.selected provider=FoundationModels route=\(route.rawValue, privacy: .public) mode=\(mode, privacy: .public) repoLoaded=\(self.isRepoLoaded, privacy: .public) query=\(query, privacy: .public)")
+        let provider: String = route == .codeGeneration ? "QwenCoreMLPipelines" : "FoundationModels"
+        logger.info("route.selected provider=\(provider, privacy: .public) route=\(route.rawValue, privacy: .public) mode=\(mode, privacy: .public) repoLoaded=\(self.isRepoLoaded, privacy: .public) query=\(query, privacy: .private)")
     }
 
     private func extractCodeBlocks(from text: String) -> [CodeBlock] {
@@ -657,6 +754,7 @@ final class AIOrchestrator {
         case noModelAvailable
         case routeResolutionFailed(String)
         case templateResolutionFailed(String)
+        case codeGenerationModelUnavailable(String)
 
         nonisolated var errorDescription: String? {
             switch self {
@@ -674,6 +772,8 @@ final class AIOrchestrator {
                 return "Route resolution failed: \(reason)"
             case .templateResolutionFailed(let reason):
                 return "Template resolution failed: \(reason)"
+            case .codeGenerationModelUnavailable(let reason):
+                return "Code-generation model unavailable: \(reason)"
             }
         }
     }

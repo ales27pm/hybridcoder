@@ -11,6 +11,7 @@ struct ModelManagerView: View {
                 embeddingModelCard
                 huggingFaceTokenCard
                 foundationModelCard
+                qwenCoderModelCard
             }
             .padding(16)
         }
@@ -32,7 +33,7 @@ struct ModelManagerView: View {
                     .foregroundStyle(.white)
             }
 
-            Text("All inference runs locally with Apple Foundation Models for generation and CoreML embeddings for semantic search.")
+            Text("All inference runs locally: Apple Foundation Models route/plan, CodeBERT handles retrieval, and Qwen coder handles code generation via CoreMLPipelines.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
         }
@@ -234,6 +235,86 @@ struct ModelManagerView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Theme.border, lineWidth: 1)
         )
+    }
+
+
+    private var qwenCoderModelCard: some View {
+        let modelID = orchestrator.modelRegistry.activeCodeGenerationModelID
+        let model = orchestrator.modelRegistry.entry(for: modelID)
+        let status = model?.loadState ?? .unloaded
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "hammer")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.accent)
+
+                Text(model?.displayName ?? "Qwen Coder")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white)
+
+                Spacer()
+
+                qwenStatusBadge(status: status)
+            }
+
+            Text("Code-generation runtime loaded via CoreMLPipelines. This is separate from the embedding downloader/compiler flow.")
+                .font(.caption)
+                .foregroundStyle(Theme.dimText)
+
+            HStack {
+                Button("Warm Up Code Model") {
+                    Task {
+                        do {
+                            try await orchestrator.warmUpCodeGenerationModel()
+                        } catch {
+                            // Error state is set by orchestrator.warmUpCodeGenerationModel().
+                        }
+                    }
+                }
+                .font(.caption.weight(.medium))
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.accent)
+                .controlSize(.small)
+
+                Button("Unload") {
+                    Task {
+                        await orchestrator.unloadCodeGenerationModel()
+                    }
+                }
+                .font(.caption.weight(.medium))
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(14)
+        .background(Theme.cardBg, in: .rect(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Theme.border, lineWidth: 1)
+        )
+    }
+
+    private func qwenStatusBadge(status: ModelRegistry.LoadState) -> some View {
+        let tuple: (String, Color) = {
+            switch status {
+            case .loaded:
+                return ("Ready", Theme.accent)
+            case .loading:
+                return ("Loading", .orange)
+            case .failed(_):
+                return ("Failed", .red)
+            case .unloaded:
+                return ("Unloaded", .orange)
+            }
+        }()
+
+        return Text(tuple.0)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(tuple.1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(tuple.1.opacity(0.15), in: .capsule)
     }
 
     private var tokenGuidanceText: String {

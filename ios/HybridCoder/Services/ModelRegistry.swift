@@ -5,12 +5,19 @@ import Foundation
 final class ModelRegistry {
     enum Capability: String, Sendable {
         case embedding
-        case generation
+        case orchestration
+        case codeGeneration
     }
 
     enum Provider: String, Sendable {
         case apple = "Apple"
         case huggingFace = "Hugging Face"
+    }
+
+    enum Runtime: String, Sendable {
+        case builtInApple
+        case packageCompiledCoreML
+        case coreMLPipelines
     }
 
     enum InstallState: Equatable, Sendable {
@@ -36,6 +43,7 @@ final class ModelRegistry {
         let displayName: String
         let capability: Capability
         let provider: Provider
+        let runtime: Runtime
         let remoteBaseURL: String?
         let files: [ModelFile]
 
@@ -47,16 +55,19 @@ final class ModelRegistry {
     private(set) var entries: [String: Entry]
     var activeEmbeddingModelID: String
     var activeGenerationModelID: String
+    var activeCodeGenerationModelID: String
 
     let embeddingModelsRootFolder = BundledEmbeddingAssets.embeddingModelsFolder
 
     private let activeEmbeddingKey = "models.active.embedding"
     private let activeGenerationKey = "models.active.generation"
+    private let activeCodeGenerationKey = "models.active.codeGeneration"
+
+    private let embeddingID = "microsoft/codebert-base"
+    private let generationID = "apple/foundation-language-model"
+    private let codeGenerationID = "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit"
 
     init() {
-        let embeddingID = "microsoft/codebert-base"
-        let generationID = "apple/foundation-language-model"
-
         let embeddingFiles: [ModelFile] = [
             ModelFile(remotePath: "model.mlpackage/Manifest.json", localPath: "model.mlpackage/Manifest.json"),
             ModelFile(remotePath: "model.mlpackage/Data/com.apple.CoreML/model.mlmodel", localPath: "model.mlpackage/Data/com.apple.CoreML/model.mlmodel"),
@@ -69,9 +80,10 @@ final class ModelRegistry {
         let initialEntries: [String: Entry] = [
             embeddingID: Entry(
                 id: embeddingID,
-                displayName: "CodeBERT (microsoft/codebert-base)",
+                displayName: "CodeBERT (rsvalerio/codebert-base-coreml)",
                 capability: .embedding,
                 provider: .huggingFace,
+                runtime: .packageCompiledCoreML,
                 remoteBaseURL: "https://huggingface.co/rsvalerio/codebert-base-coreml/resolve/main",
                 files: embeddingFiles,
                 isAvailable: true,
@@ -81,11 +93,24 @@ final class ModelRegistry {
             generationID: Entry(
                 id: generationID,
                 displayName: "Apple Foundation Models",
-                capability: .generation,
+                capability: .orchestration,
                 provider: .apple,
+                runtime: .builtInApple,
                 remoteBaseURL: nil,
                 files: [],
                 isAvailable: false,
+                installState: .installed,
+                loadState: .unloaded
+            ),
+            codeGenerationID: Entry(
+                id: codeGenerationID,
+                displayName: "Qwen2.5-Coder 1.5B Instruct (4-bit)",
+                capability: .codeGeneration,
+                provider: .huggingFace,
+                runtime: .coreMLPipelines,
+                remoteBaseURL: nil,
+                files: [],
+                isAvailable: true,
                 installState: .installed,
                 loadState: .unloaded
             )
@@ -94,22 +119,19 @@ final class ModelRegistry {
         let savedEmbeddingModelID = UserDefaults.standard.string(forKey: activeEmbeddingKey) ?? embeddingID
         let resolvedEmbeddingModelID = initialEntries[savedEmbeddingModelID] == nil ? embeddingID : savedEmbeddingModelID
 
-        let savedGenerationModelID = UserDefaults.standard.string(forKey: activeGenerationKey)
-        let requiresGenerationMigration: Bool
-        if let savedGenerationModelID {
-            requiresGenerationMigration = initialEntries[savedGenerationModelID]?.provider != .apple
-        } else {
-            requiresGenerationMigration = true
-        }
-        let resolvedGenerationModelID = generationID
+        let savedGenerationModelID = UserDefaults.standard.string(forKey: activeGenerationKey) ?? generationID
+        let resolvedGenerationModelID = initialEntries[savedGenerationModelID]?.capability == .orchestration ? savedGenerationModelID : generationID
+
+        let savedCodeGenerationModelID = UserDefaults.standard.string(forKey: activeCodeGenerationKey) ?? codeGenerationID
+        let resolvedCodeGenerationModelID = initialEntries[savedCodeGenerationModelID]?.capability == .codeGeneration ? savedCodeGenerationModelID : codeGenerationID
 
         self.entries = initialEntries
         self.activeEmbeddingModelID = resolvedEmbeddingModelID
         self.activeGenerationModelID = resolvedGenerationModelID
+        self.activeCodeGenerationModelID = resolvedCodeGenerationModelID
 
-        if requiresGenerationMigration {
-            UserDefaults.standard.set(generationID, forKey: activeGenerationKey)
-        }
+        UserDefaults.standard.set(resolvedGenerationModelID, forKey: activeGenerationKey)
+        UserDefaults.standard.set(resolvedCodeGenerationModelID, forKey: activeCodeGenerationKey)
     }
 
     var allModels: [Entry] {
@@ -127,9 +149,15 @@ final class ModelRegistry {
     }
 
     func setActiveGenerationModel(id: String) {
-        guard entries[id]?.capability == .generation else { return }
+        guard entries[id]?.capability == .orchestration else { return }
         activeGenerationModelID = id
         UserDefaults.standard.set(id, forKey: activeGenerationKey)
+    }
+
+    func setActiveCodeGenerationModel(id: String) {
+        guard entries[id]?.capability == .codeGeneration else { return }
+        activeCodeGenerationModelID = id
+        UserDefaults.standard.set(id, forKey: activeCodeGenerationKey)
     }
 
     func setAvailability(for modelID: String, isAvailable: Bool) {
@@ -149,13 +177,13 @@ final class ModelRegistry {
         switch model.capability {
         case .embedding:
             return model.installState == .installed && model.loadState == .loaded
-        case .generation:
+        case .orchestration, .codeGeneration:
             return model.loadState == .loaded
         }
     }
 
     func readinessSummary() -> String {
-        let activeModelIDs = ["apple/foundation-language-model", activeEmbeddingModelID]
+        let activeModelIDs = [activeGenerationModelID, activeCodeGenerationModelID, activeEmbeddingModelID]
         let parts = activeModelIDs.compactMap { id -> String? in
             guard let model = entries[id], isReady(modelID: id) else { return nil }
             return "\(model.displayName) ready"
@@ -164,7 +192,9 @@ final class ModelRegistry {
     }
 
     func hasAnyGenerationModelReady() -> Bool {
-        isReady(modelID: "apple/foundation-language-model")
+        // Readiness gate for chat execution must align with route resolution,
+        // which requires the orchestration (Foundation Models) runtime.
+        return isReady(modelID: activeGenerationModelID)
     }
 
     nonisolated static var downloadedModelsRoot: URL {
