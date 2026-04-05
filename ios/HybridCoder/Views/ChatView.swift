@@ -93,7 +93,7 @@ struct ChatView: View {
             } else {
                 VStack(spacing: 6) {
                     if let stats = orchestrator.indexStats, stats.totalFiles > 0 {
-                        Label("\(stats.indexedFiles) files · \(stats.embeddedChunks) chunks indexed", systemImage: "checkmark.circle")
+                        Label(indexStatusText(for: stats), systemImage: "checkmark.circle")
                             .font(.caption)
                             .foregroundStyle(Theme.accent.opacity(0.6))
                     }
@@ -108,6 +108,13 @@ struct ChatView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private func indexStatusText(for stats: RepoIndexStats) -> String {
+        if stats.indexedFiles == 0 {
+            return "\(stats.totalFiles) files — indexing not yet run"
+        }
+        return "\(stats.indexedFiles)/\(stats.totalFiles) files · \(stats.embeddedChunks) chunks indexed"
     }
 
     private var messageList: some View {

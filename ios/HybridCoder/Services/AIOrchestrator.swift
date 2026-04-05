@@ -63,6 +63,9 @@ final class AIOrchestrator {
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "AIOrchestrator")
     private var codeGenerationLifecycleToken: UInt64 = 0
     private var isCodeGenerationWarmUpInFlight: Bool = false
+    private var workspaceStateGeneration: UInt64 = 0
+    private var prototypeRebuildRequestedGeneration: UInt64 = 0
+    private var prototypeRebuildCompletedGeneration: UInt64 = 0
 
     var isRepoLoaded: Bool { repoRoot != nil }
     var isPrototypeLoaded: Bool { activePrototypeProject != nil }
@@ -265,6 +268,7 @@ final class AIOrchestrator {
         repoFiles = files
         activePrototypeProject = nil
         activeWorkspaceSource = .repository
+        workspaceStateGeneration &+= 1
         await promptTemplateService.invalidateCache(for: url)
         await refreshTemplateDiagnostics(repoRoot: url)
         await refreshContextPolicies(repoRoot: url)
@@ -287,6 +291,7 @@ final class AIOrchestrator {
         repoFiles = files
         activePrototypeProject = nil
         activeWorkspaceSource = .repository
+        workspaceStateGeneration &+= 1
         await promptTemplateService.invalidateCache(for: url)
         await refreshTemplateDiagnostics(repoRoot: url)
         await refreshContextPolicies(repoRoot: url)
@@ -294,9 +299,17 @@ final class AIOrchestrator {
     }
 
     func closeRepo() async {
+        guard activeWorkspaceSource == .repository else { return }
+        let expectedGeneration = workspaceStateGeneration
+        let expectedRoot = repoRoot
+
         if let root = repoRoot {
             await repoAccess.stopAccessing(root)
+            guard workspaceStateGeneration == expectedGeneration,
+                  activeWorkspaceSource == .repository,
+                  repoRoot == expectedRoot else { return }
         }
+
         repoRoot = nil
         repoFiles = []
         indexStats = nil
@@ -311,19 +324,24 @@ final class AIOrchestrator {
         templateDiagnostics = []
         policyWorkingDirectory = nil
         await promptTemplateService.clearCache()
+        guard workspaceStateGeneration == expectedGeneration,
+              activeWorkspaceSource == .repository,
+              repoRoot == nil else { return }
         await searchIndex?.clear()
     }
 
     func openPrototypeWorkspace(_ project: SandboxProject) async {
         activePrototypeProject = project
         activeWorkspaceSource = .prototype
+        workspaceStateGeneration &+= 1
+        prototypeRebuildRequestedGeneration &+= 1
         repoRoot = nil
         repoFiles = Self.prototypeRepoFiles(for: project)
         contextPolicySnapshot = .init(files: [])
         templateDiagnostics = []
         policyWorkingDirectory = nil
         await promptTemplateService.clearCache()
-        await rebuildPrototypeIndex(for: project)
+        await rebuildPrototypeIndex()
     }
 
     func updatePrototypeWorkspace(_ project: SandboxProject) async {
@@ -332,6 +350,9 @@ final class AIOrchestrator {
     }
 
     func closePrototypeWorkspace() async {
+        guard activeWorkspaceSource == .prototype else { return }
+        let expectedGeneration = workspaceStateGeneration
+
         activePrototypeProject = nil
         repoFiles = []
         indexStats = nil
@@ -341,6 +362,9 @@ final class AIOrchestrator {
         }
         lastResolvedRoute = nil
         lastExecutionProviders = []
+        prototypeRebuildRequestedGeneration = prototypeRebuildCompletedGeneration
+        guard workspaceStateGeneration == expectedGeneration,
+              activeWorkspaceSource == nil else { return }
         await searchIndex?.clear()
     }
 
@@ -439,47 +463,63 @@ final class AIOrchestrator {
         isIndexing = false
     }
 
-    private func rebuildPrototypeIndex(for project: SandboxProject) async {
+    private func rebuildPrototypeIndex() async {
         if searchIndex == nil {
             searchIndex = SemanticSearchIndex(embeddingService: embeddingService)
             await searchIndex?.restorePersistedSnapshotIfAvailable()
         }
 
         guard let index = searchIndex else {
-            indexStats = Self.placeholderPrototypeIndexStats(for: project)
-            return
-        }
-
-        let files = Self.prototypeIndexableFiles(for: project)
-        guard !files.isEmpty else {
-            await index.clear()
-            indexStats = .empty
-            return
-        }
-
-        guard await embeddingService.isLoaded else {
-            await index.clear()
-            indexStats = Self.placeholderPrototypeIndexStats(for: project)
+            if let project = activePrototypeProject {
+                indexStats = Self.placeholderPrototypeIndexStats(for: project)
+            }
             return
         }
 
         guard !isIndexing else { return }
         isIndexing = true
-        indexingProgress = (0, files.count)
 
-        do {
-            try await index.rebuild(files: files) { [weak self] completed, total in
-                Task { @MainActor [weak self] in
-                    self?.indexingProgress = (completed, total)
-                }
+        while prototypeRebuildCompletedGeneration < prototypeRebuildRequestedGeneration {
+            let rebuildGeneration = prototypeRebuildRequestedGeneration
+
+            guard activeWorkspaceSource == .prototype, let project = activePrototypeProject else {
+                prototypeRebuildCompletedGeneration = rebuildGeneration
+                break
             }
-            indexStats = await index.stats
-            warmUpError = nil
-        } catch {
-            warmUpError = "Prototype indexing failed: \(error.localizedDescription)"
-            indexStats = Self.placeholderPrototypeIndexStats(for: project)
+
+            let files = Self.prototypeIndexableFiles(for: project)
+            guard !files.isEmpty else {
+                await index.clear()
+                indexStats = .empty
+                warmUpError = nil
+                prototypeRebuildCompletedGeneration = rebuildGeneration
+                continue
+            }
+
+            guard await embeddingService.isLoaded else {
+                await index.clear()
+                indexStats = Self.placeholderPrototypeIndexStats(for: project)
+                prototypeRebuildCompletedGeneration = rebuildGeneration
+                continue
+            }
+
+            indexingProgress = (0, files.count)
+            do {
+                try await index.rebuild(files: files) { [weak self] completed, total in
+                    Task { @MainActor [weak self] in
+                        self?.indexingProgress = (completed, total)
+                    }
+                }
+                indexStats = await index.stats
+                warmUpError = nil
+            } catch {
+                warmUpError = "Prototype indexing failed: \(error.localizedDescription)"
+                indexStats = Self.placeholderPrototypeIndexStats(for: project)
+            }
+            prototypeRebuildCompletedGeneration = rebuildGeneration
         }
 
+        indexingProgress = nil
         isIndexing = false
     }
 
@@ -900,7 +940,10 @@ final class AIOrchestrator {
 
     nonisolated static func prototypeIndexableFiles(for project: SandboxProject) -> [(RepoFile, String)] {
         let repoFiles = prototypeRepoFiles(for: project)
-        let byPath = Dictionary(uniqueKeysWithValues: project.files.map { ($0.name, $0.content) })
+        var byPath: [String: String] = [:]
+        for file in project.files {
+            byPath[file.name] = file.content
+        }
         return repoFiles.compactMap { file in
             guard let content = byPath[file.relativePath] else { return nil }
             return (file, content)
