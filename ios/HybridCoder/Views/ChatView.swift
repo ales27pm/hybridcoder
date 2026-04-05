@@ -2,9 +2,15 @@ import SwiftUI
 
 struct ChatView: View {
     @Bindable var viewModel: ChatViewModel
+    /// The orchestrator drives AI interactions and holds repo and model state.
     let orchestrator: AIOrchestrator
+    /// URL of the active repository, if any. When `nil`, the current workspace may be a sandbox.
     let repositoryURL: URL?
+    /// Indicates whether there is an active workspace (either a repository or a sandbox project).
+    let hasActiveWorkspace: Bool
+    /// Called when the user chooses to open the project hub.
     var onOpenProjectHub: () -> Void = {}
+    /// Called when the user triggers a reindex operation on a repository.
     var onReindex: () -> Void = {}
     @FocusState private var isInputFocused: Bool
 
@@ -60,7 +66,8 @@ struct ChatView: View {
                 .padding(.top, 8)
             }
 
-            if !orchestrator.isRepoLoaded {
+            // Determine the next call-to-action based on workspace and model state.
+            if !hasActiveWorkspace {
                 VStack(spacing: 10) {
                     Button {
                         onOpenProjectHub()
@@ -72,7 +79,7 @@ struct ChatView: View {
                     .tint(Theme.accent)
                     .controlSize(.small)
 
-                    Text("Import a repo or create a prototype project to get started.")
+                    Text("Import a repo or create a sandbox project to get started.")
                         .font(.caption2)
                         .foregroundStyle(Theme.dimText)
                 }
