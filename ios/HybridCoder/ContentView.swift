@@ -214,7 +214,7 @@ struct ContentView: View {
             ChatView(
                 viewModel: viewModel.chatViewModel,
                 orchestrator: viewModel.orchestrator,
-                repositoryURL: viewModel.activeRepositoryURL,
+                hasActiveWorkspace: viewModel.hasActiveWorkspace,
                 onOpenProjectHub: { viewModel.showProjectHub = true },
                 onReindex: { viewModel.reindexRepository() }
             )

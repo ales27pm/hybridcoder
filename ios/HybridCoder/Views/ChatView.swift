@@ -3,10 +3,15 @@ import SwiftUI
 struct ChatView: View {
     @Bindable var viewModel: ChatViewModel
     let orchestrator: AIOrchestrator
-    let repositoryURL: URL?
+    let hasActiveWorkspace: Bool
     var onOpenProjectHub: () -> Void = {}
     var onReindex: () -> Void = {}
     @FocusState private var isInputFocused: Bool
+
+    /// True only when the active workspace is repository-backed.
+    private var isRepositoryBackedWorkspace: Bool {
+        orchestrator.isRepoLoaded
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -60,7 +65,8 @@ struct ChatView: View {
                 .padding(.top, 8)
             }
 
-            if !orchestrator.isRepoLoaded {
+            // Determine the next call-to-action based on workspace and model state.
+            if !hasActiveWorkspace {
                 VStack(spacing: 10) {
                     Button {
                         onOpenProjectHub()
@@ -72,7 +78,7 @@ struct ChatView: View {
                     .tint(Theme.accent)
                     .controlSize(.small)
 
-                    Text("Import a repo or create a prototype project to get started.")
+                    Text("Import a repo or create a sandbox project to get started.")
                         .font(.caption2)
                         .foregroundStyle(Theme.dimText)
                 }
@@ -91,7 +97,7 @@ struct ChatView: View {
                 .padding(.top, 8)
             } else {
                 VStack(spacing: 6) {
-                    if let stats = orchestrator.indexStats {
+                    if isRepositoryBackedWorkspace, let stats = orchestrator.indexStats {
                         Label("\(stats.indexedFiles) files · \(stats.embeddedChunks) chunks indexed", systemImage: "checkmark.circle")
                             .font(.caption)
                             .foregroundStyle(Theme.accent.opacity(0.6))
