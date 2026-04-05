@@ -11,6 +11,19 @@ enum PromptContextBudget {
 @Observable
 @MainActor
 final class AIOrchestrator {
+    nonisolated enum WorkspaceSource: String, Sendable {
+        case repository
+        case prototype
+    }
+
+    nonisolated enum ExecutionProvider: String, Sendable, CaseIterable {
+        case routeClassifier
+        case semanticSearch
+        case foundationModel
+        case qwenCodeGeneration
+        case patchEngine
+    }
+
     private static let downstreamContextCap = PromptContextBudget.downstreamContextCap
     private static let minimumCodeContextBudget = PromptContextBudget.minimumCodeContextBudget
     private static let maximumPolicyContextBudget = PromptContextBudget.maximumPolicyContextBudget
@@ -37,6 +50,10 @@ final class AIOrchestrator {
     private(set) var repoRoot: URL?
     private(set) var repoFiles: [RepoFile] = []
     private(set) var indexStats: RepoIndexStats?
+    private(set) var activeWorkspaceSource: WorkspaceSource?
+    private(set) var activePrototypeProject: SandboxProject?
+    private(set) var lastResolvedRoute: Route?
+    private(set) var lastExecutionProviders: [ExecutionProvider] = []
 
     private(set) var isWarmingUp: Bool = false
     private(set) var isIndexing: Bool = false
@@ -48,6 +65,7 @@ final class AIOrchestrator {
     private var isCodeGenerationWarmUpInFlight: Bool = false
 
     var isRepoLoaded: Bool { repoRoot != nil }
+    var isPrototypeLoaded: Bool { activePrototypeProject != nil }
 
     init(promptTemplateService: PromptTemplateService = PromptTemplateService()) {
         let registry = ModelRegistry()
@@ -245,6 +263,8 @@ final class AIOrchestrator {
 
         repoRoot = url
         repoFiles = files
+        activePrototypeProject = nil
+        activeWorkspaceSource = .repository
         await promptTemplateService.invalidateCache(for: url)
         await refreshTemplateDiagnostics(repoRoot: url)
         await refreshContextPolicies(repoRoot: url)
@@ -265,6 +285,8 @@ final class AIOrchestrator {
         let files = await repoAccess.listSourceFiles(in: url)
         repoRoot = url
         repoFiles = files
+        activePrototypeProject = nil
+        activeWorkspaceSource = .repository
         await promptTemplateService.invalidateCache(for: url)
         await refreshTemplateDiagnostics(repoRoot: url)
         await refreshContextPolicies(repoRoot: url)
@@ -279,10 +301,46 @@ final class AIOrchestrator {
         repoFiles = []
         indexStats = nil
         indexingProgress = nil
+        activePrototypeProject = nil
+        if activeWorkspaceSource == .repository {
+            activeWorkspaceSource = nil
+        }
+        lastResolvedRoute = nil
+        lastExecutionProviders = []
         contextPolicySnapshot = .init(files: [])
         templateDiagnostics = []
         policyWorkingDirectory = nil
         await promptTemplateService.clearCache()
+        await searchIndex?.clear()
+    }
+
+    func openPrototypeWorkspace(_ project: SandboxProject) async {
+        activePrototypeProject = project
+        activeWorkspaceSource = .prototype
+        repoRoot = nil
+        repoFiles = Self.prototypeRepoFiles(for: project)
+        contextPolicySnapshot = .init(files: [])
+        templateDiagnostics = []
+        policyWorkingDirectory = nil
+        await promptTemplateService.clearCache()
+        await rebuildPrototypeIndex(for: project)
+    }
+
+    func updatePrototypeWorkspace(_ project: SandboxProject) async {
+        guard activePrototypeProject?.id == project.id else { return }
+        await openPrototypeWorkspace(project)
+    }
+
+    func closePrototypeWorkspace() async {
+        activePrototypeProject = nil
+        repoFiles = []
+        indexStats = nil
+        indexingProgress = nil
+        if activeWorkspaceSource == .prototype {
+            activeWorkspaceSource = nil
+        }
+        lastResolvedRoute = nil
+        lastExecutionProviders = []
         await searchIndex?.clear()
     }
 
@@ -381,6 +439,50 @@ final class AIOrchestrator {
         isIndexing = false
     }
 
+    private func rebuildPrototypeIndex(for project: SandboxProject) async {
+        if searchIndex == nil {
+            searchIndex = SemanticSearchIndex(embeddingService: embeddingService)
+            await searchIndex?.restorePersistedSnapshotIfAvailable()
+        }
+
+        guard let index = searchIndex else {
+            indexStats = Self.placeholderPrototypeIndexStats(for: project)
+            return
+        }
+
+        let files = Self.prototypeIndexableFiles(for: project)
+        guard !files.isEmpty else {
+            await index.clear()
+            indexStats = .empty
+            return
+        }
+
+        guard await embeddingService.isLoaded else {
+            await index.clear()
+            indexStats = Self.placeholderPrototypeIndexStats(for: project)
+            return
+        }
+
+        guard !isIndexing else { return }
+        isIndexing = true
+        indexingProgress = (0, files.count)
+
+        do {
+            try await index.rebuild(files: files) { [weak self] completed, total in
+                Task { @MainActor [weak self] in
+                    self?.indexingProgress = (completed, total)
+                }
+            }
+            indexStats = await index.stats
+            warmUpError = nil
+        } catch {
+            warmUpError = "Prototype indexing failed: \(error.localizedDescription)"
+            indexStats = Self.placeholderPrototypeIndexStats(for: project)
+        }
+
+        isIndexing = false
+    }
+
     func searchCode(query: String, topK: Int = 5) async throws -> [SearchHit] {
         guard let index = searchIndex else {
             throw OrchestratorError.indexNotReady
@@ -396,6 +498,21 @@ final class AIOrchestrator {
         contextPolicySnapshot.diagnostics
     }
 
+    nonisolated static func expectedExecutionProviders(for route: Route, executesPatch: Bool = false) -> [ExecutionProvider] {
+        switch route {
+        case .explanation:
+            return [.routeClassifier, .semanticSearch, .foundationModel]
+        case .codeGeneration:
+            return [.routeClassifier, .semanticSearch, .qwenCodeGeneration]
+        case .patchPlanning:
+            return executesPatch
+                ? [.routeClassifier, .semanticSearch, .foundationModel, .patchEngine]
+                : [.routeClassifier, .semanticSearch, .foundationModel]
+        case .search:
+            return [.routeClassifier, .semanticSearch]
+        }
+    }
+
     func processQuery(_ query: String, memory: ConversationMemoryContext? = nil) async throws -> AssistantResponse {
         isProcessing = true
         defer { isProcessing = false }
@@ -408,6 +525,7 @@ final class AIOrchestrator {
             route = try await resolveRoute(for: resolved.query)
         }
         let context = await gatherContext(for: resolved.query, route: route, memory: memory)
+        recordExecutionTrace(route: route)
         logProviderSelection(query: resolved.query, route: route, mode: "non-stream")
 
         switch route {
@@ -447,6 +565,7 @@ final class AIOrchestrator {
             route = try await resolveRoute(for: resolved.query)
         }
         let context = await gatherContext(for: resolved.query, route: route, memory: memory)
+        recordExecutionTrace(route: route)
         logProviderSelection(query: resolved.query, route: route, mode: "stream")
 
         switch route {
@@ -528,6 +647,7 @@ final class AIOrchestrator {
 
         isProcessing = true
         defer { isProcessing = false }
+        recordExecutionTrace(route: .patchPlanning, executesPatch: true)
 
         let result = await engine.apply(plan, repoRoot: root)
 
@@ -566,10 +686,10 @@ final class AIOrchestrator {
             }
         }
 
-        if codeContextParts.isEmpty, repoRoot != nil {
+        if codeContextParts.isEmpty, !repoFiles.isEmpty {
             let sample = repoFiles.prefix(5)
             for file in sample {
-                if let content = await repoAccess.readUTF8(at: file.absoluteURL) {
+                if let content = await workspaceFileContent(for: file) {
                     let header = "--- \(file.relativePath) ---"
                     codeContextParts.append("\(header)\n\(String(content.prefix(500)))")
                 }
@@ -743,6 +863,67 @@ final class AIOrchestrator {
     private func logProviderSelection(query: String, route: Route, mode: String) {
         let provider: String = route == .codeGeneration ? "QwenCoreMLPipelines" : "FoundationModels"
         logger.info("route.selected provider=\(provider, privacy: .public) route=\(route.rawValue, privacy: .public) mode=\(mode, privacy: .public) repoLoaded=\(self.isRepoLoaded, privacy: .public) query=\(query, privacy: .private)")
+    }
+
+    private func recordExecutionTrace(route: Route, executesPatch: Bool = false) {
+        lastResolvedRoute = route
+        lastExecutionProviders = Self.expectedExecutionProviders(for: route, executesPatch: executesPatch)
+    }
+
+    private func workspaceFileContent(for file: RepoFile) async -> String? {
+        if activeWorkspaceSource == .prototype,
+           let project = activePrototypeProject,
+           let prototypeFile = project.files.first(where: { $0.name == file.relativePath }) {
+            return prototypeFile.content
+        }
+
+        return await repoAccess.readUTF8(at: file.absoluteURL)
+    }
+
+    nonisolated static func prototypeRepoFiles(for project: SandboxProject) -> [RepoFile] {
+        let baseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HybridCoderPrototypeWorkspace", isDirectory: true)
+            .appendingPathComponent(project.id.uuidString, isDirectory: true)
+
+        return project.files
+            .map { file in
+                RepoFile(
+                    relativePath: file.name,
+                    absoluteURL: baseURL.appendingPathComponent(file.name),
+                    language: RepoFile.detectLanguage(for: file.name),
+                    sizeBytes: file.content.utf8.count,
+                    lastModified: project.lastOpenedAt
+                )
+            }
+            .sorted { $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending }
+    }
+
+    nonisolated static func prototypeIndexableFiles(for project: SandboxProject) -> [(RepoFile, String)] {
+        let repoFiles = prototypeRepoFiles(for: project)
+        let byPath = Dictionary(uniqueKeysWithValues: project.files.map { ($0.name, $0.content) })
+        return repoFiles.compactMap { file in
+            guard let content = byPath[file.relativePath] else { return nil }
+            return (file, content)
+        }
+    }
+
+    nonisolated static func placeholderPrototypeIndexStats(for project: SandboxProject) -> RepoIndexStats {
+        RepoIndexStats(
+            totalFiles: project.files.count,
+            indexedFiles: 0,
+            totalChunks: 0,
+            embeddedChunks: 0,
+            lastIndexedAt: nil,
+            languageBreakdown: prototypeLanguageBreakdown(for: project)
+        )
+    }
+
+    nonisolated static func prototypeLanguageBreakdown(for project: SandboxProject) -> [String: Int] {
+        var counts: [String: Int] = [:]
+        for file in project.files {
+            counts[RepoFile.detectLanguage(for: file.name), default: 0] += 1
+        }
+        return counts
     }
 
     private func extractCodeBlocks(from text: String) -> [CodeBlock] {

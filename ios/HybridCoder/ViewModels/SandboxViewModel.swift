@@ -8,6 +8,7 @@ final class SandboxViewModel {
     private(set) var activeProject: SandboxProject?
     private(set) var isLoading: Bool = false
     private(set) var errorMessage: String?
+    var onActiveProjectChanged: ((SandboxProject?) -> Void)?
     var showNewProjectSheet: Bool = false
     var showDeleteConfirmation: Bool = false
     var projectToDelete: SandboxProject?
@@ -49,6 +50,7 @@ final class SandboxViewModel {
         project.lastOpenedAt = Date()
         projects.insert(project, at: 0)
         activeProject = project
+        notifyActiveProjectChanged()
         await saveProjects()
     }
 
@@ -56,12 +58,14 @@ final class SandboxViewModel {
         if let idx = projects.firstIndex(where: { $0.id == project.id }) {
             projects[idx].lastOpenedAt = Date()
             activeProject = projects[idx]
+            notifyActiveProjectChanged()
             Task { await saveProjects() }
         }
     }
 
     func closeProject() {
         activeProject = nil
+        notifyActiveProjectChanged()
     }
 
     func deleteProject(_ project: SandboxProject) async {
@@ -69,6 +73,7 @@ final class SandboxViewModel {
         if activeProject?.id == project.id {
             activeProject = nil
         }
+        notifyActiveProjectChanged()
         await saveProjects()
     }
 
@@ -79,6 +84,7 @@ final class SandboxViewModel {
         if activeProject?.id == projectID {
             activeProject = projects[pIdx]
         }
+        notifyActiveProjectChanged()
         await saveProjects()
     }
 
@@ -89,6 +95,7 @@ final class SandboxViewModel {
         if activeProject?.id == projectID {
             activeProject = projects[pIdx]
         }
+        notifyActiveProjectChanged()
         await saveProjects()
     }
 
@@ -98,6 +105,7 @@ final class SandboxViewModel {
         if activeProject?.id == projectID {
             activeProject = projects[pIdx]
         }
+        notifyActiveProjectChanged()
         await saveProjects()
     }
 
@@ -107,6 +115,7 @@ final class SandboxViewModel {
         if activeProject?.id == projectID {
             activeProject = projects[pIdx]
         }
+        notifyActiveProjectChanged()
         await saveProjects()
     }
 
@@ -153,5 +162,9 @@ final class SandboxViewModel {
         } catch {
             logger.error("Failed to save sandbox projects: \(error.localizedDescription)")
         }
+    }
+
+    private func notifyActiveProjectChanged() {
+        onActiveProjectChanged?(activeProject)
     }
 }

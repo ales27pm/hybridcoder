@@ -8,11 +8,6 @@ struct ChatView: View {
     var onReindex: () -> Void = {}
     @FocusState private var isInputFocused: Bool
 
-    /// True only when the active workspace is repository-backed.
-    private var isRepositoryBackedWorkspace: Bool {
-        orchestrator.isRepoLoaded
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             if viewModel.messages.isEmpty && !viewModel.isStreaming {
@@ -97,7 +92,7 @@ struct ChatView: View {
                 .padding(.top, 8)
             } else {
                 VStack(spacing: 6) {
-                    if isRepositoryBackedWorkspace, let stats = orchestrator.indexStats {
+                    if let stats = orchestrator.indexStats, stats.totalFiles > 0 {
                         Label("\(stats.indexedFiles) files · \(stats.embeddedChunks) chunks indexed", systemImage: "checkmark.circle")
                             .font(.caption)
                             .foregroundStyle(Theme.accent.opacity(0.6))

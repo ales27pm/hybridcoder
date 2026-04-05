@@ -104,6 +104,17 @@ final class AppViewModel {
         chat.onPatchApplied = { [weak self] in
             self?.refreshFileTree()
         }
+
+        sandboxViewModel.onActiveProjectChanged = { [weak self] project in
+            guard let self else { return }
+            Task { @MainActor in
+                if let project {
+                    await self.orchestrator.openPrototypeWorkspace(project)
+                } else {
+                    await self.orchestrator.closePrototypeWorkspace()
+                }
+            }
+        }
     }
 
     func refreshFileTree() {
