@@ -13,6 +13,11 @@ struct ChatView: View {
         repositoryURL != nil || orchestrator.isRepoLoaded
     }
 
+    /// True only when the active workspace is repository-backed.
+    private var isRepositoryBackedWorkspace: Bool {
+        repositoryURL != nil || orchestrator.isRepoLoaded
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if viewModel.messages.isEmpty && !viewModel.isStreaming {
@@ -97,7 +102,7 @@ struct ChatView: View {
                 .padding(.top, 8)
             } else {
                 VStack(spacing: 6) {
-                    if let stats = orchestrator.indexStats {
+                    if isRepositoryBackedWorkspace, let stats = orchestrator.indexStats {
                         Label("\(stats.indexedFiles) files · \(stats.embeddedChunks) chunks indexed", systemImage: "checkmark.circle")
                             .font(.caption)
                             .foregroundStyle(Theme.accent.opacity(0.6))
