@@ -12,6 +12,7 @@ actor QwenCoderService {
     private(set) var loadProgress: Double = 0
 
     private var pipeline: TextGenerationPipeline?
+    private var loadingTask: Task<TextGenerationPipeline, Error>?
     private var shouldUnloadAfterGeneration: Bool = false
 
     init(modelName: String = "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit") {
@@ -19,12 +20,28 @@ actor QwenCoderService {
     }
 
     func warmUp(progressHandler: (@Sendable (Double) -> Void)? = nil) async throws {
+        isLoading = true
+        isLoaded = false
+        loadError = nil
+        loadProgress = 0.1
         progressHandler?(0.1)
+
+        defer {
+            isLoading = false
+        }
+
         let pipeline = try await loadPipelineIfNeeded()
         loadProgress = 0.7
         progressHandler?(0.7)
 
-        try await pipeline.prewarm()
+        do {
+            try await pipeline.prewarm()
+        } catch {
+            loadError = error.localizedDescription
+            loadProgress = 0
+            throw QwenError.pipelineUnavailable(error.localizedDescription)
+        }
+
         isLoaded = true
         loadProgress = 1.0
         progressHandler?(1.0)
@@ -33,13 +50,11 @@ actor QwenCoderService {
     func generate(
         systemPrompt: String,
         userPrompt: String,
-        maxTokens: Int = 1024,
-        temperature: Float = 0.2
+        maxTokens: Int = 1024
     ) async throws -> GenerationResult {
         return try await generateInternal(
             messages: Self.messages(systemPrompt: systemPrompt, userPrompt: userPrompt),
             maxTokens: maxTokens,
-            temperature: temperature,
             onChunk: nil
         )
     }
@@ -48,13 +63,11 @@ actor QwenCoderService {
         systemPrompt: String,
         userPrompt: String,
         maxTokens: Int = 1024,
-        temperature: Float = 0.2,
         onChunk: (@MainActor @Sendable (String) -> Void)?
     ) async throws -> GenerationResult {
         return try await generateInternal(
             messages: Self.messages(systemPrompt: systemPrompt, userPrompt: userPrompt),
             maxTokens: maxTokens,
-            temperature: temperature,
             onChunk: onChunk
         )
     }
@@ -72,7 +85,7 @@ actor QwenCoderService {
         context: String,
         onChunk: @MainActor @escaping @Sendable (String) -> Void
     ) async throws -> GenerationResult {
-        try await generateStreaming(
+        return try await generateStreaming(
             systemPrompt: PromptBuilder.qwenCodeGenerationSystem(),
             userPrompt: PromptBuilder.qwenCodeGenerationUser(query: prompt, repoContext: context),
             onChunk: onChunk
@@ -94,18 +107,26 @@ actor QwenCoderService {
             return pipeline
         }
 
-        guard !isLoading else {
-            throw QwenError.alreadyLoading
+        if let loadingTask {
+            return try await loadingTask.value
         }
 
         isLoading = true
-        loadProgress = 0.2
+        loadProgress = max(loadProgress, 0.2)
+        loadError = nil
+
+        let task = Task {
+            try await TextGenerationPipeline(modelName: modelName, prewarm: false)
+        }
+        loadingTask = task
+
         defer {
+            loadingTask = nil
             isLoading = false
         }
 
         do {
-            let loaded = try await TextGenerationPipeline(modelName: modelName, prewarm: false)
+            let loaded = try await task.value
             pipeline = loaded
             isLoaded = true
             loadError = nil
@@ -121,14 +142,12 @@ actor QwenCoderService {
     private func generateInternal(
         messages: [[String: String]],
         maxTokens: Int,
-        temperature: Float,
         onChunk: (@MainActor @Sendable (String) -> Void)?
     ) async throws -> GenerationResult {
         guard !isGenerating else {
             throw QwenError.alreadyGenerating
         }
 
-        _ = temperature // Current CoreMLPipelines API uses greedy sampling.
         let pipeline = try await loadPipelineIfNeeded()
         isGenerating = true
 
@@ -175,6 +194,7 @@ actor QwenCoderService {
 
     private func performUnload() {
         pipeline = nil
+        loadingTask = nil
         isLoaded = false
         isLoading = false
         tokensPerSecond = 0
@@ -190,7 +210,7 @@ actor QwenCoderService {
     }
 
     private static func estimateTokenCount(in text: String) -> Int {
-        max(text.split(whereSeparator: \.isWhitespace).count, 1)
+        max(Int(ceil(Double(text.count) / 4.0)), 1)
     }
 
     struct GenerationResult: Sendable {
@@ -202,7 +222,6 @@ actor QwenCoderService {
 
     enum QwenError: Error, LocalizedError, Sendable {
         case pipelineUnavailable(String)
-        case alreadyLoading
         case alreadyGenerating
         case generationInProgress
         case cancelled
@@ -212,8 +231,6 @@ actor QwenCoderService {
             switch self {
             case .pipelineUnavailable(let reason):
                 return "CoreMLPipelines model is unavailable: \(reason)"
-            case .alreadyLoading:
-                return "Qwen coder model is already loading."
             case .alreadyGenerating:
                 return "A Qwen generation is already in progress."
             case .generationInProgress:

@@ -657,13 +657,18 @@ final class AIOrchestrator {
     }
 
     private func ensureQwenCoderLoaded() async throws -> QwenCoderService {
-        if qwenCoderService == nil {
-            qwenCoderService = QwenCoderService(modelName: modelRegistry.activeCodeGenerationModelID)
+        let activeModelID = modelRegistry.activeCodeGenerationModelID
+
+        if let existing = qwenCoderService,
+           await existing.modelName != activeModelID {
+            qwenCoderService = QwenCoderService(modelName: activeModelID)
         }
 
-        guard let coder = qwenCoderService else {
-            throw OrchestratorError.codeGenerationModelUnavailable("Qwen coder service is not initialized.")
+        if qwenCoderService == nil {
+            qwenCoderService = QwenCoderService(modelName: activeModelID)
         }
+
+        let coder = qwenCoderService!
 
         if await coder.isLoaded {
             return coder
