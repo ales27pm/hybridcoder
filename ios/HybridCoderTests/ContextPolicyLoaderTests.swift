@@ -209,11 +209,15 @@ struct ContextPolicyLoaderTests {
         let snapshot = await loader.loadPolicyFiles(startingAt: nested, stopAt: repoRoot)
 
         #expect(snapshot.files.isEmpty)
-        #expect(snapshot.diagnostics.contains(where: { diagnostic in
+        let unreadableWarning = snapshot.diagnostics.first(where: { diagnostic in
             if case let .warning(warning) = diagnostic {
                 return warning.sourcePath == "Sources/AGENTS.md"
             }
             return false
-        }))
+        })
+        #expect(unreadableWarning != nil)
+        if case let .warning(warning) = unreadableWarning {
+            #expect(warning.message.localizedCaseInsensitiveContains("directory"))
+        }
     }
 }

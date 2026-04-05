@@ -34,12 +34,14 @@ The policy loader currently reads these exact file names:
 
 ## Budgeting and truncation
 
-During context assembly, HybridCoder applies these limits:
+Budget values are defined in one source-of-truth enum, `PromptContextBudget`, in `ios/HybridCoder/Services/AIOrchestrator.swift`.
 
-- **2,500 chars total** downstream context cap
-- **at least 1,600 chars reserved for code context**
-- **up to 700 chars for policy context**
-- **up to 1,000 chars for conversation memory**
+Current values:
+
+- `downstreamContextCap = 2500`
+- `minimumCodeContextBudget = 1600`
+- `maximumPolicyContextBudget = 700`
+- `maximumConversationContextBudget = 1000`
 
 When all sections are present, code reservation is enforced first, then policy and conversation are clipped to the remaining non-code budget.
 

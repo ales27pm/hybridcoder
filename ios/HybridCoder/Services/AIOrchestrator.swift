@@ -1,13 +1,20 @@
 import Foundation
 import OSLog
 
+enum PromptContextBudget {
+    static let downstreamContextCap = 2500
+    static let minimumCodeContextBudget = 1600
+    static let maximumPolicyContextBudget = 700
+    static let maximumConversationContextBudget = 1000
+}
+
 @Observable
 @MainActor
 final class AIOrchestrator {
-    private static let downstreamContextCap = 2500
-    private static let minimumCodeContextBudget = 1600
-    private static let maximumPolicyContextBudget = 700
-    private static let maximumConversationContextBudget = 1000
+    private static let downstreamContextCap = PromptContextBudget.downstreamContextCap
+    private static let minimumCodeContextBudget = PromptContextBudget.minimumCodeContextBudget
+    private static let maximumPolicyContextBudget = PromptContextBudget.maximumPolicyContextBudget
+    private static let maximumConversationContextBudget = PromptContextBudget.maximumConversationContextBudget
     // Keep this equal to ConversationMemoryContext.renderForPrompt(maxCharacters:) input.
     // We intentionally enforce the same budget here as a second guardrail during final packing.
     private static let conversationMemoryRenderBudget = maximumConversationContextBudget
