@@ -1,12 +1,12 @@
 import Foundation
 import OSLog
 
-struct ContextPolicyFile: Sendable, Equatable {
+nonisolated struct ContextPolicyFile: Sendable, Equatable {
     let displayPath: String
     let content: String
 }
 
-struct ContextPolicySnapshot: Sendable, Equatable {
+nonisolated struct ContextPolicySnapshot: Sendable, Equatable {
     let files: [ContextPolicyFile]
     let diagnostics: [DiscoveryDiagnostic]
 

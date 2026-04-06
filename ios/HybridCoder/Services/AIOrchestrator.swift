@@ -196,7 +196,7 @@ final class AIOrchestrator {
         let activeModelID = modelRegistry.activeCodeGenerationModelID
 
         if let existing = qwenCoderService,
-           await existing.modelName == activeModelID {
+           existing.modelName == activeModelID {
             return existing
         }
 
@@ -490,19 +490,19 @@ final class AIOrchestrator {
         let diagnostics = snapshot.diagnostics.map { diagnostic in
             switch diagnostic {
             case .warning(let warning):
-                return .warning(WarningDiagnostic(
+                return DiscoveryDiagnostic.warning(WarningDiagnostic(
                     sourcePath: "\(normalizedPrefix)/\(warning.sourcePath)",
                     message: warning.message,
                     contextID: warning.contextID
                 ))
             case .error(let error):
-                return .error(ErrorDiagnostic(
+                return DiscoveryDiagnostic.error(ErrorDiagnostic(
                     sourcePath: "\(normalizedPrefix)/\(error.sourcePath)",
                     message: error.message,
                     contextID: error.contextID
                 ))
             case .collision(let collision):
-                return .collision(CollisionDiagnostic(
+                return DiscoveryDiagnostic.collision(CollisionDiagnostic(
                     sourcePath: "\(normalizedPrefix)/\(collision.sourcePath)",
                     conflictingPath: "\(normalizedPrefix)/\(collision.conflictingPath)",
                     message: collision.message
