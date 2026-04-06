@@ -97,4 +97,33 @@ struct ContextPolicyLoaderTests {
             return warning.message.contains("outside boundary")
         })
     }
+
+    @MainActor
+    @Test func orchestratorLayersGlobalPoliciesAheadOfRepoPolicies() async throws {
+        let repoRoot = try makeTempRepoRoot()
+        let globalRoot = try makeTempRepoRoot()
+        defer { try? FileManager.default.removeItem(at: repoRoot) }
+        defer { try? FileManager.default.removeItem(at: globalRoot) }
+
+        try "global-policy".write(
+            to: globalRoot.appending(path: "AGENTS.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "repo-policy".write(
+            to: repoRoot.appending(path: "AGENTS.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let orchestrator = AIOrchestrator(
+            promptTemplateService: PromptTemplateService(globalPromptsDirectory: nil),
+            globalPolicyDirectory: globalRoot
+        )
+
+        let snapshot = await orchestrator.loadContextPolicies(repoRoot: repoRoot)
+
+        #expect(snapshot.files.map(\.displayPath) == ["app/AGENTS.md", "AGENTS.md"])
+        #expect(snapshot.files.map(\.content) == ["global-policy", "repo-policy"])
+    }
 }

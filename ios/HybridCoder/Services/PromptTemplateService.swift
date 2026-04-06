@@ -1,6 +1,22 @@
 import Foundation
 import OSLog
 
+nonisolated enum HybridCoderResourceLocator: Sendable {
+    static func appSupportRoot(fileManager: FileManager = .default) -> URL? {
+        fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("HybridCoder", isDirectory: true)
+    }
+
+    static func globalPromptsDirectory(fileManager: FileManager = .default) -> URL? {
+        appSupportRoot(fileManager: fileManager)?
+            .appendingPathComponent("prompts", isDirectory: true)
+    }
+
+    static func globalPoliciesDirectory(fileManager: FileManager = .default) -> URL? {
+        appSupportRoot(fileManager: fileManager)
+    }
+}
+
 struct PromptTemplate: Sendable, Equatable {
     let id: String
     let fileURL: URL
@@ -23,12 +39,19 @@ actor PromptTemplateService {
         let diagnostics: [DiscoveryDiagnostic]
     }
 
+    private enum TemplateSourceRank: Int {
+        case global = 0
+        case repository = 1
+    }
+
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "PromptTemplateService")
     private let fileManager: FileManager
+    private let globalPromptsDirectory: URL?
     private var cachedTemplatesByRepo: [String: TemplateLoadResult] = [:]
 
-    init(fileManager: FileManager = .default) {
+    init(fileManager: FileManager = .default, globalPromptsDirectory: URL? = nil) {
         self.fileManager = fileManager
+        self.globalPromptsDirectory = globalPromptsDirectory ?? HybridCoderResourceLocator.globalPromptsDirectory(fileManager: fileManager)
     }
 
     func resolve(query: String, repoRoot: URL?) throws -> ResolvedPromptQuery {
@@ -73,28 +96,52 @@ actor PromptTemplateService {
             return cached
         }
 
-        let promptsDirectory = repoRoot
+        let repoPromptsDirectory = repoRoot
             .appendingPathComponent(".hybridcoder", isDirectory: true)
             .appendingPathComponent("prompts", isDirectory: true)
-
-        var isDirectory: ObjCBool = false
-        guard fileManager.fileExists(atPath: promptsDirectory.path(percentEncoded: false), isDirectory: &isDirectory), isDirectory.boolValue else {
-            let empty = TemplateLoadResult(templates: [:], invalidTemplates: [:], diagnostics: [])
-            cachedTemplatesByRepo[key] = empty
-            return empty
-        }
 
         var templates: [String: PromptTemplate] = [:]
         var invalidTemplates: [String: TemplateError] = [:]
         var diagnostics: [DiscoveryDiagnostic] = []
-        guard let enumerator = fileManager.enumerator(
-            at: promptsDirectory,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            let empty = TemplateLoadResult(templates: [:], invalidTemplates: [:], diagnostics: [])
-            cachedTemplatesByRepo[key] = empty
-            return empty
+
+        var templateSources: [(directory: URL, rank: TemplateSourceRank)] = []
+        if let globalPromptsDirectory {
+            templateSources.append((globalPromptsDirectory, .global))
+        }
+        templateSources.append((repoPromptsDirectory, .repository))
+
+        for source in templateSources {
+            loadTemplates(
+                from: source.directory,
+                rank: source.rank,
+                into: &templates,
+                invalidTemplates: &invalidTemplates,
+                diagnostics: &diagnostics
+            )
+        }
+
+        let loaded = TemplateLoadResult(templates: templates, invalidTemplates: invalidTemplates, diagnostics: diagnostics)
+        cachedTemplatesByRepo[key] = loaded
+        return loaded
+    }
+
+    private func loadTemplates(
+        from promptsDirectory: URL,
+        rank: TemplateSourceRank,
+        into templates: inout [String: PromptTemplate],
+        invalidTemplates: inout [String: TemplateError],
+        diagnostics: inout [DiscoveryDiagnostic]
+    ) {
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: promptsDirectory.path(percentEncoded: false), isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              let enumerator = fileManager.enumerator(
+                at: promptsDirectory,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+              )
+        else {
+            return
         }
 
         for case let url as URL in enumerator where url.pathExtension.lowercased() == "md" {
@@ -103,6 +150,19 @@ actor PromptTemplateService {
                 if let existing = templates[template.id] {
                     let newPath = url.path(percentEncoded: false)
                     let existingPath = existing.fileURL.path(percentEncoded: false)
+                    let existingRank = templateSourceRank(for: existing.fileURL)
+
+                    if rank.rawValue > existingRank.rawValue {
+                        logger.info("template.override id=\(template.id, privacy: .public) file=\(newPath, privacy: .public) overridden=\(existingPath, privacy: .public)")
+                        diagnostics.append(.warning(WarningDiagnostic(
+                            sourcePath: newPath,
+                            message: "Template id \(template.id) overrides template at \(existingPath)",
+                            contextID: template.id
+                        )))
+                        templates[template.id] = template
+                        continue
+                    }
+
                     let collisionMessage = "Template id \(template.id) is defined more than once"
                     logger.warning("template.duplicate id=\(template.id, privacy: .public) file=\(newPath, privacy: .public) existing=\(existingPath, privacy: .public)")
                     diagnostics.append(.collision(CollisionDiagnostic(
@@ -147,10 +207,6 @@ actor PromptTemplateService {
                 }
             }
         }
-
-        let loaded = TemplateLoadResult(templates: templates, invalidTemplates: invalidTemplates, diagnostics: diagnostics)
-        cachedTemplatesByRepo[key] = loaded
-        return loaded
     }
 
     func parseTemplate(at fileURL: URL) throws -> PromptTemplate {
@@ -394,6 +450,16 @@ actor PromptTemplateService {
         repoRoot.standardizedFileURL.resolvingSymlinksInPath().path(percentEncoded: false)
     }
 
+    private func templateSourceRank(for fileURL: URL) -> TemplateSourceRank {
+        guard let globalPromptsDirectory else { return .repository }
+        let candidatePath = fileURL.standardizedFileURL.resolvingSymlinksInPath().path(percentEncoded: false)
+        let globalPath = globalPromptsDirectory.standardizedFileURL.resolvingSymlinksInPath().path(percentEncoded: false)
+        if candidatePath.hasPrefix(globalPath) {
+            return .global
+        }
+        return .repository
+    }
+
     enum TemplateError: Error, LocalizedError, Sendable, Equatable {
         case repositoryUnavailable
         case templateNotFound(String)
@@ -406,7 +472,7 @@ actor PromptTemplateService {
             case .repositoryUnavailable:
                 return "Template commands require an imported repository."
             case .templateNotFound(let name):
-                return "Template \"\(name)\" was not found in .hybridcoder/prompts/."
+                return "Template \"\(name)\" was not found in app prompts or .hybridcoder/prompts/."
             case .invalidFrontmatter(let file, let reason):
                 return "Malformed template frontmatter in \(file): \(reason)"
             case .malformedInterpolation(let template, let reason):

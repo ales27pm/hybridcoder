@@ -46,6 +46,7 @@ final class AIOrchestrator {
     let modelDownload: ModelDownloadService
     let contextPolicyLoader: ContextPolicyLoader
     let promptTemplateService: PromptTemplateService
+    let globalPolicyDirectory: URL?
 
     private(set) var searchIndex: SemanticSearchIndex?
     private(set) var patchEngine: PatchEngine?
@@ -79,13 +80,17 @@ final class AIOrchestrator {
     var isRepoLoaded: Bool { repoRoot != nil }
     var isPrototypeLoaded: Bool { activePrototypeProject != nil }
 
-    init(promptTemplateService: PromptTemplateService = PromptTemplateService()) {
+    init(
+        promptTemplateService: PromptTemplateService = PromptTemplateService(),
+        globalPolicyDirectory: URL? = HybridCoderResourceLocator.globalPoliciesDirectory()
+    ) {
         let registry = ModelRegistry()
         self.modelRegistry = registry
         self.embeddingService = CoreMLEmbeddingService(modelID: registry.activeEmbeddingModelID, registry: registry)
         self.modelDownload = ModelDownloadService(registry: registry)
         self.contextPolicyLoader = ContextPolicyLoader()
         self.promptTemplateService = promptTemplateService
+        self.globalPolicyDirectory = globalPolicyDirectory
         Task { [weak self] in
             await self?.refreshRegistryInstallState()
         }
@@ -399,7 +404,21 @@ final class AIOrchestrator {
 
     func loadContextPolicies(repoRoot: URL) async -> ContextPolicySnapshot {
         let anchors = Self.resolvePolicyLoadAnchors(repoRoot: repoRoot, preferredWorkingDirectory: policyWorkingDirectory)
-        return await contextPolicyLoader.loadPolicyFiles(startingAt: anchors.start, stopAt: anchors.stopAt)
+        let repoSnapshot = await contextPolicyLoader.loadPolicyFiles(startingAt: anchors.start, stopAt: anchors.stopAt)
+
+        guard let globalPolicyDirectory else {
+            return repoSnapshot
+        }
+
+        let globalSnapshot = await contextPolicyLoader.loadPolicyFiles(
+            startingAt: globalPolicyDirectory,
+            stopAt: globalPolicyDirectory
+        )
+
+        return Self.mergePolicySnapshots([
+            Self.prefixedPolicySnapshot(globalSnapshot, prefix: "app"),
+            repoSnapshot
+        ])
     }
 
     func refreshContextPolicies(repoRoot overrideRepoRoot: URL? = nil) async {
@@ -449,6 +468,49 @@ final class AIOrchestrator {
         }
 
         return (resolvedPreferred, resolvedRepoRoot)
+    }
+
+    nonisolated static func mergePolicySnapshots(_ snapshots: [ContextPolicySnapshot]) -> ContextPolicySnapshot {
+        ContextPolicySnapshot(
+            files: snapshots.flatMap(\.files),
+            diagnostics: snapshots.flatMap(\.diagnostics)
+        )
+    }
+
+    nonisolated static func prefixedPolicySnapshot(_ snapshot: ContextPolicySnapshot, prefix: String) -> ContextPolicySnapshot {
+        let normalizedPrefix = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedPrefix.isEmpty else { return snapshot }
+
+        let files = snapshot.files.map { file in
+            ContextPolicyFile(
+                displayPath: "\(normalizedPrefix)/\(file.displayPath)",
+                content: file.content
+            )
+        }
+        let diagnostics = snapshot.diagnostics.map { diagnostic in
+            switch diagnostic {
+            case .warning(let warning):
+                return .warning(WarningDiagnostic(
+                    sourcePath: "\(normalizedPrefix)/\(warning.sourcePath)",
+                    message: warning.message,
+                    contextID: warning.contextID
+                ))
+            case .error(let error):
+                return .error(ErrorDiagnostic(
+                    sourcePath: "\(normalizedPrefix)/\(error.sourcePath)",
+                    message: error.message,
+                    contextID: error.contextID
+                ))
+            case .collision(let collision):
+                return .collision(CollisionDiagnostic(
+                    sourcePath: "\(normalizedPrefix)/\(collision.sourcePath)",
+                    conflictingPath: "\(normalizedPrefix)/\(collision.conflictingPath)",
+                    message: collision.message
+                ))
+            }
+        }
+
+        return ContextPolicySnapshot(files: files, diagnostics: diagnostics)
     }
 
     func rebuildIndex() async {

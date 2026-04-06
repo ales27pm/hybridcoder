@@ -130,4 +130,33 @@ struct PromptTemplateServiceTests {
         let refreshed = try await service.resolve(query: "/refactor file.swift", repoRoot: repoRoot)
         #expect(refreshed.query == "Updated file.swift")
     }
+
+    @Test func repositoryTemplatesOverrideGlobalTemplates() async throws {
+        let repoRoot = try makeTempRepoRoot()
+        let globalRoot = try makeTempRepoRoot()
+        defer { try? FileManager.default.removeItem(at: repoRoot) }
+        defer { try? FileManager.default.removeItem(at: globalRoot) }
+
+        let repoPromptsDir = repoRoot
+            .appending(path: ".hybridcoder", directoryHint: .isDirectory)
+            .appending(path: "prompts", directoryHint: .isDirectory)
+        let globalPromptsDir = globalRoot
+            .appending(path: "prompts", directoryHint: .isDirectory)
+
+        try FileManager.default.createDirectory(at: repoPromptsDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: globalPromptsDir, withIntermediateDirectories: true)
+
+        try "Global $1".write(to: globalPromptsDir.appending(path: "refactor.md"), atomically: true, encoding: .utf8)
+        try "Repository $1".write(to: repoPromptsDir.appending(path: "refactor.md"), atomically: true, encoding: .utf8)
+
+        let service = PromptTemplateService(globalPromptsDirectory: globalPromptsDir)
+        let resolved = try await service.resolve(query: "/refactor file.swift", repoRoot: repoRoot)
+        let diagnostics = try await service.diagnostics(for: repoRoot)
+
+        #expect(resolved.query == "Repository file.swift")
+        #expect(diagnostics.contains { diagnostic in
+            guard case .warning(let warning) = diagnostic else { return false }
+            return warning.message.contains("overrides template")
+        })
+    }
 }

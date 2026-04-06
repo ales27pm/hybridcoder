@@ -79,23 +79,17 @@ final class FoundationModelService {
         isGenerating = true
         defer { isGenerating = false }
 
-        let fileContext = fileList.prefix(60).joined(separator: "\n")
+        let promptEnvelope = PromptBuilder.routeClassifierPrompt(
+            query: query,
+            fileList: Array(fileList.prefix(60))
+        )
 
         let session = LanguageModelSession {
-            """
-            You are a routing classifier for a coding assistant. Given a user query and a list of repository files, decide which handler should process it.
-            Routes: explanation (conceptual questions, summaries), codeGeneration (write new code), patchPlanning (modify existing code via search/replace), search (find relevant code).
-            Extract search terms and any file paths mentioned.
-            """
+            promptEnvelope.system
         }
 
         let prompt = Prompt {
-            """
-            Query: \(query)
-
-            Repository files:
-            \(fileContext)
-            """
+            promptEnvelope.user
         }
 
         let response = try await session.respond(
@@ -111,30 +105,13 @@ final class FoundationModelService {
         isGenerating = true
         defer { isGenerating = false }
 
-        let instruction: String
-        switch route {
-        case .explanation:
-            instruction = "You are a concise coding assistant. Explain the topic using the provided code context. Be direct and technical."
-        case .patchPlanning:
-            instruction = "You are a code change planner. Describe what changes are needed based on the query and context. Be specific about which files and sections."
-        case .search:
-            instruction = "You are a code search assistant. Summarize the relevant code found and explain how it relates to the query."
-        case .codeGeneration:
-            instruction = "You are a code assistant. Provide a clear, technical answer using the provided code context."
-        }
+        let promptEnvelope = PromptBuilder.foundationPrompt(route: route, query: query, repoContext: context)
 
         let session = LanguageModelSession {
-            "\(instruction)"
+            promptEnvelope.system
         }
 
-        let prompt = """
-        Context:
-        \(context.prefix(3000))
-
-        Question: \(query)
-        """
-
-        let response = try await session.respond(to: prompt)
+        let response = try await session.respond(to: promptEnvelope.user)
         return response.content
     }
 
@@ -147,32 +124,14 @@ final class FoundationModelService {
                 }
 
                 self.isGenerating = true
-
-                let instruction: String
-                switch route {
-                case .explanation:
-                    instruction = "You are a concise coding assistant. Explain the topic using the provided code context. Be direct and technical."
-                case .patchPlanning:
-                    instruction = "You are a code change planner. Describe what changes are needed. Be specific about files and sections."
-                case .search:
-                    instruction = "You are a code search assistant. Summarize the relevant code found and how it relates to the query."
-                case .codeGeneration:
-                    instruction = "You are a code assistant. Provide a clear, technical answer using the provided code context."
-                }
+                let promptEnvelope = PromptBuilder.foundationPrompt(route: route, query: query, repoContext: context)
 
                 let session = LanguageModelSession {
-                    "\(instruction)"
+                    promptEnvelope.system
                 }
 
-                let prompt = """
-                Context:
-                \(context.prefix(3000))
-
-                Question: \(query)
-                """
-
                 do {
-                    let stream = session.streamResponse(to: prompt)
+                    let stream = session.streamResponse(to: promptEnvelope.user)
                     for try await partial in stream {
                         continuation.yield(partial.content)
                     }
@@ -191,21 +150,17 @@ final class FoundationModelService {
         isGenerating = true
         defer { isGenerating = false }
 
+        let promptEnvelope = PromptBuilder.patchPlanningPrompt(query: query, repoContext: codeContext)
         let session = LanguageModelSession {
             """
-            You are a patch planner for a coding assistant. Given a user request and code context, produce an exact-match search-and-replace patch plan.
+            \(promptEnvelope.system)
             Each operation's searchText MUST be an exact verbatim substring found in the file — including all whitespace, indentation, and newlines.
             The replaceText is the new text that will replace it. DO NOT paraphrase or approximate the search text.
             """
         }
 
         let prompt = Prompt {
-            """
-            Request: \(query)
-
-            Code context:
-            \(codeContext.prefix(2500))
-            """
+            promptEnvelope.user
         }
 
         let response = try await session.respond(
