@@ -250,7 +250,7 @@ final class AppViewModel {
     func handleRepositoryFileSaved() {
         refreshFileTree()
         Task {
-            await orchestrator.rebuildIndex()
+            await orchestrator.refreshRepositoryWorkspaceAfterChanges()
         }
     }
 

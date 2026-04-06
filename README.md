@@ -6,7 +6,8 @@ HybridCoder is an on-device AI coding assistant for iOS.
 
 This repository is now standardized on **FoundationModels + CoreML (iOS 26+)**.
 
-- **Generation/routing/planning:** Apple Foundation Models (`FoundationModels` framework).
+- **Routing/explanations/patch planning:** Apple Foundation Models (`FoundationModels` framework).
+- **Code generation:** Qwen coder via `CoreMLPipelines`.
 - **Semantic search embeddings:** downloaded CoreML embedding model.
 - **No MLX runtime:** MLX package and product links are removed from the Xcode project.
 
@@ -20,10 +21,11 @@ This repository is now standardized on **FoundationModels + CoreML (iOS 26+)**.
 | Runtime capability | Supported OS | Provider | Fallback |
 | --- | --- | --- | --- |
 | Route classification | iOS 26.0+ | Apple Foundation Models | None |
-| Assistant generation (explain/code/patch planning) | iOS 26.0+ | Apple Foundation Models | None |
+| Explanation + patch planning | iOS 26.0+ | Apple Foundation Models | None |
+| Code generation | iOS 26.0+ | Qwen via CoreMLPipelines | None |
 | Semantic embeddings / search index | iOS 26.0+ | CoreML CodeBERT | None (user must download embedding model) |
 
-HybridCoder is **Foundation Models first and only** for generation/routing. If Apple Intelligence is unavailable at runtime, requests fail with a deterministic "no model available" error instead of falling back to alternate providers.
+HybridCoder is **Foundation Models first** for routing and structured reasoning, with a local Qwen code-generation path for `codeGeneration` requests. If Apple Intelligence is unavailable at runtime, route classification and Foundation-backed flows fail with a deterministic "no model available" error instead of falling back to alternate providers.
 
 ## Why this path
 

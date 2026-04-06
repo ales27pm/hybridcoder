@@ -8,6 +8,14 @@ enum PromptContextBudget {
     static let maximumConversationContextBudget = 1000
 }
 
+nonisolated struct RouteResolution: Sendable, Equatable {
+    let route: Route
+    let retrievalQuery: String
+    let relevantFiles: [String]
+    let reasoning: String
+    let confidence: Int
+}
+
 @Observable
 @MainActor
 final class AIOrchestrator {
@@ -542,6 +550,15 @@ final class AIOrchestrator {
         return try await index.search(query: query, topK: topK)
     }
 
+    func refreshRepositoryWorkspaceAfterChanges() async {
+        guard activeWorkspaceSource == .repository, let root = repoRoot else { return }
+        repoFiles = await repoAccess.listSourceFiles(in: root)
+        await promptTemplateService.invalidateCache(for: root)
+        await refreshTemplateDiagnostics(repoRoot: root)
+        await refreshContextPolicies(repoRoot: root)
+        await rebuildIndex()
+    }
+
     var discoveryDiagnostics: [DiscoveryDiagnostic] {
         contextPolicySnapshot.diagnostics + templateDiagnostics
     }
@@ -580,13 +597,24 @@ final class AIOrchestrator {
         defer { isProcessing = false }
 
         let resolved = try await resolveTemplateIfNeeded(query)
-        let route: Route
+        let resolution: RouteResolution
         if let override = resolved.routeOverride {
-            route = override
+            resolution = RouteResolution(
+                route: override,
+                retrievalQuery: resolved.query,
+                relevantFiles: [],
+                reasoning: "Template route override",
+                confidence: 5
+            )
         } else {
-            route = try await resolveRoute(for: resolved.query)
+            resolution = try await resolveRoute(for: resolved.query)
         }
-        let context = await gatherContext(for: resolved.query, route: route, memory: memory)
+        let route = resolution.route
+        let context = await gatherContext(
+            retrievalQuery: resolution.retrievalQuery,
+            relevantFiles: resolution.relevantFiles,
+            memory: memory
+        )
         recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
         logProviderSelection(query: resolved.query, route: route, mode: "non-stream")
 
@@ -597,7 +625,7 @@ final class AIOrchestrator {
 
         case .codeGeneration:
             let code = try await generateCode(query: resolved.query, context: context)
-            let blocks = extractCodeBlocks(from: code)
+            let blocks = Self.extractCodeBlocks(from: code, fallbackToWholeText: true)
             return AssistantResponse(text: code, codeBlocks: blocks, routeUsed: .codeGeneration)
 
         case .patchPlanning:
@@ -620,13 +648,24 @@ final class AIOrchestrator {
         defer { isProcessing = false }
 
         let resolved = try await resolveTemplateIfNeeded(query)
-        let route: Route
+        let resolution: RouteResolution
         if let override = resolved.routeOverride {
-            route = override
+            resolution = RouteResolution(
+                route: override,
+                retrievalQuery: resolved.query,
+                relevantFiles: [],
+                reasoning: "Template route override",
+                confidence: 5
+            )
         } else {
-            route = try await resolveRoute(for: resolved.query)
+            resolution = try await resolveRoute(for: resolved.query)
         }
-        let context = await gatherContext(for: resolved.query, route: route, memory: memory)
+        let route = resolution.route
+        let context = await gatherContext(
+            retrievalQuery: resolution.retrievalQuery,
+            relevantFiles: resolution.relevantFiles,
+            memory: memory
+        )
         recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
         logProviderSelection(query: resolved.query, route: route, mode: "stream")
 
@@ -637,7 +676,7 @@ final class AIOrchestrator {
 
         case .codeGeneration:
             let code = try await streamText(query: resolved.query, context: context, route: route, onPartial: onPartial)
-            let blocks = extractCodeBlocks(from: code)
+            let blocks = Self.extractCodeBlocks(from: code, fallbackToWholeText: true)
             return (AssistantResponse(text: code, codeBlocks: blocks, routeUsed: .codeGeneration), route)
 
         case .patchPlanning:
@@ -698,7 +737,7 @@ final class AIOrchestrator {
         isProcessing = true
         defer { isProcessing = false }
 
-        let context = await gatherContext(for: query, route: .patchPlanning, memory: nil)
+        let context = await gatherContext(retrievalQuery: query, relevantFiles: [], memory: nil)
         return try await generatePatchPlan(query: query, context: context)
     }
 
@@ -714,8 +753,7 @@ final class AIOrchestrator {
         let result = await engine.apply(plan, repoRoot: root)
 
         if !result.changedFiles.isEmpty {
-            repoFiles = await repoAccess.listSourceFiles(in: root)
-            await rebuildIndex()
+            await refreshRepositoryWorkspaceAfterChanges()
         }
 
         return result
@@ -726,7 +764,7 @@ final class AIOrchestrator {
         return await engine.validate(plan, repoRoot: root)
     }
 
-    private func resolveRoute(for query: String) async throws -> Route {
+    private func resolveRoute(for query: String) async throws -> RouteResolution {
         let fm = try requireFoundationModel()
         let fileNames = repoFiles.prefix(60).map(\.relativePath)
         let decision = try await fm.classifyRoute(query: query, fileList: fileNames)
@@ -735,21 +773,42 @@ final class AIOrchestrator {
         }
 
         logger.info("route.classifier provider=FoundationModels route=\(route.rawValue, privacy: .public) confidence=\(decision.confidence) query=\(query, privacy: .private)")
-        return route
+        return RouteResolution(
+            route: route,
+            retrievalQuery: Self.buildRetrievalQuery(baseQuery: query, searchTerms: decision.searchTerms),
+            relevantFiles: decision.relevantFiles,
+            reasoning: decision.reasoning,
+            confidence: decision.confidence
+        )
     }
 
-    private func gatherContext(for query: String, route: Route, memory: ConversationMemoryContext?) async -> String {
+    private func gatherContext(
+        retrievalQuery: String,
+        relevantFiles: [String],
+        memory: ConversationMemoryContext?
+    ) async -> String {
         var codeContextParts: [String] = []
+        var includedPaths: Set<String> = []
 
-        if let hits = try? await searchCode(query: query, topK: 3) {
+        let hintedFiles = Self.matchRelevantFiles(relevantFiles, within: repoFiles)
+        for file in hintedFiles {
+            guard let content = await workspaceFileContent(for: file) else { continue }
+            let header = "--- \(file.relativePath) ---"
+            codeContextParts.append("\(header)\n\(String(content.prefix(1200)))")
+            includedPaths.insert(file.relativePath.lowercased())
+        }
+
+        if let hits = try? await searchCode(query: retrievalQuery, topK: 3) {
             for hit in hits {
+                guard !includedPaths.contains(hit.filePath.lowercased()) else { continue }
                 let header = "--- \(hit.filePath) L\(hit.chunk.startLine)-\(hit.chunk.endLine) ---"
                 codeContextParts.append("\(header)\n\(hit.chunk.content)")
+                includedPaths.insert(hit.filePath.lowercased())
             }
         }
 
         if codeContextParts.isEmpty, !repoFiles.isEmpty {
-            let sample = repoFiles.prefix(5)
+            let sample = repoFiles.filter { !includedPaths.contains($0.relativePath.lowercased()) }.prefix(5)
             for file in sample {
                 if let content = await workspaceFileContent(for: file) {
                     let header = "--- \(file.relativePath) ---"
@@ -802,16 +861,20 @@ final class AIOrchestrator {
         let maxNonCodeBudget = hasCode ? max(0, totalLimit - minCodeBudget) : totalLimit
         let remainingConversationBudget = max(0, maxNonCodeBudget - policyText.count)
         let allowedConversationBudget = min(maxConversationBudget, remainingConversationBudget)
-        let conversationText = String(conversationMemoryBlock.prefix(allowedConversationBudget)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let conversationText = conversationMemoryBlock.trimmingCharacters(in: .whitespacesAndNewlines)
 
         var sections: [String] = []
         var remaining = totalLimit
         var remainingNonCodeBudget = maxNonCodeBudget
 
         if !policyText.isEmpty {
-            let policySection = "<policy_context>\n\(policyText)\n</policy_context>"
             let policyLimit = min(remaining, remainingNonCodeBudget)
-            let clipped = String(policySection.prefix(policyLimit)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let clipped = clipWrappedSection(
+                openingTag: "<policy_context>\n",
+                body: policyText,
+                closingTag: "\n</policy_context>",
+                limit: policyLimit
+            )
             if !clipped.isEmpty {
                 sections.append(clipped)
                 remaining -= clipped.count
@@ -821,7 +884,12 @@ final class AIOrchestrator {
 
         if !conversationText.isEmpty, remaining > 0, remainingNonCodeBudget > 0 {
             let conversationLimit = min(remaining, remainingNonCodeBudget)
-            let clipped = String(conversationText.prefix(conversationLimit)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let clipped = clipExistingWrappedBlock(
+                conversationText,
+                openingTag: "<conversation_memory>\n",
+                closingTag: "\n</conversation_memory>",
+                limit: min(conversationLimit, allowedConversationBudget)
+            )
             if !clipped.isEmpty {
                 sections.append(clipped)
                 remaining -= clipped.count
@@ -837,6 +905,104 @@ final class AIOrchestrator {
         }
 
         return sections.joined(separator: "\n\n")
+    }
+
+    nonisolated static func buildRetrievalQuery(baseQuery: String, searchTerms: [String]) -> String {
+        let cleanedTerms = searchTerms
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !cleanedTerms.isEmpty else { return baseQuery }
+
+        var seen: Set<String> = []
+        var orderedTerms: [String] = [baseQuery]
+        seen.insert(baseQuery.lowercased())
+
+        for term in cleanedTerms {
+            let key = term.lowercased()
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            orderedTerms.append(term)
+        }
+
+        return orderedTerms.joined(separator: "\n")
+    }
+
+    nonisolated static func matchRelevantFiles(_ hints: [String], within repoFiles: [RepoFile], limit: Int = 2) -> [RepoFile] {
+        guard limit > 0 else { return [] }
+
+        var results: [RepoFile] = []
+        var seen: Set<String> = []
+
+        func appendMatches(_ predicate: (RepoFile, String) -> Bool, for normalizedHint: String) {
+            for file in repoFiles where predicate(file, normalizedHint) {
+                let key = file.relativePath.lowercased()
+                guard !seen.contains(key) else { continue }
+                seen.insert(key)
+                results.append(file)
+                if results.count >= limit { return }
+            }
+        }
+
+        for hint in hints {
+            let normalizedHint = hint
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\\", with: "/")
+                .lowercased()
+
+            guard !normalizedHint.isEmpty else { continue }
+
+            appendMatches({ file, hint in file.relativePath.lowercased() == hint }, for: normalizedHint)
+            if results.count >= limit { break }
+
+            appendMatches({ file, hint in file.fileName.lowercased() == (hint as NSString).lastPathComponent }, for: normalizedHint)
+            if results.count >= limit { break }
+
+            appendMatches({ file, hint in file.relativePath.lowercased().hasSuffix(hint) }, for: normalizedHint)
+            if results.count >= limit { break }
+
+            appendMatches({ file, hint in file.relativePath.lowercased().contains(hint) }, for: normalizedHint)
+            if results.count >= limit { break }
+        }
+
+        return results
+    }
+
+    nonisolated static func clipWrappedSection(
+        openingTag: String,
+        body: String,
+        closingTag: String,
+        limit: Int
+    ) -> String {
+        let wrapperOverhead = openingTag.count + closingTag.count
+        guard limit > wrapperOverhead else { return "" }
+
+        let clippedBody = String(body.prefix(limit - wrapperOverhead)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clippedBody.isEmpty else { return "" }
+        return "\(openingTag)\(clippedBody)\(closingTag)"
+    }
+
+    nonisolated static func clipExistingWrappedBlock(
+        _ block: String,
+        openingTag: String,
+        closingTag: String,
+        limit: Int
+    ) -> String {
+        let normalized = block.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.hasPrefix(openingTag), normalized.hasSuffix(closingTag) else {
+            return String(normalized.prefix(limit)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let wrapperOverhead = openingTag.count + closingTag.count
+        guard limit > wrapperOverhead else { return "" }
+
+        let bodyStart = normalized.index(normalized.startIndex, offsetBy: openingTag.count)
+        let bodyEnd = normalized.index(normalized.endIndex, offsetBy: -closingTag.count)
+        let body = String(normalized[bodyStart..<bodyEnd])
+        let clippedBody = String(body.prefix(limit - wrapperOverhead)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clippedBody.isEmpty else { return "" }
+
+        return "\(openingTag)\(clippedBody)\(closingTag)"
     }
 
     func summarizeConversationForCompaction(
@@ -995,7 +1161,7 @@ final class AIOrchestrator {
         return counts
     }
 
-    private func extractCodeBlocks(from text: String) -> [CodeBlock] {
+    nonisolated static func extractCodeBlocks(from text: String, fallbackToWholeText: Bool = false) -> [CodeBlock] {
         var blocks: [CodeBlock] = []
         let scanner = text as NSString
         let pattern = "```(\\w*)\\n([\\s\\S]*?)```"
@@ -1007,6 +1173,13 @@ final class AIOrchestrator {
             let code = match.numberOfRanges > 2 ? scanner.substring(with: match.range(at: 2)) : ""
             if !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 blocks.append(CodeBlock(language: lang, code: code))
+            }
+        }
+
+        if blocks.isEmpty, fallbackToWholeText {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                blocks.append(CodeBlock(code: trimmed))
             }
         }
 

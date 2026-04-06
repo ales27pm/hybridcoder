@@ -104,4 +104,30 @@ struct PromptTemplateServiceTests {
             _ = try await service.interpolate(template: template, arguments: ["ViewController.swift"])
         }
     }
+
+    @Test func cacheInvalidationReloadsUpdatedTemplates() async throws {
+        let repoRoot = try makeTempRepoRoot()
+        defer { try? FileManager.default.removeItem(at: repoRoot) }
+
+        let promptsDir = repoRoot
+            .appending(path: ".hybridcoder", directoryHint: .isDirectory)
+            .appending(path: "prompts", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: promptsDir, withIntermediateDirectories: true)
+
+        let templateURL = promptsDir.appending(path: "refactor.md")
+        try "Original $1".write(to: templateURL, atomically: true, encoding: .utf8)
+
+        let service = PromptTemplateService()
+        let original = try await service.resolve(query: "/refactor file.swift", repoRoot: repoRoot)
+        #expect(original.query == "Original file.swift")
+
+        try "Updated $1".write(to: templateURL, atomically: true, encoding: .utf8)
+
+        let stale = try await service.resolve(query: "/refactor file.swift", repoRoot: repoRoot)
+        #expect(stale.query == "Original file.swift")
+
+        await service.invalidateCache(for: repoRoot)
+        let refreshed = try await service.resolve(query: "/refactor file.swift", repoRoot: repoRoot)
+        #expect(refreshed.query == "Updated file.swift")
+    }
 }
