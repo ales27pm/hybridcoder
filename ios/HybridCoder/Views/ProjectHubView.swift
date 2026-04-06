@@ -172,6 +172,28 @@ struct ProjectHubView: View {
                     }
                     dismiss()
                 }
+
+                ActionCard(
+                    icon: "arrow.down.doc",
+                    label: "Import State",
+                    description: "From repo .hybridcoder",
+                    disabled: viewModel.activeRepositoryURL == nil || viewModel.sandboxViewModel.activeProject == nil
+                ) {
+                    Task {
+                        await viewModel.exportStateMemoryFromRepoFolder()
+                    }
+                }
+
+                ActionCard(
+                    icon: "arrow.up.doc",
+                    label: "Export State",
+                    description: "To repo .hybridcoder",
+                    disabled: viewModel.activeRepositoryURL == nil || viewModel.sandboxViewModel.activeProject == nil
+                ) {
+                    Task {
+                        _ = await viewModel.importStateMemoryToRepoFolder()
+                    }
+                }
             }
         }
     }

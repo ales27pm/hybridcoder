@@ -217,16 +217,23 @@ final class AppViewModel {
     }
 
     func openPrototypeProject(_ project: SandboxProject) {
-        // Close any open repository when switching to a prototype.
         if activeRepositoryURL != nil {
             closeRepository()
         }
-        // Open the selected prototype project.
         sandboxViewModel.openProject(project)
-        // Treat a prototype as an active workspace for chat. Default to the chat section so
-        // that users can immediately ask questions about their prototype code. They can still
-        // switch to the prototype editor via the sidebar if needed.
         selectedSection = .chat
+    }
+
+    func importStateMemoryToRepoFolder() async -> Bool {
+        guard let project = sandboxViewModel.activeProject,
+              let repoURL = activeRepositoryURL else { return false }
+        return await sandboxViewModel.importStateToProjectFolder(project.id, destinationRoot: repoURL)
+    }
+
+    func exportStateMemoryFromRepoFolder() async {
+        guard let project = sandboxViewModel.activeProject,
+              let repoURL = activeRepositoryURL else { return }
+        await sandboxViewModel.exportStateFromProjectFolder(project.id, sourceRoot: repoURL)
     }
 
     func prepareNewPrototypeProject() {

@@ -148,117 +148,188 @@ private struct ProjectCard: View {
 struct NewSandboxProjectSheet: View {
     @Bindable var viewModel: SandboxViewModel
     @State private var projectName: String = ""
-    @State private var selectedTemplate: SandboxProject.TemplateType = .helloWorld
+    @State private var selectedTemplate: ProjectTemplate?
+    @State private var currentStep: CreationStep = .template
     @Environment(\.dismiss) private var dismiss
+
+    private enum CreationStep {
+        case template
+        case configure
+    }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Project Name")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Theme.dimText)
-
-                        TextField("My App", text: $projectName)
-                            .font(.body)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
-                            .background(Theme.inputBg, in: .rect(cornerRadius: 10))
-                    }
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Template")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Theme.dimText)
-
-                        ForEach(SandboxProject.TemplateType.allCases, id: \.self) { template in
-                            TemplateRow(
-                                template: template,
-                                isSelected: selectedTemplate == template
-                            ) {
-                                selectedTemplate = template
-                            }
-                        }
-                    }
+            VStack(spacing: 0) {
+                switch currentStep {
+                case .template:
+                    templateStep
+                case .configure:
+                    configureStep
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
             }
             .background(Theme.surfaceBg)
-            .navigationTitle("New Prototype")
+            .navigationTitle(currentStep == .template ? "Choose Template" : "Configure")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundStyle(Theme.dimText)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Create") {
-                        Task {
-                            await viewModel.createProject(name: projectName, template: selectedTemplate)
+                    Button {
+                        if currentStep == .configure {
+                            withAnimation(.snappy(duration: 0.25)) {
+                                currentStep = .template
+                            }
+                        } else {
                             dismiss()
                         }
+                    } label: {
+                        if currentStep == .configure {
+                            HStack(spacing: 4) {
+                                Image(systemName: "chevron.left")
+                                    .font(.caption.weight(.semibold))
+                                Text("Templates")
+                            }
+                            .foregroundStyle(Theme.accent)
+                        } else {
+                            Text("Cancel")
+                                .foregroundStyle(Theme.dimText)
+                        }
                     }
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Theme.accent)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if currentStep == .template {
+                        Button("Next") {
+                            withAnimation(.snappy(duration: 0.25)) {
+                                currentStep = .configure
+                            }
+                        }
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Theme.accent)
+                        .disabled(selectedTemplate == nil)
+                    } else {
+                        Button("Create") {
+                            guard let template = selectedTemplate else { return }
+                            Task {
+                                await viewModel.createProjectFromTemplate(name: projectName, template: template)
+                                dismiss()
+                            }
+                        }
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Theme.accent)
+                    }
                 }
             }
             .toolbarBackground(Theme.cardBg, for: .navigationBar)
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
-}
 
-private struct TemplateRow: View {
-    let template: SandboxProject.TemplateType
-    let isSelected: Bool
-    let onTap: () -> Void
+    private var templateStep: some View {
+        TemplatePickerView(selectedTemplate: $selectedTemplate)
+    }
 
-    var body: some View {
-        Button {
-            onTap()
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: template.iconName)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(isSelected ? Theme.accent : Theme.dimText)
-                    .frame(width: 32, height: 32)
-                    .background(
-                        isSelected ? Theme.accent.opacity(0.12) : Theme.codeBg,
-                        in: .rect(cornerRadius: 8)
-                    )
+    private var configureStep: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                if let template = selectedTemplate {
+                    selectedTemplateBanner(template)
+                }
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(template.rawValue)
-                        .font(.subheadline.weight(.medium))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("PROJECT NAME")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Theme.dimText)
+
+                    TextField(selectedTemplate?.name ?? "My App", text: $projectName)
+                        .font(.body)
                         .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .background(Theme.inputBg, in: .rect(cornerRadius: 10))
 
-                    Text(template.description)
+                    Text("Leave blank to use the template name")
                         .font(.caption2)
                         .foregroundStyle(Theme.dimText)
                 }
 
-                Spacer()
+                if let template = selectedTemplate {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("INCLUDED FILES")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(Theme.dimText)
 
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.body)
-                        .foregroundStyle(Theme.accent)
+                        ForEach(template.files, id: \.name) { file in
+                            HStack(spacing: 10) {
+                                Image(systemName: "doc.text")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(Theme.accent.opacity(0.7))
+                                    .frame(width: 24)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(file.name)
+                                        .font(.system(.subheadline, design: .monospaced).weight(.medium))
+                                        .foregroundStyle(.white)
+
+                                    Text("\(file.content.count) characters")
+                                        .font(.caption2)
+                                        .foregroundStyle(Theme.dimText)
+                                }
+
+                                Spacer()
+                            }
+                            .padding(10)
+                            .background(Theme.cardBg, in: .rect(cornerRadius: 10))
+                        }
+                    }
                 }
             }
-            .padding(12)
-            .background(
-                isSelected ? Theme.accent.opacity(0.06) : Theme.cardBg,
-                in: .rect(cornerRadius: 12)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(isSelected ? Theme.accent.opacity(0.3) : .clear, lineWidth: 1)
-            )
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 32)
         }
-        .buttonStyle(.plain)
+    }
+
+    private func selectedTemplateBanner(_ template: ProjectTemplate) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(template.accentColor.opacity(0.15))
+                    .frame(width: 40, height: 40)
+
+                Image(systemName: template.iconName)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(template.accentColor)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(template.name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+
+                Text(template.subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(Theme.dimText)
+            }
+
+            Spacer()
+
+            Button {
+                withAnimation(.snappy(duration: 0.25)) {
+                    currentStep = .template
+                }
+            } label: {
+                Text("Change")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Theme.accent.opacity(0.12), in: Capsule())
+            }
+        }
+        .padding(14)
+        .background(Theme.cardBg, in: .rect(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(template.accentColor.opacity(0.2), lineWidth: 1)
+        )
     }
 }

@@ -8,6 +8,7 @@ final class SandboxViewModel {
     private(set) var activeProject: SandboxProject?
     private(set) var isLoading: Bool = false
     private(set) var errorMessage: String?
+    private(set) var restoredState: PrototypeStateMemory.ProjectState?
     var onActiveProjectChanged: ((SandboxProject?) -> Void)?
     var showNewProjectSheet: Bool = false
     var showDeleteConfirmation: Bool = false
@@ -16,6 +17,7 @@ final class SandboxViewModel {
     private let storageKey = "sandbox_projects"
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "SandboxViewModel")
     private let storage: AsyncStorageService?
+    let stateMemory = PrototypeStateMemory()
 
     init() {
         do {
@@ -55,19 +57,41 @@ final class SandboxViewModel {
         await saveProjects()
     }
 
+    func createProjectFromTemplate(name: String, template: ProjectTemplate) async {
+        let files = template.files.map { SandboxFile(name: $0.name, content: $0.content, language: $0.language) }
+        var project = SandboxProject(
+            name: name.isEmpty ? template.name : name,
+            templateType: template.templateType,
+            files: files
+        )
+        project.lastOpenedAt = Date()
+        projects.insert(project, at: 0)
+        let previous = activeProject
+        activeProject = project
+        notifyActiveProjectChangedIfNeeded(previous: previous)
+        await saveProjects()
+    }
+
     func openProject(_ project: SandboxProject) {
         if let idx = projects.firstIndex(where: { $0.id == project.id }) {
             projects[idx].lastOpenedAt = Date()
             let previous = activeProject
             activeProject = projects[idx]
             notifyActiveProjectChangedIfNeeded(previous: previous)
-            Task { await saveProjects() }
+            Task {
+                await saveProjects()
+                restoredState = await stateMemory.loadState(for: project.id)
+            }
         }
     }
 
     func closeProject() {
+        if let project = activeProject {
+            Task { await persistCurrentState(for: project) }
+        }
         let previous = activeProject
         activeProject = nil
+        restoredState = nil
         notifyActiveProjectChangedIfNeeded(previous: previous)
     }
 
@@ -76,9 +100,11 @@ final class SandboxViewModel {
         projects.removeAll { $0.id == project.id }
         if activeProject?.id == project.id {
             activeProject = nil
+            restoredState = nil
         }
         notifyActiveProjectChangedIfNeeded(previous: previous)
         await saveProjects()
+        await stateMemory.deleteState(for: project.id)
     }
 
     func updateProjectFile(_ projectID: UUID, fileID: UUID, content: String) async {
@@ -161,6 +187,64 @@ final class SandboxViewModel {
 
     func dismissError() {
         errorMessage = nil
+    }
+
+    func saveActiveEditorState(fileID: UUID?, cursorPosition: Int?, tab: String?) async {
+        guard let project = activeProject else { return }
+        var state = restoredState ?? PrototypeStateMemory.ProjectState(
+            projectID: project.id,
+            conversationSnippets: [],
+            lastSavedAt: Date()
+        )
+        state.activeFileID = fileID
+        state.editorCursorPosition = cursorPosition
+        state.lastOpenedTab = tab
+        state.lastSavedAt = Date()
+        restoredState = state
+        await stateMemory.saveState(state)
+    }
+
+    func appendConversationSnippet(role: String, content: String) async {
+        guard let project = activeProject else { return }
+        var state = restoredState ?? PrototypeStateMemory.ProjectState(
+            projectID: project.id,
+            conversationSnippets: [],
+            lastSavedAt: Date()
+        )
+        let snippet = PrototypeStateMemory.ProjectState.ConversationSnippet(
+            role: role,
+            content: String(content.prefix(500)),
+            timestamp: Date()
+        )
+        state.conversationSnippets.append(snippet)
+        if state.conversationSnippets.count > 20 {
+            state.conversationSnippets = Array(state.conversationSnippets.suffix(20))
+        }
+        state.lastSavedAt = Date()
+        restoredState = state
+        await stateMemory.saveState(state)
+    }
+
+    func importStateToProjectFolder(_ projectID: UUID, destinationRoot: URL) async -> Bool {
+        await stateMemory.importStateToProjectFolder(projectID: projectID, destinationRoot: destinationRoot)
+    }
+
+    func exportStateFromProjectFolder(_ projectID: UUID, sourceRoot: URL) async {
+        if let state = await stateMemory.exportStateFromProjectFolder(projectID: projectID, sourceRoot: sourceRoot) {
+            if activeProject?.id == projectID {
+                restoredState = state
+            }
+        }
+    }
+
+    private func persistCurrentState(for project: SandboxProject) async {
+        var state = restoredState ?? PrototypeStateMemory.ProjectState(
+            projectID: project.id,
+            conversationSnippets: [],
+            lastSavedAt: Date()
+        )
+        state.lastSavedAt = Date()
+        await stateMemory.saveState(state)
     }
 
     private func saveProjects() async {
