@@ -3,6 +3,35 @@ import Testing
 @testable import HybridCoder
 
 struct ContextPolicyLoaderTests {
+    @Test func policyAnchorsUseNestedWorkingDirectoryInsideRepo() {
+        let repoRoot = URL(fileURLWithPath: "/tmp/repo", isDirectory: true)
+        let nestedFile = repoRoot
+            .appending(path: "Sources", directoryHint: .isDirectory)
+            .appending(path: "Feature", directoryHint: .isDirectory)
+            .appending(path: "ChatView.swift")
+
+        let anchors = AIOrchestrator.resolvePolicyLoadAnchors(
+            repoRoot: repoRoot,
+            preferredWorkingDirectory: nestedFile
+        )
+
+        #expect(anchors.start.path == "/tmp/repo/Sources/Feature")
+        #expect(anchors.stopAt.path == "/tmp/repo")
+    }
+
+    @Test func policyAnchorsFallBackToRepoRootWhenWorkingDirectoryEscapesRepo() {
+        let repoRoot = URL(fileURLWithPath: "/tmp/repo", isDirectory: true)
+        let outside = URL(fileURLWithPath: "/tmp/other/place", isDirectory: true)
+
+        let anchors = AIOrchestrator.resolvePolicyLoadAnchors(
+            repoRoot: repoRoot,
+            preferredWorkingDirectory: outside
+        )
+
+        #expect(anchors.start.path == "/tmp/repo")
+        #expect(anchors.stopAt.path == "/tmp/repo")
+    }
+
     @Test func policyLoaderReturnsRootToLeafPoliciesWithinBoundary() async throws {
         let repoRoot = try makeTempRepoRoot()
         defer { try? FileManager.default.removeItem(at: repoRoot) }
