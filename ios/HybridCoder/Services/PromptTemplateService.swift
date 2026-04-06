@@ -17,7 +17,7 @@ nonisolated enum HybridCoderResourceLocator: Sendable {
     }
 }
 
-struct PromptTemplate: Sendable, Equatable {
+nonisolated struct PromptTemplate: Sendable, Equatable {
     let id: String
     let fileURL: URL
     let name: String
@@ -26,7 +26,7 @@ struct PromptTemplate: Sendable, Equatable {
     let body: String
 }
 
-struct ResolvedPromptQuery: Sendable, Equatable {
+nonisolated struct ResolvedPromptQuery: Sendable, Equatable {
     let query: String
     let routeOverride: Route?
     let template: PromptTemplate?

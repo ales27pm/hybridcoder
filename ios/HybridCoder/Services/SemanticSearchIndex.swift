@@ -275,7 +275,7 @@ actor SemanticSearchIndex {
     }
 }
 
-private final class SQLiteIndexStore {
+nonisolated private final class SQLiteIndexStore {
     struct Snapshot: Sendable {
         let records: [EmbeddingRecord]
         let chunks: [UUID: SourceChunk]
@@ -701,4 +701,4 @@ private final class SQLiteIndexStore {
     }
 }
 
-private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+nonisolated private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)

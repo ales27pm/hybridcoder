@@ -44,7 +44,7 @@ nonisolated struct ContextPolicySnapshot: Sendable, Equatable {
     }
 }
 
-final class ContextPolicyLoader {
+nonisolated final class ContextPolicyLoader {
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "ContextPolicyLoader")
     private let fileNames: [String]
 

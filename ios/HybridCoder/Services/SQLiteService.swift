@@ -64,8 +64,8 @@ actor SQLiteService {
 
         sqlite3_busy_timeout(db, 5000)
 
-        try execute("PRAGMA journal_mode = WAL;")
-        try execute("PRAGMA foreign_keys = ON;")
+        try Self.executeSQL("PRAGMA journal_mode = WAL;", on: db)
+        try Self.executeSQL("PRAGMA foreign_keys = ON;", on: db)
     }
 
     deinit {
@@ -75,7 +75,7 @@ actor SQLiteService {
     var databasePath: String { dbURL.path }
 
     @discardableResult
-    nonisolated func execute(_ sql: String, params: [Value] = []) throws -> Int {
+    func execute(_ sql: String, params: [Value] = []) throws -> Int {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw SQLiteError.prepareFailed(lastError)
@@ -92,7 +92,7 @@ actor SQLiteService {
         return Int(sqlite3_changes(db))
     }
 
-    nonisolated func query(_ sql: String, params: [Value] = []) throws -> [Row] {
+    func query(_ sql: String, params: [Value] = []) throws -> [Row] {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw SQLiteError.prepareFailed(lastError)
@@ -120,7 +120,7 @@ actor SQLiteService {
         return rows
     }
 
-    nonisolated func queryScalar(_ sql: String, params: [Value] = []) throws -> Value {
+    func queryScalar(_ sql: String, params: [Value] = []) throws -> Value {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw SQLiteError.prepareFailed(lastError)
@@ -135,7 +135,7 @@ actor SQLiteService {
         return readColumn(stmt, index: 0)
     }
 
-    nonisolated func transaction(_ block: () throws -> Void) throws {
+    func transaction(_ block: () throws -> Void) throws {
         try execute("BEGIN TRANSACTION;")
         do {
             try block()
@@ -146,11 +146,11 @@ actor SQLiteService {
         }
     }
 
-    nonisolated var lastInsertRowID: Int64 { sqlite3_last_insert_rowid(db) }
+    var lastInsertRowID: Int64 { sqlite3_last_insert_rowid(db) }
 
-    private nonisolated var lastError: String { String(cString: sqlite3_errmsg(db)) }
+    private var lastError: String { String(cString: sqlite3_errmsg(db)) }
 
-    private nonisolated func bindParams(_ params: [Value], to stmt: OpaquePointer?) throws {
+    private func bindParams(_ params: [Value], to stmt: OpaquePointer?) throws {
         for (i, param) in params.enumerated() {
             let idx = Int32(i + 1)
             let rc: Int32
@@ -176,7 +176,7 @@ actor SQLiteService {
         }
     }
 
-    private nonisolated func readColumn(_ stmt: OpaquePointer?, index: Int32) -> Value {
+    private func readColumn(_ stmt: OpaquePointer?, index: Int32) -> Value {
         switch sqlite3_column_type(stmt, index) {
         case SQLITE_TEXT:
             guard let cStr = sqlite3_column_text(stmt, index) else { return .null }
@@ -191,6 +191,12 @@ actor SQLiteService {
             return .blob(Data(bytes: ptr, count: len))
         default:
             return .null
+        }
+    }
+
+    private nonisolated static func executeSQL(_ sql: String, on db: OpaquePointer) throws {
+        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
+            throw SQLiteError.executeFailed(String(cString: sqlite3_errmsg(db)))
         }
     }
 

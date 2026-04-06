@@ -43,14 +43,14 @@ actor AsyncStorageService {
         self.db = db
 
         sqlite3_busy_timeout(db, 3000)
-        try exec("PRAGMA journal_mode = WAL;")
-        try exec("""
+        try Self.exec("PRAGMA journal_mode = WAL;", on: db)
+        try Self.exec("""
         CREATE TABLE IF NOT EXISTS kv_store (
             key TEXT PRIMARY KEY NOT NULL,
             value TEXT NOT NULL,
             updated_at REAL NOT NULL
         );
-        """)
+        """, on: db)
     }
 
     deinit {
@@ -198,11 +198,17 @@ actor AsyncStorageService {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
-    private nonisolated var lastError: String { String(cString: sqlite3_errmsg(db)) }
+    private var lastError: String { String(cString: sqlite3_errmsg(db)) }
 
-    private nonisolated func exec(_ sql: String) throws {
+    private func exec(_ sql: String) throws {
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
             throw StorageError.writeFailed(lastError)
+        }
+    }
+
+    private nonisolated static func exec(_ sql: String, on db: OpaquePointer) throws {
+        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
+            throw StorageError.writeFailed(String(cString: sqlite3_errmsg(db)))
         }
     }
 
