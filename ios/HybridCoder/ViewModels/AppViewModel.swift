@@ -4,6 +4,20 @@ import SwiftUI
 @Observable
 @MainActor
 final class AppViewModel {
+    enum SandboxWorkspace {
+        case repository(URL)
+        case prototype(SandboxProject)
+
+        var title: String {
+            switch self {
+            case .repository(let url):
+                return url.lastPathComponent
+            case .prototype(let project):
+                return project.name
+            }
+        }
+    }
+
     enum RepositoryWorkspaceKind {
         case unknown
         case generic
@@ -54,6 +68,7 @@ final class AppViewModel {
     let sandboxViewModel: SandboxViewModel
     let privacyService: PrivacyPolicyService
     let sessionManager: LanguageModelSessionManager
+    let repoWorkspaceBootstrapper: RepoWorkspaceBootstrapper
 
     enum SidebarSection: Hashable {
         case chat
@@ -66,6 +81,16 @@ final class AppViewModel {
     /// Indicates whether there is any active workspace, either a repository or a sandbox project.
     var hasActiveWorkspace: Bool {
         orchestrator.isRepoLoaded || sandboxViewModel.activeProject != nil
+    }
+
+    var activeSandboxWorkspace: SandboxWorkspace? {
+        if let url = activeRepositoryURL {
+            return .repository(url)
+        }
+        if let prototype = sandboxViewModel.activeProject {
+            return .prototype(prototype)
+        }
+        return nil
     }
 
     var activeWorkspaceLabel: String {
@@ -93,6 +118,10 @@ final class AppViewModel {
         return false
     }
 
+    var sandboxNavigationTitle: String {
+        activeSandboxWorkspace?.title ?? "Sandbox"
+    }
+
     init() {
         let orchestrator = AIOrchestrator()
         let bookmark = BookmarkService()
@@ -104,6 +133,7 @@ final class AppViewModel {
         self.sandboxViewModel = SandboxViewModel()
         self.privacyService = PrivacyPolicyService()
         self.sessionManager = LanguageModelSessionManager()
+        self.repoWorkspaceBootstrapper = RepoWorkspaceBootstrapper()
         self.showOnboarding = !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
 
         chat.onPatchApplied = { [weak self] in
@@ -118,6 +148,7 @@ final class AppViewModel {
                 guard transitionGeneration == self.sandboxWorkspaceTransitionGeneration else { return }
                 if let project {
                     guard self.sandboxViewModel.activeProject?.id == project.id else { return }
+                    guard self.activeRepositoryURL == nil else { return }
                     await self.orchestrator.openPrototypeWorkspace(project)
                 } else {
                     guard self.sandboxViewModel.activeProject == nil, self.activeRepositoryURL == nil else { return }
@@ -144,7 +175,6 @@ final class AppViewModel {
             return
         }
 
-        sandboxViewModel.closeProject()
         importError = nil
         activeRepositoryURL = url
         selectedFile = nil
@@ -152,6 +182,7 @@ final class AppViewModel {
         orchestrator.setPolicyWorkingContext(url)
 
         Task {
+            _ = await repoWorkspaceBootstrapper.bootstrapIfNeeded(repoRoot: url, repoAccess: orchestrator.repoAccess)
             fileTree = await orchestrator.repoAccess.buildFileTree(at: url)
             await inspectRepositoryWorkspace(at: url)
 
@@ -195,8 +226,15 @@ final class AppViewModel {
     }
 
     func closeRepository() {
+        let prototypeToRestore = sandboxViewModel.activeProject
+
         Task {
             await orchestrator.closeRepo()
+            if let prototypeToRestore,
+               self.activeRepositoryURL == nil,
+               self.sandboxViewModel.activeProject?.id == prototypeToRestore.id {
+                await self.orchestrator.openPrototypeWorkspace(prototypeToRestore)
+            }
         }
         if let url = activeRepositoryURL {
             url.stopAccessingSecurityScopedResource()
@@ -222,6 +260,14 @@ final class AppViewModel {
         }
         sandboxViewModel.openProject(project)
         selectedSection = .chat
+    }
+
+    func selectSandboxRepositoryFile(_ node: FileNode) {
+        guard !node.isDirectory else { return }
+        selectedFile = node
+        Task {
+            await orchestrator.setPolicyWorkingContextAndReload(node.url)
+        }
     }
 
     func importStateMemoryToRepoFolder() async -> Bool {

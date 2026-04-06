@@ -37,7 +37,7 @@ struct PromptTemplateServiceTests {
         let service = PromptTemplateService()
 
         await #expect(throws: PromptTemplateService.TemplateError.repositoryUnavailable) {
-            _ = try service.resolve(query: "/refactor app.js", repoRoot: nil)
+            _ = try await service.resolve(query: "/refactor app.js", repoRoot: nil)
         }
     }
 
@@ -61,16 +61,16 @@ struct PromptTemplateServiceTests {
 
         let service = PromptTemplateService()
 
-        await #expect {
-            do {
-                _ = try service.resolve(query: "/broken now", repoRoot: repoRoot)
-                return false
-            } catch let error as PromptTemplateService.TemplateError {
-                guard case .invalidFrontmatter = error else { return false }
-                return true
-            } catch {
-                return false
+        do {
+            _ = try await service.resolve(query: "/broken now", repoRoot: repoRoot)
+            Issue.record("Expected malformed template frontmatter to throw.")
+        } catch let error as PromptTemplateService.TemplateError {
+            guard case .invalidFrontmatter = error else {
+                Issue.record("Expected invalidFrontmatter, got \(error).")
+                return
             }
+        } catch {
+            Issue.record("Expected PromptTemplateService.TemplateError, got \(error).")
         }
     }
 
@@ -81,7 +81,7 @@ struct PromptTemplateServiceTests {
         let service = PromptTemplateService()
 
         await #expect(throws: PromptTemplateService.TemplateError.templateNotFound("missing")) {
-            _ = try service.resolve(query: "/missing argument", repoRoot: repoRoot)
+            _ = try await service.resolve(query: "/missing argument", repoRoot: repoRoot)
         }
     }
 
@@ -97,11 +97,11 @@ struct PromptTemplateServiceTests {
         )
 
         await #expect(throws: PromptTemplateService.TemplateError.missingRequiredArgument("refactor", requiredIndex: 1, providedCount: 0)) {
-            _ = try service.interpolate(template: template, arguments: [])
+            _ = try await service.interpolate(template: template, arguments: [])
         }
 
         await #expect(throws: PromptTemplateService.TemplateError.malformedInterpolation("refactor", "Variadic placeholder must be positive: ${@:0}")) {
-            _ = try service.interpolate(template: template, arguments: ["ViewController.swift"])
+            _ = try await service.interpolate(template: template, arguments: ["ViewController.swift"])
         }
     }
 }

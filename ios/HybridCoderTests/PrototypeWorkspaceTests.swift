@@ -27,6 +27,23 @@ struct PrototypeWorkspaceTests {
     }
 
     @MainActor
+    @Test func repositorySandboxWorkspaceTakesPrecedenceOverDormantPrototypeState() async throws {
+        let viewModel = AppViewModel()
+        await viewModel.sandboxViewModel.createProject(name: "State Memory", template: .blank)
+        let repoURL = URL(fileURLWithPath: "/tmp/repo-sandbox")
+
+        viewModel.activeRepositoryURL = repoURL
+
+        let workspace = try #require(viewModel.activeSandboxWorkspace)
+        switch workspace {
+        case .repository(let activeURL):
+            #expect(activeURL == repoURL)
+        case .prototype:
+            Issue.record("Expected the imported repository to drive the sandbox workspace.")
+        }
+    }
+
+    @MainActor
     @Test func updatingActivePrototypeRefreshesIndexedWorkspaceSnapshot() async throws {
         let viewModel = AppViewModel()
         let project = SandboxProject(

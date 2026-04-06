@@ -135,7 +135,7 @@ struct ProjectHubView: View {
                 ActionCard(
                     icon: "plus.rectangle.on.folder",
                     label: "New Project",
-                    description: "Isolated prototype"
+                    description: "Sandbox prototype"
                 ) {
                     viewModel.prepareNewPrototypeProject()
                     dismiss()

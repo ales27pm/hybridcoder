@@ -244,14 +244,16 @@ struct ContentView: View {
 
         case .sandbox:
             sandboxContent
-                .navigationTitle("Prototype")
+                .navigationTitle(viewModel.sandboxNavigationTitle)
                 .navigationBarTitleDisplayMode(.inline)
         }
     }
 
     @ViewBuilder
     private var sandboxContent: some View {
-        if let project = viewModel.sandboxViewModel.activeProject {
+        if case .some(.repository) = viewModel.activeSandboxWorkspace {
+            RepositorySandboxView(viewModel: viewModel)
+        } else if let project = viewModel.sandboxViewModel.activeProject {
             SandboxEditorView(
                 viewModel: viewModel.sandboxViewModel,
                 project: project

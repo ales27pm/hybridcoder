@@ -41,7 +41,7 @@ struct SandboxListView: View {
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(.white)
 
-            Text("Build isolated React Native / Expo snippets.\nThese prototypes are not synced to imported repositories.")
+            Text("Create a prototype workspace or open any imported repository in Sandbox.\nBoth now share the same editing surface.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.dimText)
                 .multilineTextAlignment(.center)

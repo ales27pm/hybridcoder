@@ -179,7 +179,7 @@ struct SidebarMenuView: View {
 
             menuItem(
                 icon: "hammer",
-                label: "Prototype",
+                label: "Sandbox",
                 section: .sandbox,
                 badge: 0
             )

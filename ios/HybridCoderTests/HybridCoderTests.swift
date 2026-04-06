@@ -152,12 +152,6 @@ private enum EventKey: Hashable {
     case end(operationID: UUID)
 }
 
-private func makeTempRepoRoot() throws -> URL {
-    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    return root
-}
-
 private func countLiteralOccurrences(of needle: String, in haystack: String) -> Int {
     guard !needle.isEmpty else { return 0 }
     var count = 0

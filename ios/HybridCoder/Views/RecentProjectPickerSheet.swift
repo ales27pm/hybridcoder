@@ -147,7 +147,7 @@ struct RecentProjectPickerSheet: View {
                 .font(.headline)
                 .foregroundStyle(.white)
 
-            Text("Import a repository from the Files app\nor create a new prototype project.")
+            Text("Import a repository from the Files app\nor create a sandbox prototype.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.dimText)
                 .multilineTextAlignment(.center)
