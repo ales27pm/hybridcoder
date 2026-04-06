@@ -5,6 +5,8 @@ struct SettingsView: View {
     let orchestrator: AIOrchestrator
     let onOpenRepository: (Repository) -> Void
     let onCloseRepository: () -> Void
+    var privacyService: PrivacyPolicyService? = nil
+    var sessionManager: LanguageModelSessionManager? = nil
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -12,6 +14,12 @@ struct SettingsView: View {
             List {
                 repositoriesSection
                 indexSection
+                if let privacyService {
+                    privacySection(privacyService)
+                }
+                if let sessionManager {
+                    sessionSection(sessionManager)
+                }
                 diagnosticsSection
                 aboutSection
             }
@@ -98,13 +106,95 @@ struct SettingsView: View {
         }
     }
 
+    private func privacySection(_ service: PrivacyPolicyService) -> some View {
+        Section {
+            Toggle("Local-Only Processing", isOn: Binding(
+                get: { service.localOnlyProcessing },
+                set: { service.localOnlyProcessing = $0 }
+            ))
+            .font(.subheadline)
+            .tint(Theme.accent)
+
+            Toggle("Allow Private Cloud Compute", isOn: Binding(
+                get: { service.allowPrivateCloudCompute },
+                set: { service.allowPrivateCloudCompute = $0 }
+            ))
+            .font(.subheadline)
+            .tint(Theme.accent)
+            .disabled(service.localOnlyProcessing)
+
+            HStack {
+                Text("Data Retention")
+                    .font(.subheadline)
+                Spacer()
+                Text("\(service.dataRetentionDays) days")
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
+            }
+
+            HStack {
+                Text("Privacy Mode")
+                    .font(.subheadline)
+                Spacer()
+                Text(service.privacyBadge)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Theme.accent.opacity(0.15), in: .capsule)
+            }
+
+            Button("Reset to Defaults") {
+                service.resetToDefaults()
+            }
+            .font(.subheadline)
+            .foregroundStyle(.orange)
+        } header: {
+            Text("Privacy")
+        } footer: {
+            Text(service.privacySummary)
+        }
+    }
+
+    private func sessionSection(_ manager: LanguageModelSessionManager) -> some View {
+        Section {
+            HStack {
+                Text("Active Sessions")
+                    .font(.subheadline)
+                Spacer()
+                Text("\(manager.activeSessions.values.filter(\.isActive).count)")
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
+            }
+
+            HStack {
+                Text("Token Budget")
+                    .font(.subheadline)
+                Spacer()
+                Text("~\(manager.totalEstimatedTokens)")
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
+            }
+
+            Button("Evict Idle Sessions") {
+                manager.evictIdleSessions()
+            }
+            .font(.subheadline)
+            .foregroundStyle(Theme.accent)
+        } header: {
+            Text("Session Management")
+        } footer: {
+            Text(manager.sessionSummary)
+        }
+    }
+
     private var aboutSection: some View {
         Section {
             HStack {
                 Text("Version")
                     .font(.subheadline)
                 Spacer()
-                Text("1.0.0")
+                Text("2.0.0")
                     .font(.system(.subheadline, design: .monospaced))
                     .foregroundStyle(Theme.dimText)
             }
@@ -116,6 +206,15 @@ struct SettingsView: View {
                 Text("Foundation Models + CoreML")
                     .font(.caption)
                     .foregroundStyle(Theme.dimText)
+            }
+
+            HStack {
+                Text("Runtime")
+                    .font(.subheadline)
+                Spacer()
+                Text("Local-First Offline")
+                    .font(.caption)
+                    .foregroundStyle(Theme.accent)
             }
         } header: {
             Text("About")

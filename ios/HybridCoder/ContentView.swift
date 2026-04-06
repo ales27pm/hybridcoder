@@ -52,7 +52,9 @@ struct ContentView: View {
                 bookmarkService: viewModel.bookmarkService,
                 orchestrator: viewModel.orchestrator,
                 onOpenRepository: { repo in viewModel.openRepository(repo) },
-                onCloseRepository: { viewModel.closeRepository() }
+                onCloseRepository: { viewModel.closeRepository() },
+                privacyService: viewModel.privacyService,
+                sessionManager: viewModel.sessionManager
             )
         }
         .sheet(isPresented: $viewModel.showProjectHub) {

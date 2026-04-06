@@ -1,18 +1,19 @@
 import SwiftUI
-import WebKit
 
 struct SandboxEditorView: View {
     @Bindable var viewModel: SandboxViewModel
     let project: SandboxProject
-    @State private var selectedTab: EditorTab = .preview
+    @State private var selectedTab: EditorTab = .code
     @State private var selectedFileID: UUID?
     @State private var showAddFileSheet: Bool = false
     @State private var showRenameSheet: Bool = false
-    @State private var isWebViewLoading: Bool = true
+    @State private var runtime = LocalSandboxRuntime()
+    @State private var executionResult: LocalSandboxRuntime.ExecutionResult?
+    @State private var isExecuting: Bool = false
 
     private enum EditorTab: String, CaseIterable {
-        case preview = "Preview"
         case code = "Code"
+        case console = "Console"
         case files = "Files"
     }
 
@@ -22,10 +23,10 @@ struct SandboxEditorView: View {
             Divider().overlay(Theme.border)
 
             switch selectedTab {
-            case .preview:
-                snackPreview
             case .code:
                 codeEditor
+            case .console:
+                consoleView
             case .files:
                 fileList
             }
@@ -36,13 +37,15 @@ struct SandboxEditorView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("Open in Safari", systemImage: "safari") {
-                        openInSafari()
+                    Button("Run", systemImage: "play.fill") {
+                        Task { await runProject() }
                     }
+                    .disabled(isExecuting || project.files.isEmpty)
 
-                    if let deepLink = viewModel.expoGoDeepLink(for: project) {
-                        Button("Open in Expo Go", systemImage: "iphone.and.arrow.forward") {
-                            UIApplication.shared.open(deepLink)
+                    Button("Reset Runtime", systemImage: "arrow.counterclockwise") {
+                        Task {
+                            await runtime.reset()
+                            executionResult = nil
                         }
                     }
 
@@ -116,33 +119,175 @@ struct SandboxEditorView: View {
 
     private func tabIcon(_ tab: EditorTab) -> String {
         switch tab {
-        case .preview: return "play.rectangle"
         case .code: return "chevron.left.forwardslash.chevron.right"
+        case .console: return "terminal"
         case .files: return "doc.text"
         }
     }
 
-    private var snackPreview: some View {
-        ZStack {
-            ExpoSnackWebView(
-                url: viewModel.snackURL(for: project),
-                isLoading: $isWebViewLoading
-            )
+    private var consoleView: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "terminal")
+                    .font(.caption)
+                    .foregroundStyle(Theme.accent)
 
-            if isWebViewLoading {
-                VStack(spacing: 14) {
+                Text("Console Output")
+                    .font(.system(.caption, design: .monospaced).weight(.medium))
+                    .foregroundStyle(.white.opacity(0.8))
+
+                Spacer()
+
+                if let result = executionResult {
+                    Text(String(format: "%.1fms", result.durationMs))
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(Theme.dimText)
+                }
+
+                Button {
+                    Task { await runProject() }
+                } label: {
+                    Image(systemName: "play.fill")
+                        .font(.caption)
+                        .foregroundStyle(Theme.accent)
+                }
+                .disabled(isExecuting || project.files.isEmpty)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Theme.cardBg)
+
+            Divider().overlay(Theme.border)
+
+            if isExecuting {
+                VStack(spacing: 12) {
                     ProgressView()
-                        .controlSize(.large)
+                        .controlSize(.regular)
                         .tint(Theme.accent)
-
-                    Text("Loading prototype preview…")
+                    Text("Executing…")
                         .font(.caption)
                         .foregroundStyle(Theme.dimText)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Theme.surfaceBg)
+                .background(Theme.codeBg)
+            } else if let result = executionResult {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(result.consoleEntries) { entry in
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: consoleIcon(entry.level))
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(consoleColor(entry.level))
+                                    .frame(width: 14)
+
+                                Text(entry.message)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundStyle(consoleColor(entry.level))
+                                    .textSelection(.enabled)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 3)
+                        }
+
+                        if let output = result.output, !output.isEmpty, output != "undefined" {
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "arrow.right")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(Theme.accent)
+                                    .frame(width: 14)
+
+                                Text(output)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundStyle(Theme.accent)
+                                    .textSelection(.enabled)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 3)
+                        }
+
+                        if let error = result.error {
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.red)
+                                    .frame(width: 14)
+
+                                Text(error)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundStyle(.red)
+                                    .textSelection(.enabled)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 3)
+                        }
+
+                        if result.consoleEntries.isEmpty && result.output == nil && result.error == nil {
+                            Text("No output")
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(Theme.dimText)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+                .background(Theme.codeBg)
+            } else {
+                VStack(spacing: 16) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 36, weight: .light))
+                        .foregroundStyle(Theme.dimText.opacity(0.4))
+
+                    Text("Tap Run to execute locally")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.dimText)
+
+                    Text("JavaScript runs on-device via\nJavaScriptCore — no network needed.")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.dimText.opacity(0.7))
+                        .multilineTextAlignment(.center)
+
+                    Button {
+                        Task { await runProject() }
+                    } label: {
+                        Label("Run", systemImage: "play.fill")
+                            .font(.caption.weight(.medium))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+                    .controlSize(.small)
+                    .disabled(project.files.isEmpty)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.codeBg)
             }
         }
+    }
+
+    private func consoleIcon(_ level: LocalSandboxRuntime.ConsoleEntry.Level) -> String {
+        switch level {
+        case .log: return "circle.fill"
+        case .warn: return "exclamationmark.triangle.fill"
+        case .error: return "xmark.circle.fill"
+        case .info: return "info.circle.fill"
+        }
+    }
+
+    private func consoleColor(_ level: LocalSandboxRuntime.ConsoleEntry.Level) -> Color {
+        switch level {
+        case .log: return .white.opacity(0.85)
+        case .warn: return .yellow
+        case .error: return .red
+        case .info: return .cyan
+        }
+    }
+
+    private func runProject() async {
+        isExecuting = true
+        selectedTab = .console
+        let files = project.files.map { (name: $0.name, content: $0.content) }
+        executionResult = await runtime.executeFiles(files)
+        isExecuting = false
     }
 
     private var codeEditor: some View {
@@ -285,64 +430,6 @@ struct SandboxEditorView: View {
         }
     }
 
-    private func openInSafari() {
-        let url = viewModel.snackURL(for: project)
-        UIApplication.shared.open(url)
-    }
-}
-
-struct ExpoSnackWebView: UIViewRepresentable {
-    let url: URL
-    @Binding var isLoading: Bool
-
-    func makeUIView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration()
-        config.allowsInlineMediaPlayback = true
-        config.mediaTypesRequiringUserActionForPlayback = []
-
-        let webView = WKWebView(frame: .zero, configuration: config)
-        webView.navigationDelegate = context.coordinator
-        webView.isOpaque = false
-        webView.backgroundColor = UIColor(Theme.surfaceBg)
-        webView.scrollView.backgroundColor = UIColor(Theme.surfaceBg)
-        webView.allowsBackForwardNavigationGestures = true
-
-        let request = URLRequest(url: url)
-        webView.load(request)
-        return webView
-    }
-
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(isLoading: $isLoading)
-    }
-
-    class Coordinator: NSObject, WKNavigationDelegate {
-        @Binding var isLoading: Bool
-
-        init(isLoading: Binding<Bool>) {
-            _isLoading = isLoading
-        }
-
-        nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            Task { @MainActor in
-                isLoading = false
-            }
-        }
-
-        nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            Task { @MainActor in
-                isLoading = false
-            }
-        }
-
-        nonisolated func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-            Task { @MainActor in
-                isLoading = true
-            }
-        }
-    }
 }
 
 struct AddFileSheet: View {

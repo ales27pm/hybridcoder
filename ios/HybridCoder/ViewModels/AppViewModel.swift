@@ -52,6 +52,8 @@ final class AppViewModel {
     let bookmarkService: BookmarkService
     let chatViewModel: ChatViewModel
     let sandboxViewModel: SandboxViewModel
+    let privacyService: PrivacyPolicyService
+    let sessionManager: LanguageModelSessionManager
 
     enum SidebarSection: Hashable {
         case chat
@@ -100,6 +102,8 @@ final class AppViewModel {
         self.bookmarkService = bookmark
         self.chatViewModel = chat
         self.sandboxViewModel = SandboxViewModel()
+        self.privacyService = PrivacyPolicyService()
+        self.sessionManager = LanguageModelSessionManager()
         self.showOnboarding = !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
 
         chat.onPatchApplied = { [weak self] in
