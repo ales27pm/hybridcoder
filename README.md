@@ -2,20 +2,23 @@
 
 HybridCoder is an on-device iOS coding studio that is being refocused into a React Native and Expo builder.
 
-## Current state
+## At a glance
 
-- SwiftUI app shell
+- SwiftUI host app
 - local workspace and project state
-- Foundation Models-based orchestration
+- Foundation Models orchestration
 - Core ML semantic retrieval
 - patch planning and editing flows
 - imported repository and prototype handling
 
-## Main gap
+## Documentation
 
-The current codebase is not yet a finished Expo builder. The largest missing pieces are:
+Start with `docs/architecture.md`.
 
-- a real React Native preview path
-- stronger Expo template scaffolds
-- tighter React Native-specific prompt policy
-- a cleaner builder-first project workflow
+That file is the canonical source for:
+
+- the current implementation
+- the target builder architecture
+- how the rest of the docs fit together
+
+Then use `docs/roadmap.md` for the phased refactor plan.

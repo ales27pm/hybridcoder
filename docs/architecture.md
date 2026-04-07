@@ -1,9 +1,6 @@
 # Architecture
 
-This repository now documents two things separately:
-
-- the current implementation
-- the target builder architecture
+This document is the canonical source for the split between the **current implementation** and the **target architecture**.
 
 ## Current implementation
 
@@ -13,7 +10,7 @@ HybridCoder is currently a SwiftUI iOS app with:
 - semantic retrieval
 - patch planning and application
 - project and workspace persistence
-- imported repo handling
+- imported repository handling
 - a prototype-oriented editing flow
 
 ## Target architecture
@@ -27,6 +24,16 @@ The target product is a local-first React Native and Expo builder with these cor
 5. Template system
 6. Preview system
 
-## Key rule
+## How these docs fit together
+
+- `docs/product-vision.md` — product goals, non-goals, and scope
+- `docs/project-structure.md` — target repository layout and migration boundaries
+- `docs/template-system.md` — template and scaffold strategy
+- `docs/preview-system.md` — preview constraints and staged preview plan
+- `docs/roadmap.md` — phased refactor order
+
+Read this file first, then use the linked docs to go deeper into each subsystem.
+
+## Documentation rule
 
 Preview should not be described as solved until the runtime story is genuinely strong enough to support that claim.
