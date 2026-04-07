@@ -58,17 +58,17 @@ struct ContentView: View {
             )
         }
         .sheet(isPresented: $viewModel.showProjectHub) {
-            ProjectHubView(viewModel: viewModel)
+            ProjectHubView(containerViewModel: viewModel.studioContainer, projectStudioViewModel: viewModel.projectStudio, workspaceViewModel: viewModel.workspaceSession)
         }
         .sheet(isPresented: $viewModel.showRecentPicker) {
-            RecentProjectPickerSheet(viewModel: viewModel)
+            RecentProjectPickerSheet(containerViewModel: viewModel.studioContainer, projectStudioViewModel: viewModel.projectStudio, workspaceViewModel: viewModel.workspaceSession)
         }
         .sheet(isPresented: $viewModel.showNewSandboxProject) {
             NewSandboxProjectSheet(viewModel: viewModel.sandboxViewModel)
         }
         .task {
             viewModel.initialize()
-            await viewModel.sandboxViewModel.loadProjects()
+            await viewModel.projectStudio.loadProjects()
         }
     }
 
@@ -260,7 +260,7 @@ struct ContentView: View {
     @ViewBuilder
     private var sandboxContent: some View {
         if case .some(.repository) = viewModel.activeSandboxWorkspace {
-            RepositorySandboxView(viewModel: viewModel)
+            RepositorySandboxView(workspaceViewModel: viewModel.workspaceSession, projectStudioViewModel: viewModel.projectStudio)
         } else if let project = viewModel.sandboxViewModel.activeProject {
             BuilderWorkspaceView(
                 viewModel: viewModel.sandboxViewModel,

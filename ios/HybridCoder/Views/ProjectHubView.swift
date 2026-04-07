@@ -1,7 +1,9 @@
 import SwiftUI
 
 struct ProjectHubView: View {
-    @Bindable var viewModel: AppViewModel
+    @Bindable var containerViewModel: StudioContainerViewModel
+    @Bindable var projectStudioViewModel: ProjectStudioViewModel
+    @Bindable var workspaceViewModel: WorkspaceSessionViewModel
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -33,7 +35,7 @@ struct ProjectHubView: View {
 
     @ViewBuilder
     private var activeProjectCard: some View {
-        if viewModel.activeRepositoryURL != nil || viewModel.sandboxViewModel.activeProject != nil {
+        if workspaceViewModel.activeRepositoryURL != nil || projectStudioViewModel.sandboxViewModel.activeProject != nil {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
                     Circle()
@@ -45,7 +47,7 @@ struct ProjectHubView: View {
                         .foregroundStyle(Theme.accent)
                 }
 
-                if let url = viewModel.activeRepositoryURL {
+                if let url = workspaceViewModel.activeRepositoryURL {
                     HStack(spacing: 12) {
                         Image(systemName: "folder.fill")
                             .font(.title3)
@@ -58,17 +60,17 @@ struct ProjectHubView: View {
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.white)
 
-                            if let stats = viewModel.orchestrator.indexStats {
+                            if let stats = workspaceViewModel.orchestrator.indexStats {
                                 Text("\(stats.indexedFiles) files · \(stats.embeddedChunks) chunks")
                                     .font(.caption2)
                                     .foregroundStyle(Theme.dimText)
                             }
 
-                            Text(viewModel.repositoryWorkspaceBadgeText)
+                            Text(workspaceViewModel.repositoryWorkspaceBadgeText)
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(Theme.accent.opacity(0.8))
 
-                            Text(viewModel.repositoryWorkspaceDetailText)
+                            Text(workspaceViewModel.repositoryWorkspaceDetailText)
                                 .font(.caption2)
                                 .foregroundStyle(Theme.dimText)
                                 .lineLimit(3)
@@ -77,7 +79,7 @@ struct ProjectHubView: View {
                         Spacer()
 
                         Button {
-                            viewModel.closeRepository()
+                            projectStudioViewModel.closeRepository(workspace: workspaceViewModel, container: containerViewModel)
                             dismiss()
                         } label: {
                             Image(systemName: "xmark.circle.fill")
@@ -85,7 +87,7 @@ struct ProjectHubView: View {
                                 .foregroundStyle(Theme.dimText)
                         }
                     }
-                } else if let project = viewModel.sandboxViewModel.activeProject {
+                } else if let project = projectStudioViewModel.sandboxViewModel.activeProject {
                     HStack(spacing: 12) {
                         Image(systemName: project.templateType.iconName)
                             .font(.title3)
@@ -106,7 +108,7 @@ struct ProjectHubView: View {
                         Spacer()
 
                         Button {
-                            viewModel.sandboxViewModel.closeProject()
+                            projectStudioViewModel.sandboxViewModel.closeProject()
                             dismiss()
                         } label: {
                             Image(systemName: "xmark.circle.fill")
@@ -137,7 +139,7 @@ struct ProjectHubView: View {
                     label: "New Project",
                     description: "RN/Expo app"
                 ) {
-                    viewModel.prepareNewPrototypeProject()
+                    projectStudioViewModel.prepareNewPrototypeProject(workspace: workspaceViewModel, container: containerViewModel)
                     dismiss()
                 }
 
@@ -146,7 +148,7 @@ struct ProjectHubView: View {
                     label: "Import Repo",
                     description: "From Files app"
                 ) {
-                    viewModel.isImportingFolder = true
+                    containerViewModel.isImportingFolder = true
                     dismiss()
                 }
 
@@ -155,20 +157,20 @@ struct ProjectHubView: View {
                     label: "Open Project",
                     description: "Recent repos"
                 ) {
-                    viewModel.showRecentPicker = true
+                    containerViewModel.showRecentPicker = true
                 }
 
                 ActionCard(
                     icon: "square.and.arrow.down",
                     label: "Save & Close",
                     description: "Current project",
-                    disabled: viewModel.activeRepositoryURL == nil && viewModel.sandboxViewModel.activeProject == nil
+                    disabled: workspaceViewModel.activeRepositoryURL == nil && projectStudioViewModel.sandboxViewModel.activeProject == nil
                 ) {
-                    if viewModel.sandboxViewModel.activeProject != nil {
-                        viewModel.sandboxViewModel.closeProject()
+                    if projectStudioViewModel.sandboxViewModel.activeProject != nil {
+                        projectStudioViewModel.sandboxViewModel.closeProject()
                     }
-                    if viewModel.activeRepositoryURL != nil {
-                        viewModel.closeRepository()
+                    if workspaceViewModel.activeRepositoryURL != nil {
+                        projectStudioViewModel.closeRepository(workspace: workspaceViewModel, container: containerViewModel)
                     }
                     dismiss()
                 }
@@ -177,10 +179,12 @@ struct ProjectHubView: View {
                     icon: "arrow.down.doc",
                     label: "Import State",
                     description: "From repo .hybridcoder",
-                    disabled: viewModel.activeRepositoryURL == nil || viewModel.sandboxViewModel.activeProject == nil
+                    disabled: workspaceViewModel.activeRepositoryURL == nil || projectStudioViewModel.sandboxViewModel.activeProject == nil
                 ) {
                     Task {
-                        await viewModel.exportStateMemoryFromRepoFolder()
+                        guard let project = projectStudioViewModel.sandboxViewModel.activeProject,
+                              let repoURL = workspaceViewModel.activeRepositoryURL else { return }
+                        await projectStudioViewModel.sandboxViewModel.exportStateFromProjectFolder(project.id, sourceRoot: repoURL)
                     }
                 }
 
@@ -188,10 +192,12 @@ struct ProjectHubView: View {
                     icon: "arrow.up.doc",
                     label: "Export State",
                     description: "To repo .hybridcoder",
-                    disabled: viewModel.activeRepositoryURL == nil || viewModel.sandboxViewModel.activeProject == nil
+                    disabled: workspaceViewModel.activeRepositoryURL == nil || projectStudioViewModel.sandboxViewModel.activeProject == nil
                 ) {
                     Task {
-                        _ = await viewModel.importStateMemoryToRepoFolder()
+                        guard let project = projectStudioViewModel.sandboxViewModel.activeProject,
+                              let repoURL = workspaceViewModel.activeRepositoryURL else { return }
+                        _ = await projectStudioViewModel.sandboxViewModel.importStateToProjectFolder(project.id, destinationRoot: repoURL)
                     }
                 }
             }
@@ -207,23 +213,23 @@ struct ProjectHubView: View {
 
                 Spacer()
 
-                if !viewModel.bookmarkService.repositories.isEmpty {
-                    Text("\(viewModel.bookmarkService.repositories.count)")
+                if !projectStudioViewModel.bookmarkService.repositories.isEmpty {
+                    Text("\(projectStudioViewModel.bookmarkService.repositories.count)")
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
                         .foregroundStyle(Theme.accent.opacity(0.6))
                 }
             }
 
-            if viewModel.bookmarkService.repositories.isEmpty {
+            if projectStudioViewModel.bookmarkService.repositories.isEmpty {
                 emptyCard(
                     icon: "folder.badge.questionmark",
                     message: "No repositories imported yet.\nUse Import Repo to get started."
                 )
             } else {
-                ForEach(viewModel.bookmarkService.repositories.sorted(by: { $0.lastOpened > $1.lastOpened }).prefix(5)) { repo in
-                    RepoRow(repo: repo, isActive: viewModel.activeRepositoryURL?.lastPathComponent == repo.name) {
-                        viewModel.openRepository(repo)
-                        viewModel.selectedSection = .chat
+                ForEach(projectStudioViewModel.bookmarkService.repositories.sorted(by: { $0.lastOpened > $1.lastOpened }).prefix(5)) { repo in
+                    RepoRow(repo: repo, isActive: workspaceViewModel.activeRepositoryURL?.lastPathComponent == repo.name) {
+                        projectStudioViewModel.openRepository(repo, workspace: workspaceViewModel, container: containerViewModel)
+                        containerViewModel.selectedSection = .chat
                         dismiss()
                     }
                 }
@@ -240,25 +246,25 @@ struct ProjectHubView: View {
 
                 Spacer()
 
-                if !viewModel.sandboxViewModel.projects.isEmpty {
-                    Text("\(viewModel.sandboxViewModel.projects.count)")
+                if !projectStudioViewModel.sandboxViewModel.projects.isEmpty {
+                    Text("\(projectStudioViewModel.sandboxViewModel.projects.count)")
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
                         .foregroundStyle(Theme.accent.opacity(0.6))
                 }
             }
 
-            if viewModel.sandboxViewModel.projects.isEmpty {
+            if projectStudioViewModel.sandboxViewModel.projects.isEmpty {
                 emptyCard(
                     icon: "apps.iphone",
                     message: "No projects yet.\nCreate one from New Project."
                 )
             } else {
-                ForEach(viewModel.sandboxViewModel.projects.prefix(5)) { project in
+                ForEach(projectStudioViewModel.sandboxViewModel.projects.prefix(5)) { project in
                     SandboxRow(
                         project: project,
-                        isActive: viewModel.sandboxViewModel.activeProject?.id == project.id
+                        isActive: projectStudioViewModel.sandboxViewModel.activeProject?.id == project.id
                     ) {
-                        viewModel.openPrototypeProject(project)
+                        projectStudioViewModel.openPrototypeProject(project, workspace: workspaceViewModel, container: containerViewModel)
                         dismiss()
                     }
                 }

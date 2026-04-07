@@ -1,7 +1,8 @@
 import SwiftUI
 
 struct RepositorySandboxView: View {
-    @Bindable var viewModel: AppViewModel
+    @Bindable var workspaceViewModel: WorkspaceSessionViewModel
+    @Bindable var projectStudioViewModel: ProjectStudioViewModel
     @State private var selectedTab: EditorTab = .code
 
     private enum EditorTab: String, CaseIterable {
@@ -23,12 +24,12 @@ struct RepositorySandboxView: View {
             }
         }
         .background(Theme.surfaceBg)
-        .navigationTitle(viewModel.sandboxNavigationTitle)
+        .navigationTitle(workspaceViewModel.activeSandboxWorkspace(prototype: projectStudioViewModel.sandboxViewModel.activeProject)?.title ?? "Sandbox")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             ensureSelectedFile()
         }
-        .onChange(of: viewModel.fileTree?.id) { _, _ in
+        .onChange(of: workspaceViewModel.fileTree?.id) { _, _ in
             ensureSelectedFile()
         }
     }
@@ -43,15 +44,15 @@ struct RepositorySandboxView: View {
                     .background(Theme.accent.opacity(0.12), in: .rect(cornerRadius: 10))
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(viewModel.activeRepositoryURL?.lastPathComponent ?? "Repository")
+                    Text(workspaceViewModel.activeRepositoryURL?.lastPathComponent ?? "Repository")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
 
-                    Text(viewModel.repositoryWorkspaceBadgeText)
+                    Text(workspaceViewModel.repositoryWorkspaceBadgeText)
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(Theme.accent.opacity(0.8))
 
-                    Text(viewModel.repositoryWorkspaceDetailText)
+                    Text(workspaceViewModel.repositoryWorkspaceDetailText)
                         .font(.caption2)
                         .foregroundStyle(Theme.dimText)
                         .lineLimit(3)
@@ -59,20 +60,20 @@ struct RepositorySandboxView: View {
 
                 Spacer()
 
-                if viewModel.orchestrator.isIndexing {
+                if workspaceViewModel.orchestrator.isIndexing {
                     ProgressView()
                         .controlSize(.small)
                         .tint(Theme.accent)
                 } else {
                     Button("Reindex") {
-                        viewModel.reindexRepository()
+                        workspaceViewModel.reindexRepository()
                     }
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Theme.accent)
                 }
             }
 
-            if let project = viewModel.sandboxViewModel.activeProject {
+            if let project = projectStudioViewModel.sandboxViewModel.activeProject {
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.triangle.branch")
                         .font(.caption2)
@@ -120,8 +121,8 @@ struct RepositorySandboxView: View {
         if let selectedFile = effectiveSelectedFile {
             FileViewerView(
                 file: selectedFile,
-                repoAccess: viewModel.orchestrator.repoAccess,
-                onSave: { viewModel.handleRepositoryFileSaved() }
+                repoAccess: workspaceViewModel.orchestrator.repoAccess,
+                onSave: { workspaceViewModel.handleRepositoryFileSaved() }
             )
         } else {
             VStack(spacing: 12) {
@@ -151,13 +152,13 @@ struct RepositorySandboxView: View {
 
     @ViewBuilder
     private var fileList: some View {
-        if let tree = viewModel.fileTree {
+        if let tree = workspaceViewModel.fileTree {
             ScrollView {
                 FileTreeView(
                     node: tree,
                     selectedFile: effectiveSelectedFile,
                     onSelect: { node in
-                        viewModel.selectSandboxRepositoryFile(node)
+                        workspaceViewModel.selectSandboxRepositoryFile(node)
                         selectedTab = .code
                     }
                 )
@@ -173,23 +174,23 @@ struct RepositorySandboxView: View {
     }
 
     private var effectiveSelectedFile: FileNode? {
-        if let selected = viewModel.selectedFile,
-           let resolved = findFile(in: viewModel.fileTree, matching: selected.url) {
+        if let selected = workspaceViewModel.selectedFile,
+           let resolved = findFile(in: workspaceViewModel.fileTree, matching: selected.url) {
             return resolved
         }
-        return firstFile(in: viewModel.fileTree)
+        return firstFile(in: workspaceViewModel.fileTree)
     }
 
     private func ensureSelectedFile() {
-        if let selected = viewModel.selectedFile,
-           let resolved = findFile(in: viewModel.fileTree, matching: selected.url),
+        if let selected = workspaceViewModel.selectedFile,
+           let resolved = findFile(in: workspaceViewModel.fileTree, matching: selected.url),
            resolved.id != selected.id {
-            viewModel.selectSandboxRepositoryFile(resolved)
+            workspaceViewModel.selectSandboxRepositoryFile(resolved)
             return
         }
 
-        guard viewModel.selectedFile == nil, let first = firstFile(in: viewModel.fileTree) else { return }
-        viewModel.selectSandboxRepositoryFile(first)
+        guard workspaceViewModel.selectedFile == nil, let first = firstFile(in: workspaceViewModel.fileTree) else { return }
+        workspaceViewModel.selectSandboxRepositoryFile(first)
     }
 
     private func firstFile(in node: FileNode?) -> FileNode? {
