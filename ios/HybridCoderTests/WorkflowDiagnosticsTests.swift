@@ -35,6 +35,38 @@ struct WorkflowDiagnosticsTests {
         #expect(provider == .qwenCodeAssistant)
     }
 
+    @Test func explanationProviderPolicyUsesQwenForArchitectureWalkthroughs() {
+        let provider = AIOrchestrator.preferredExplanationProvider(
+            query: "Walk me through the architecture across ChatViewModel.swift and AIOrchestrator.swift.",
+            contextSources: [
+                ContextSource(filePath: "ios/HybridCoder/ViewModels/ChatViewModel.swift", method: .semanticSearch),
+                ContextSource(filePath: "ios/HybridCoder/Services/AIOrchestrator.swift", method: .semanticSearch)
+            ],
+            hasRepositoryContext: true
+        )
+
+        #expect(provider == .qwenCodeAssistant)
+    }
+
+    @Test func explanationProviderPolicyUsesQwenForMultiSourceDebugging() {
+        let provider = AIOrchestrator.preferredExplanationProvider(
+            query: "Why does this build fail? I included the stack trace, console log, and the failing paths for ChatViewModel.swift and ConversationMemoryContext.swift.",
+            contextSources: [
+                ContextSource(filePath: "ios/HybridCoder/ViewModels/ChatViewModel.swift", method: .semanticSearch),
+                ContextSource(filePath: "ios/HybridCoder/Models/ConversationMemoryContext.swift", method: .semanticSearch),
+                ContextSource(filePath: "ios/HybridCoder/Services/AIOrchestrator.swift", method: .routeHint)
+            ],
+            hasRepositoryContext: true
+        )
+
+        #expect(provider == .qwenCodeAssistant)
+    }
+
+    @Test func promptContextBudgetConversationSlicesMatchRetainedMemoryStrategy() {
+        #expect(PromptContextBudget.maximumConversationContextBudget == 400)
+        #expect(PromptContextBudget.qwenMaximumConversationContextBudget == 2000)
+    }
+
     @Test func promptContextBudgetPreservesCodeSectionWhenPolicyAndMemoryAreLarge() throws {
         let policy = String(repeating: "P", count: 3_000)
         let memory = String(repeating: "M", count: 3_000)

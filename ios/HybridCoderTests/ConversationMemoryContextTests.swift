@@ -40,4 +40,32 @@ struct ConversationMemoryContextTests {
         #expect(rendered.hasPrefix("<conversation_memory>"))
         #expect(rendered.hasSuffix("</conversation_memory>"))
     }
+
+    @Test("Pinned task memory is rendered ahead of generic history")
+    func renderForPromptIncludesPinnedTaskMemory() {
+        let context = ConversationMemoryContext(
+            pinnedTaskMemory: PinnedTaskMemory(
+                activeTaskSummary: "Investigate why chat mode exceeds context",
+                activeFiles: ["ios/HybridCoder/Services/AIOrchestrator.swift"],
+                activeSymbols: ["ConversationMemoryContext"],
+                latestBuildOrRuntimeError: "Context window exceeded",
+                pendingPatchSummary: "2 pending patch operations for ios/HybridCoder/Services/AIOrchestrator.swift"
+            ),
+            compactionSummary: "Older debugging discussion",
+            recentTurns: [
+                ConversationMemoryTurn(role: .user, content: "Why does this session keep forgetting?"),
+                ConversationMemoryTurn(role: .assistant, content: "It compacts too early.")
+            ],
+            fileOperationSummaries: ["Applied patch to ios/HybridCoder/ViewModels/ChatViewModel.swift"]
+        )
+
+        let rendered = context.renderForPrompt(maxCharacters: 800)
+
+        #expect(rendered.contains("Pinned task memory:"))
+        #expect(rendered.contains("Task summary:"))
+        #expect(rendered.contains("Active files:"))
+        #expect(rendered.contains("ConversationMemoryContext"))
+        #expect(rendered.hasPrefix("<conversation_memory>"))
+        #expect(rendered.hasSuffix("</conversation_memory>"))
+    }
 }
