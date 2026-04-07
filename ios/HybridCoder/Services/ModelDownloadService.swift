@@ -22,6 +22,7 @@ final class ModelDownloadService {
 
     init(registry: ModelRegistry) {
         self.registry = registry
+        BundledEmbeddingAssets.migrateFromDocumentsIfNeeded()
         Task { [weak self] in
             guard let self else { return }
             await self.refreshInstallState(modelID: registry.activeEmbeddingModelID)

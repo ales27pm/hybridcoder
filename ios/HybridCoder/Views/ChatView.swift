@@ -277,6 +277,23 @@ struct ChatView: View {
         VStack(spacing: 0) {
             Divider().overlay(Theme.border)
 
+            if let memoryText = viewModel.memoryUsageText {
+                HStack(spacing: 6) {
+                    Image(systemName: "brain")
+                        .font(.system(size: 8))
+                    Text(memoryText)
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    Spacer()
+                    ProgressView(value: viewModel.memoryUsageFraction)
+                        .tint(viewModel.memoryUsageFraction > 0.8 ? .orange : Theme.accent)
+                        .frame(width: 60)
+                }
+                .foregroundStyle(Theme.dimText)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 4)
+                .background(Theme.codeBg)
+            }
+
             HStack(alignment: .bottom, spacing: 10) {
                 TextField("Ask about your code…", text: $viewModel.inputText, axis: .vertical)
                     .lineLimit(1...6)

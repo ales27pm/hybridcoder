@@ -77,6 +77,14 @@ final class ModelRegistry {
             ModelFile(remotePath: "special_tokens_map.json", localPath: "special_tokens_map.json")
         ]
 
+        let qwenFiles: [ModelFile] = [
+            ModelFile(remotePath: "config.json", localPath: "config.json"),
+            ModelFile(remotePath: "tokenizer.json", localPath: "tokenizer.json"),
+            ModelFile(remotePath: "tokenizer_config.json", localPath: "tokenizer_config.json"),
+            ModelFile(remotePath: "special_tokens_map.json", localPath: "special_tokens_map.json"),
+            ModelFile(remotePath: "generation_config.json", localPath: "generation_config.json")
+        ]
+
         let initialEntries: [String: Entry] = [
             embeddingID: Entry(
                 id: embeddingID,
@@ -108,8 +116,8 @@ final class ModelRegistry {
                 capability: .codeGeneration,
                 provider: .huggingFace,
                 runtime: .coreMLPipelines,
-                remoteBaseURL: nil,
-                files: [],
+                remoteBaseURL: "https://huggingface.co/finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit/resolve/main",
+                files: qwenFiles,
                 isAvailable: true,
                 installState: .notInstalled,
                 loadState: .unloaded
@@ -198,8 +206,7 @@ final class ModelRegistry {
     }
 
     nonisolated static var downloadedModelsRoot: URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        return docs.appendingPathComponent(BundledEmbeddingAssets.embeddingModelsFolder)
+        BundledEmbeddingAssets.modelsRootURL
     }
 
     func downloadedModelDirectory(for modelID: String) -> URL {

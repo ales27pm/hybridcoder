@@ -739,7 +739,7 @@ final class AIOrchestrator {
             resolution = try await resolveRoute(for: resolved.query)
         }
         let route = resolution.route
-        let context = await gatherContext(
+        let gathered = await gatherContextWithSources(
             retrievalQuery: resolution.retrievalQuery,
             relevantFiles: resolution.relevantFiles,
             memory: memory
@@ -749,26 +749,27 @@ final class AIOrchestrator {
 
         switch route {
         case .explanation:
-            let text = try await generateExplanation(query: resolved.query, context: context)
-            return AssistantResponse(text: text, routeUsed: .explanation)
+            let text = try await generateExplanation(query: resolved.query, context: gathered.context)
+            return AssistantResponse(text: text, contextSources: gathered.sources, routeUsed: .explanation)
 
         case .codeGeneration:
-            let code = try await generateCode(query: resolved.query, context: context)
+            let code = try await generateCode(query: resolved.query, context: gathered.context)
             let blocks = Self.extractCodeBlocks(from: code, fallbackToWholeText: true)
-            return AssistantResponse(text: code, codeBlocks: blocks, routeUsed: .codeGeneration)
+            return AssistantResponse(text: code, codeBlocks: blocks, contextSources: gathered.sources, routeUsed: .codeGeneration)
 
         case .patchPlanning:
-            let plan = try await generatePatchPlan(query: resolved.query, context: context)
+            let plan = try await generatePatchPlan(query: resolved.query, context: gathered.context)
             return AssistantResponse(
                 text: plan.summary,
                 patchPlan: plan,
+                contextSources: gathered.sources,
                 routeUsed: .patchPlanning
             )
 
         case .search:
             let hits = (try? await searchCode(query: resolved.query, topK: 5)) ?? []
             let summary = formatSearchResults(hits)
-            return AssistantResponse(text: summary, searchHits: hits, routeUsed: .search)
+            return AssistantResponse(text: summary, searchHits: hits, contextSources: gathered.sources, routeUsed: .search)
         }
     }
 
@@ -790,7 +791,7 @@ final class AIOrchestrator {
             resolution = try await resolveRoute(for: resolved.query)
         }
         let route = resolution.route
-        let context = await gatherContext(
+        let gathered = await gatherContextWithSources(
             retrievalQuery: resolution.retrievalQuery,
             relevantFiles: resolution.relevantFiles,
             memory: memory
@@ -800,24 +801,24 @@ final class AIOrchestrator {
 
         switch route {
         case .explanation:
-            let text = try await streamText(query: resolved.query, context: context, route: route, onPartial: onPartial)
-            return (AssistantResponse(text: text, routeUsed: .explanation), route)
+            let text = try await streamText(query: resolved.query, context: gathered.context, route: route, onPartial: onPartial)
+            return (AssistantResponse(text: text, contextSources: gathered.sources, routeUsed: .explanation), route)
 
         case .codeGeneration:
-            let code = try await streamText(query: resolved.query, context: context, route: route, onPartial: onPartial)
+            let code = try await streamText(query: resolved.query, context: gathered.context, route: route, onPartial: onPartial)
             let blocks = Self.extractCodeBlocks(from: code, fallbackToWholeText: true)
-            return (AssistantResponse(text: code, codeBlocks: blocks, routeUsed: .codeGeneration), route)
+            return (AssistantResponse(text: code, codeBlocks: blocks, contextSources: gathered.sources, routeUsed: .codeGeneration), route)
 
         case .patchPlanning:
-            let plan = try await generatePatchPlan(query: resolved.query, context: context)
+            let plan = try await generatePatchPlan(query: resolved.query, context: gathered.context)
             onPartial(plan.summary)
-            return (AssistantResponse(text: plan.summary, patchPlan: plan, routeUsed: .patchPlanning), route)
+            return (AssistantResponse(text: plan.summary, patchPlan: plan, contextSources: gathered.sources, routeUsed: .patchPlanning), route)
 
         case .search:
             let hits = (try? await searchCode(query: resolved.query, topK: 5)) ?? []
             let summary = formatSearchResults(hits)
             onPartial(summary)
-            return (AssistantResponse(text: summary, searchHits: hits, routeUsed: .search), route)
+            return (AssistantResponse(text: summary, searchHits: hits, contextSources: gathered.sources, routeUsed: .search), route)
         }
     }
 
@@ -866,8 +867,8 @@ final class AIOrchestrator {
         isProcessing = true
         defer { isProcessing = false }
 
-        let context = await gatherContext(retrievalQuery: query, relevantFiles: [], memory: nil)
-        return try await generatePatchPlan(query: query, context: context)
+        let gathered = await gatherContextWithSources(retrievalQuery: query, relevantFiles: [], memory: nil)
+        return try await generatePatchPlan(query: query, context: gathered.context)
     }
 
     func applyPatch(_ plan: PatchPlan) async throws -> PatchEngine.PatchResult {
@@ -911,13 +912,21 @@ final class AIOrchestrator {
         )
     }
 
-    private func gatherContext(
+    nonisolated struct GatherResult: Sendable {
+        let context: String
+        let sources: [ContextSource]
+        let usedSemanticSearch: Bool
+    }
+
+    private func gatherContextWithSources(
         retrievalQuery: String,
         relevantFiles: [String],
         memory: ConversationMemoryContext?
-    ) async -> String {
+    ) async -> GatherResult {
         var codeContextParts: [String] = []
         var includedPaths: Set<String> = []
+        var sources: [ContextSource] = []
+        var usedSemanticSearch = false
 
         let hintedFiles = Self.matchRelevantFiles(relevantFiles, within: repoFiles, limit: 4)
         for file in hintedFiles {
@@ -925,14 +934,23 @@ final class AIOrchestrator {
             let header = "--- \(file.relativePath) ---"
             codeContextParts.append("\(header)\n\(String(content.prefix(1200)))")
             includedPaths.insert(file.relativePath.lowercased())
+            sources.append(ContextSource(filePath: file.relativePath, method: .routeHint))
         }
 
         if let hits = try? await searchCode(query: retrievalQuery, topK: 5) {
+            usedSemanticSearch = true
             for hit in hits {
                 guard !includedPaths.contains(hit.filePath.lowercased()) else { continue }
                 let header = "--- \(hit.filePath) L\(hit.chunk.startLine)-\(hit.chunk.endLine) ---"
                 codeContextParts.append("\(header)\n\(hit.chunk.content)")
                 includedPaths.insert(hit.filePath.lowercased())
+                sources.append(ContextSource(
+                    filePath: hit.filePath,
+                    startLine: hit.chunk.startLine,
+                    endLine: hit.chunk.endLine,
+                    method: .semanticSearch,
+                    score: hit.score
+                ))
             }
         }
 
@@ -942,6 +960,7 @@ final class AIOrchestrator {
                 if let content = await workspaceFileContent(for: file) {
                     let header = "--- \(file.relativePath) ---"
                     codeContextParts.append("\(header)\n\(String(content.prefix(500)))")
+                    sources.append(ContextSource(filePath: file.relativePath, method: .fallbackSample))
                 }
             }
         }
@@ -958,11 +977,7 @@ final class AIOrchestrator {
             maxConversationBudget: Self.maximumConversationContextBudget
         )
 
-        if !context.isEmpty {
-            return context
-        }
-
-        return ""
+        return GatherResult(context: context, sources: sources, usedSemanticSearch: usedSemanticSearch)
     }
 
     nonisolated static func buildPromptContext(

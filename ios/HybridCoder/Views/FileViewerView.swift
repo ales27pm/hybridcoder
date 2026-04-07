@@ -11,6 +11,7 @@ struct FileViewerView: View {
     @State private var isSaving: Bool = false
     @State private var saveError: String?
     @State private var lastSavedAt: Date?
+    @State private var isEditing: Bool = false
 
     private var hasUnsavedChanges: Bool {
         content != savedContent
@@ -39,8 +40,10 @@ struct FileViewerView: View {
                     .tint(Theme.accent)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Theme.codeBg)
-            } else {
+            } else if isEditing {
                 editorView
+            } else {
+                highlightedView
             }
         }
         .background(Theme.surfaceBg)
@@ -82,7 +85,7 @@ struct FileViewerView: View {
             }
 
             HStack(spacing: 10) {
-                Label(hasUnsavedChanges ? "Unsaved changes" : "Editing live repo file", systemImage: hasUnsavedChanges ? "circle.fill" : "pencil.line")
+                Label(isEditing ? (hasUnsavedChanges ? "Unsaved changes" : "Editing") : "Read-only · double-tap to edit", systemImage: isEditing ? (hasUnsavedChanges ? "circle.fill" : "pencil.line") : "eye")
                     .font(.caption2)
                     .foregroundStyle(hasUnsavedChanges ? .orange : Theme.dimText)
 
@@ -92,6 +95,21 @@ struct FileViewerView: View {
                     Text("Saved \(lastSavedAt.formatted(date: .omitted, time: .shortened))")
                         .font(.caption2)
                         .foregroundStyle(Theme.dimText)
+                }
+
+                if isEditing {
+                    Button("Done") {
+                        if !hasUnsavedChanges { isEditing = false }
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+                    .disabled(hasUnsavedChanges)
+                } else {
+                    Button("Edit") {
+                        isEditing = true
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
                 }
 
                 Button("Revert") {
@@ -131,6 +149,23 @@ struct FileViewerView: View {
         .overlay(alignment: .bottom) {
             Divider().overlay(Theme.border)
         }
+    }
+
+    private var highlightedView: some View {
+        ScrollView([.horizontal, .vertical]) {
+            Text(highlightedContent)
+                .textSelection(.enabled)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Theme.codeBg)
+        .onTapGesture(count: 2) {
+            isEditing = true
+        }
+    }
+
+    private var highlightedContent: AttributedString {
+        SyntaxHighlighter.highlight(content, language: languageLabel)
     }
 
     private var editorView: some View {

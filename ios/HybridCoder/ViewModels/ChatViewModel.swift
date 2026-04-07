@@ -5,7 +5,7 @@ import SwiftUI
 final class ChatViewModel {
     private let orchestrator: AIOrchestrator
     private let maxConversationTokens = 1400
-    private let compactionThreshold = 900
+    private let compactionThreshold = 600
     private let preservedRecentTurnCount = 4
     private let maxFileOperationSummaries = 8
     private let maxFallbackSummaryCharacters = 600
@@ -57,6 +57,17 @@ final class ChatViewModel {
         orchestrator.indexStats != nil && (orchestrator.indexStats?.embeddedChunks ?? 0) > 0
     }
 
+    var memoryUsageFraction: Double {
+        Double(estimatedConversationTokens) / Double(maxConversationTokens)
+    }
+
+    var memoryUsageText: String? {
+        guard estimatedConversationTokens > 200 else { return nil }
+        let used = estimatedConversationTokens / 200
+        let total = maxConversationTokens / 200
+        return "\(used)/\(total) memory"
+    }
+
     init(orchestrator: AIOrchestrator) {
         self.orchestrator = orchestrator
     }
@@ -76,7 +87,7 @@ final class ChatViewModel {
         errorMessage = nil
 
         do {
-            await compactConversationMemoryIfNeeded()
+            await compactConversationMemoryWithNotification()
             let (response, route) = try await orchestrator.processQueryStreaming(
                 trimmed,
                 memory: buildMemoryContext(excludingMostRecentUserTurn: true)
@@ -99,11 +110,12 @@ final class ChatViewModel {
                 codeBlocks: response.codeBlocks,
                 patchPlanID: planID,
                 routeKind: response.routeUsed.rawValue,
-                searchHits: response.searchHits
+                searchHits: response.searchHits,
+                contextSources: response.contextSources
             ))
             conversationTurns.append(.init(role: .assistant, content: response.text))
             onConversationSnippet?("assistant", response.text)
-            await compactConversationMemoryIfNeeded()
+            await compactConversationMemoryWithNotification()
         } catch {
             streamingText = ""
             let fallback = "Could not process your request: \(error.localizedDescription)"
@@ -243,6 +255,14 @@ final class ChatViewModel {
         let opCount = fileOperationSummaries.reduce(0) { $0 + estimatedTokens(for: $1) }
         let summaryCount = estimatedTokens(for: memorySummary ?? "")
         estimatedConversationTokens = min(maxConversationTokens, turnCount + opCount + summaryCount)
+    }
+
+    private func compactConversationMemoryWithNotification() async {
+        let hadSummary = memorySummary != nil
+        await compactConversationMemoryIfNeeded()
+        if !hadSummary, memorySummary != nil {
+            appendSystemMessage("Earlier messages summarized to save context space.")
+        }
     }
 
     private func compactConversationMemoryIfNeeded() async {
