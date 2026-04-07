@@ -71,6 +71,11 @@ nonisolated final class ContextPolicyLoader {
         let message: String
     }
 
+    private struct LoadedPolicyContent: Sendable {
+        let content: String
+        let warnings: [LoadWarning]
+    }
+
     nonisolated private static func loadPolicyFilesSync(
         startingAt directoryURL: URL,
         stopAt boundaryURL: URL?,
@@ -116,8 +121,16 @@ nonisolated final class ContextPolicyLoader {
                         continue
                     }
 
-                    let contents = try String(contentsOf: resolvedFileURL, encoding: .utf8)
-                    collected.append(ContextPolicyFile(displayPath: displayPath, content: contents))
+                    let loaded = try loadPolicyContent(
+                        fileURL: resolvedFileURL,
+                        displayPath: displayPath,
+                        rootURL: root,
+                        boundaryURL: boundary,
+                        visited: [resolvedFileURL.path],
+                        depth: 0
+                    )
+                    warnings.append(contentsOf: loaded.warnings)
+                    collected.append(ContextPolicyFile(displayPath: displayPath, content: loaded.content))
                 } catch {
                     warnings.append(LoadWarning(
                         fileName: fileName,
@@ -138,6 +151,134 @@ nonisolated final class ContextPolicyLoader {
         return (ContextPolicySnapshot(files: collected, diagnostics: diagnostics), warnings)
     }
 
+    nonisolated private static func loadPolicyContent(
+        fileURL: URL,
+        displayPath: String,
+        rootURL: URL,
+        boundaryURL: URL?,
+        visited: Set<String>,
+        depth: Int
+    ) throws -> LoadedPolicyContent {
+        let content = try String(contentsOf: fileURL, encoding: .utf8)
+        guard depth < 8 else {
+            return LoadedPolicyContent(
+                content: content,
+                warnings: [
+                    LoadWarning(
+                        fileName: fileURL.lastPathComponent,
+                        sourcePath: displayPath,
+                        message: "Policy import depth limit reached"
+                    )
+                ]
+            )
+        }
+
+        var warnings: [LoadWarning] = []
+        var renderedLines: [String] = []
+        renderedLines.reserveCapacity(content.split(separator: "\n", omittingEmptySubsequences: false).count)
+
+        let baseDirectory = fileURL.deletingLastPathComponent()
+        for rawLine in content.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(rawLine)
+            guard let importPath = parseImportPath(from: line) else {
+                renderedLines.append(line)
+                continue
+            }
+
+            let importedURL = baseDirectory
+                .appending(path: importPath)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+            let importedDisplayPath = makeDisplayPath(fileURL: importedURL, rootURL: rootURL)
+
+            if let boundaryURL, !isWithinBoundary(candidate: importedURL, boundary: boundaryURL) {
+                warnings.append(LoadWarning(
+                    fileName: importedURL.lastPathComponent,
+                    sourcePath: importedDisplayPath,
+                    message: "Policy import resolves outside boundary"
+                ))
+                renderedLines.append("<!-- skipped policy import outside boundary: \(importPath) -->")
+                continue
+            }
+
+            guard !visited.contains(importedURL.path) else {
+                warnings.append(LoadWarning(
+                    fileName: importedURL.lastPathComponent,
+                    sourcePath: importedDisplayPath,
+                    message: "Policy import cycle skipped"
+                ))
+                renderedLines.append("<!-- skipped cyclic policy import: \(importPath) -->")
+                continue
+            }
+
+            guard FileManager.default.fileExists(atPath: importedURL.path) else {
+                warnings.append(LoadWarning(
+                    fileName: importedURL.lastPathComponent,
+                    sourcePath: importedDisplayPath,
+                    message: "Policy import file not found"
+                ))
+                renderedLines.append("<!-- missing policy import: \(importPath) -->")
+                continue
+            }
+
+            do {
+                var nextVisited = visited
+                nextVisited.insert(importedURL.path)
+                let imported = try loadPolicyContent(
+                    fileURL: importedURL,
+                    displayPath: importedDisplayPath,
+                    rootURL: rootURL,
+                    boundaryURL: boundaryURL,
+                    visited: nextVisited,
+                    depth: depth + 1
+                )
+                warnings.append(contentsOf: imported.warnings)
+                renderedLines.append("""
+                --- IMPORTED POLICY FILE: \(importedDisplayPath) ---
+                \(imported.content)
+                --- END IMPORTED POLICY FILE: \(importedDisplayPath) ---
+                """)
+            } catch {
+                warnings.append(LoadWarning(
+                    fileName: importedURL.lastPathComponent,
+                    sourcePath: importedDisplayPath,
+                    message: "Policy import read failed: \(error.localizedDescription)"
+                ))
+                renderedLines.append("<!-- failed policy import: \(importPath) -->")
+            }
+        }
+
+        return LoadedPolicyContent(content: renderedLines.joined(separator: "\n"), warnings: warnings)
+    }
+
+    nonisolated private static func parseImportPath(from line: String) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+        let importPrefixes = ["@import ", "@imports "]
+        for prefix in importPrefixes where trimmed.hasPrefix(prefix) {
+            return sanitizeImportPath(String(trimmed.dropFirst(prefix.count)))
+        }
+
+        guard trimmed.hasPrefix("@"), !trimmed.hasPrefix("@@") else { return nil }
+        let rawPath = String(trimmed.dropFirst())
+        guard rawPath.hasSuffix(".md") || rawPath.hasPrefix("./") || rawPath.hasPrefix("../") else {
+            return nil
+        }
+        return sanitizeImportPath(rawPath)
+    }
+
+    nonisolated private static func sanitizeImportPath(_ rawPath: String) -> String? {
+        var path = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if path.hasPrefix("\""), path.hasSuffix("\""), path.count >= 2 {
+            path.removeFirst()
+            path.removeLast()
+        }
+        if path.hasPrefix("'"), path.hasSuffix("'"), path.count >= 2 {
+            path.removeFirst()
+            path.removeLast()
+        }
+        return path.isEmpty ? nil : path
+    }
 
     nonisolated private static func isWithinBoundary(candidate: URL, boundary: URL) -> Bool {
         let boundaryComponents = boundary.pathComponents.map { $0.lowercased() }

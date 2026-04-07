@@ -206,6 +206,7 @@ actor SemanticSearchIndex {
 
         let queryVector = try await embeddingService.embed(text: query)
 
+        let candidateLimit = max(topK * 4, topK)
         var scored: [(record: EmbeddingRecord, score: Float)] = []
         scored.reserveCapacity(records.count)
 
@@ -216,17 +217,25 @@ actor SemanticSearchIndex {
 
         scored.sort { $0.score > $1.score }
 
-        let topResults = scored.prefix(topK)
+        let vectorRankedChunkIDs = scored.prefix(candidateLimit).map(\.record.chunkID)
+        let lexicalRankedChunkIDs = ((try? store?.searchLexical(query: query, limit: candidateLimit)) ?? [])
+        let fusedResults = Self.fuseSearchRanks(
+            vectorRankedChunkIDs: vectorRankedChunkIDs,
+            lexicalRankedChunkIDs: lexicalRankedChunkIDs,
+            topK: topK
+        )
+        let maxFusedScore = fusedResults.map(\.score).max() ?? 1
 
         var hits: [SearchHit] = []
-        hits.reserveCapacity(topResults.count)
+        hits.reserveCapacity(fusedResults.count)
 
-        for item in topResults {
-            guard let chunk = chunks[item.record.chunkID] else { continue }
+        for item in fusedResults {
+            guard let chunk = chunks[item.chunkID] else { continue }
+            let normalizedScore = maxFusedScore > 0 ? Float(item.score / maxFusedScore) : 0
             hits.append(SearchHit(
                 chunk: chunk,
-                score: item.score,
-                filePath: item.record.filePath
+                score: normalizedScore,
+                filePath: chunk.filePath
             ))
         }
 
@@ -273,6 +282,43 @@ actor SemanticSearchIndex {
         }
         return result
     }
+
+    nonisolated static func fuseSearchRanks(
+        vectorRankedChunkIDs: [UUID],
+        lexicalRankedChunkIDs: [UUID],
+        topK: Int,
+        rankConstant: Double = 60
+    ) -> [(chunkID: UUID, score: Double)] {
+        guard topK > 0 else { return [] }
+
+        var scores: [UUID: Double] = [:]
+        var firstSeenOrder: [UUID: Int] = [:]
+        var nextOrder = 0
+
+        func add(_ ids: [UUID]) {
+            for (rank, chunkID) in ids.enumerated() {
+                if firstSeenOrder[chunkID] == nil {
+                    firstSeenOrder[chunkID] = nextOrder
+                    nextOrder += 1
+                }
+                scores[chunkID, default: 0] += 1 / (rankConstant + Double(rank + 1))
+            }
+        }
+
+        add(vectorRankedChunkIDs)
+        add(lexicalRankedChunkIDs)
+
+        return scores
+            .map { (chunkID: $0.key, score: $0.value) }
+            .sorted {
+                if $0.score == $1.score {
+                    return (firstSeenOrder[$0.chunkID] ?? .max) < (firstSeenOrder[$1.chunkID] ?? .max)
+                }
+                return $0.score > $1.score
+            }
+            .prefix(topK)
+            .map { $0 }
+    }
 }
 
 nonisolated private final class SQLiteIndexStore {
@@ -302,6 +348,7 @@ nonisolated private final class SQLiteIndexStore {
     }
 
     private let db: OpaquePointer
+    private var supportsLexicalSearch = false
 
     nonisolated init(databaseURL: URL) throws {
         let directory = databaseURL.deletingLastPathComponent()
@@ -325,7 +372,7 @@ nonisolated private final class SQLiteIndexStore {
         }
 
         self.db = db
-        try createSchema()
+        supportsLexicalSearch = try createSchema()
     }
 
     nonisolated deinit {
@@ -383,6 +430,9 @@ nonisolated private final class SQLiteIndexStore {
 
     nonisolated func reset() throws {
         try exec("DELETE FROM embeddings;")
+        if supportsLexicalSearch {
+            try exec("DELETE FROM chunk_fts;")
+        }
         try exec("DELETE FROM chunks;")
         try exec("DELETE FROM metadata;")
     }
@@ -422,6 +472,10 @@ nonisolated private final class SQLiteIndexStore {
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw StoreError.executeFailed(lastErrorMessage)
+        }
+
+        if supportsLexicalSearch {
+            try persistLexicalChunk(chunk)
         }
     }
 
@@ -465,6 +519,41 @@ nonisolated private final class SQLiteIndexStore {
         let languageData = try JSONEncoder().encode(languageCounts)
         let languageJSON = String(data: languageData, encoding: .utf8) ?? "{}"
         try writeMetadata(key: "languageCounts", value: languageJSON)
+    }
+
+    nonisolated func searchLexical(query: String, limit: Int) throws -> [UUID] {
+        guard supportsLexicalSearch, limit > 0 else { return [] }
+        guard let matchQuery = Self.makeLexicalQuery(from: query) else { return [] }
+
+        let sql = """
+        SELECT chunk_id
+        FROM chunk_fts
+        WHERE chunk_fts MATCH ?
+        ORDER BY bm25(chunk_fts)
+        LIMIT ?;
+        """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw StoreError.prepareFailed(lastErrorMessage)
+        }
+        defer { sqlite3_finalize(statement) }
+
+        try bindText(matchQuery, to: statement, index: 1)
+        sqlite3_bind_int64(statement, 2, Int64(limit))
+
+        var chunkIDs: [UUID] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard
+                let chunkIDRaw = sqlite3_column_text(statement, 0),
+                let chunkID = UUID(uuidString: String(cString: chunkIDRaw))
+            else {
+                continue
+            }
+            chunkIDs.append(chunkID)
+        }
+
+        return chunkIDs
     }
 
     private nonisolated func loadChunks() throws -> [SourceChunk] {
@@ -627,7 +716,7 @@ nonisolated private final class SQLiteIndexStore {
         }
     }
 
-    private nonisolated func createSchema() throws {
+    private nonisolated func createSchema() throws -> Bool {
         try exec("""
         CREATE TABLE IF NOT EXISTS chunks (
             id TEXT PRIMARY KEY,
@@ -662,6 +751,60 @@ nonisolated private final class SQLiteIndexStore {
 
         try exec("CREATE INDEX IF NOT EXISTS idx_embeddings_chunk ON embeddings(chunk_id);")
         try exec("CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(file_path);")
+
+        do {
+            try exec("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(
+                chunk_id UNINDEXED,
+                file_path,
+                content,
+                language,
+                tokenize = 'unicode61 tokenchars ''_'''
+            );
+            """)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private nonisolated func persistLexicalChunk(_ chunk: SourceChunk) throws {
+        let sql = """
+        INSERT INTO chunk_fts (chunk_id, file_path, content, language)
+        VALUES (?, ?, ?, ?);
+        """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw StoreError.prepareFailed(lastErrorMessage)
+        }
+        defer { sqlite3_finalize(statement) }
+
+        try bindText(chunk.id.uuidString, to: statement, index: 1)
+        try bindText(chunk.filePath, to: statement, index: 2)
+        try bindText(chunk.content, to: statement, index: 3)
+        try bindText(chunk.language, to: statement, index: 4)
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw StoreError.executeFailed(lastErrorMessage)
+        }
+    }
+
+    nonisolated static func makeLexicalQuery(from query: String, maxTerms: Int = 12) -> String? {
+        let tokens = query
+            .split { character in
+                !(character.isLetter || character.isNumber || character == "_")
+            }
+            .map(String.init)
+            .filter { $0.count > 1 }
+
+        let uniqueTokens = Array(NSOrderedSet(array: tokens)).compactMap { $0 as? String }
+        let terms = uniqueTokens
+            .prefix(maxTerms)
+            .map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"" }
+
+        guard !terms.isEmpty else { return nil }
+        return terms.joined(separator: " OR ")
     }
 
     private nonisolated func exec(_ sql: String) throws {

@@ -98,6 +98,55 @@ struct ContextPolicyLoaderTests {
         })
     }
 
+    @Test func policyLoaderExpandsRepoLocalImports() async throws {
+        let repoRoot = try makeTempRepoRoot()
+        defer { try? FileManager.default.removeItem(at: repoRoot) }
+
+        let docsDir = repoRoot.appending(path: "docs", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: docsDir, withIntermediateDirectories: true)
+
+        try """
+        root-policy
+        @import docs/style.md
+        tail-policy
+        """.write(to: repoRoot.appending(path: "AGENTS.md"), atomically: true, encoding: .utf8)
+        try "style-policy".write(to: docsDir.appending(path: "style.md"), atomically: true, encoding: .utf8)
+
+        let loader = ContextPolicyLoader()
+        let snapshot = await loader.loadPolicyFiles(startingAt: repoRoot, stopAt: repoRoot)
+
+        #expect(snapshot.files.count == 1)
+        #expect(snapshot.files[0].content.contains("--- IMPORTED POLICY FILE: docs/style.md ---"))
+        #expect(snapshot.files[0].content.contains("style-policy"))
+        #expect(snapshot.files[0].content.contains("tail-policy"))
+        #expect(snapshot.diagnostics.isEmpty)
+    }
+
+    @Test func policyLoaderSkipsImportsThatEscapeBoundary() async throws {
+        let repoRoot = try makeTempRepoRoot()
+        let outsideRoot = try makeTempRepoRoot()
+        defer { try? FileManager.default.removeItem(at: repoRoot) }
+        defer { try? FileManager.default.removeItem(at: outsideRoot) }
+
+        let outsidePolicy = outsideRoot.appending(path: "outside.md")
+        try "outside-policy".write(to: outsidePolicy, atomically: true, encoding: .utf8)
+        let escapingImportPath = "../\(outsideRoot.lastPathComponent)/outside.md"
+        try "@import \(escapingImportPath)".write(
+            to: repoRoot.appending(path: "AGENTS.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let loader = ContextPolicyLoader()
+        let snapshot = await loader.loadPolicyFiles(startingAt: repoRoot, stopAt: repoRoot)
+
+        #expect(!snapshot.files[0].content.contains("outside-policy"))
+        #expect(snapshot.diagnostics.contains { diagnostic in
+            guard case .warning(let warning) = diagnostic else { return false }
+            return warning.message.contains("outside boundary")
+        })
+    }
+
     @MainActor
     @Test func orchestratorLayersGlobalPoliciesAheadOfRepoPolicies() async throws {
         let repoRoot = try makeTempRepoRoot()
