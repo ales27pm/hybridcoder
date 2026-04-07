@@ -18,7 +18,7 @@ struct AIOrchestratorContextAssemblyTests {
 
         #expect(context.contains("<policy_context>"))
         #expect(context.contains("let answer = 42"))
-        #expect(context.count <= 2500)
+        #expect(context.count <= PromptContextBudget.downstreamContextCap)
     }
 
     @Test("No code parts still returns bounded policy context")
@@ -73,7 +73,24 @@ struct AIOrchestratorContextAssemblyTests {
         )
 
         #expect(context.contains("--- file.swift ---"))
-        #expect(context.filter { $0 == "C" }.count >= 1200)
+        #expect(context.filter { $0 == "C" }.count >= PromptContextBudget.minimumCodeContextBudget - 200)
+    }
+
+    @Test("Qwen budget keeps much larger code context")
+    func qwenBudgetKeepsLargerCodeContext() {
+        let context = AIOrchestrator.buildPromptContext(
+            rawPolicyText: String(repeating: "P", count: 4_000),
+            conversationMemoryBlock: "<conversation_memory>\n\(String(repeating: "M", count: 4_000))\n</conversation_memory>",
+            codeParts: ["--- large.swift ---\n\(String(repeating: "C", count: 40_000))"],
+            totalLimit: PromptContextBudget.qwenContextCap,
+            minCodeBudget: PromptContextBudget.qwenMinimumCodeContextBudget,
+            maxPolicyBudget: PromptContextBudget.qwenMaximumPolicyContextBudget,
+            maxConversationBudget: PromptContextBudget.qwenMaximumConversationContextBudget
+        )
+
+        #expect(context.count <= PromptContextBudget.qwenContextCap)
+        #expect(context.contains("--- large.swift ---"))
+        #expect(context.filter { $0 == "C" }.count >= PromptContextBudget.qwenMinimumCodeContextBudget - 200)
     }
 
     @Test("Final prompt packing preserves closing wrapper tags")

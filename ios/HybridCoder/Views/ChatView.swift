@@ -134,6 +134,9 @@ struct ChatView: View {
                             },
                             onTapSearchHit: { hit in
                                 onNavigateToFile?(hit.filePath)
+                            },
+                            onTapContextSource: { source in
+                                onNavigateToFile?(source.filePath)
                             }
                         )
                         .id(message.id)
@@ -360,6 +363,7 @@ struct ChatView: View {
         case .semanticSearch: return "magnifyingglass"
         case .foundationModel: return "brain.head.profile"
         case .qwenCodeGeneration: return "hammer"
+        case .qwenCodeAssistant: return "curlybraces"
         case .patchEngine: return "doc.badge.gearshape"
         }
     }
@@ -370,6 +374,7 @@ struct ChatView: View {
         case .semanticSearch: return "Search"
         case .foundationModel: return "FM"
         case .qwenCodeGeneration: return "Qwen"
+        case .qwenCodeAssistant: return "Qwen"
         case .patchEngine: return "Patch"
         }
     }
@@ -380,6 +385,7 @@ struct ChatView: View {
         case .semanticSearch: return .purple
         case .foundationModel: return Theme.accent
         case .qwenCodeGeneration: return .orange
+        case .qwenCodeAssistant: return .orange
         case .patchEngine: return .yellow
         }
     }

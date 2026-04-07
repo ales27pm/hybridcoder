@@ -38,12 +38,17 @@ Budget values are defined in one source-of-truth enum, `PromptContextBudget`, in
 
 Current values:
 
-- `downstreamContextCap = 2500`
-- `minimumCodeContextBudget = 1600`
-- `maximumPolicyContextBudget = 700`
-- `maximumConversationContextBudget = 1000`
+- `foundationContextCap = 2000`
+- `qwenContextCap = 32000`
+- `downstreamContextCap = foundationContextCap`
+- `minimumCodeContextBudget = 1100`
+- `maximumPolicyContextBudget = 350`
+- `maximumConversationContextBudget = 400`
+- `qwenMinimumCodeContextBudget = 26000`
+- `qwenMaximumPolicyContextBudget = 2000`
+- `qwenMaximumConversationContextBudget = 2000`
 
-When all sections are present, code reservation is enforced first, then policy and conversation are clipped to the remaining non-code budget.
+When all sections are present, code reservation is enforced first, then policy and conversation are clipped to the remaining non-code budget. Foundation Models use the smaller `foundationContextCap` to avoid context-limit failures. Qwen-backed code generation and codebase explanation prompts use the larger `qwenContextCap`.
 
 ## Diagnostics and safety
 

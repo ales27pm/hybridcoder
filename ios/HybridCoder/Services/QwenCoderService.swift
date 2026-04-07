@@ -94,12 +94,34 @@ actor QwenCoderService {
         return result.text
     }
 
+    func generateCodeExplanation(prompt: String, context: String) async throws -> String {
+        let promptEnvelope = PromptBuilder.qwenCodeExplanationPrompt(query: prompt, repoContext: context)
+        let result = try await generate(
+            systemPrompt: promptEnvelope.system,
+            userPrompt: promptEnvelope.user
+        )
+        return result.text
+    }
+
     func generateCodeStreaming(
         prompt: String,
         context: String,
         onChunk: @MainActor @escaping @Sendable (String) -> Void
     ) async throws -> GenerationResult {
         let promptEnvelope = PromptBuilder.qwenCodeGenerationPrompt(query: prompt, repoContext: context)
+        return try await generateStreaming(
+            systemPrompt: promptEnvelope.system,
+            userPrompt: promptEnvelope.user,
+            onChunk: onChunk
+        )
+    }
+
+    func generateCodeExplanationStreaming(
+        prompt: String,
+        context: String,
+        onChunk: @MainActor @escaping @Sendable (String) -> Void
+    ) async throws -> GenerationResult {
+        let promptEnvelope = PromptBuilder.qwenCodeExplanationPrompt(query: prompt, repoContext: context)
         return try await generateStreaming(
             systemPrompt: promptEnvelope.system,
             userPrompt: promptEnvelope.user,

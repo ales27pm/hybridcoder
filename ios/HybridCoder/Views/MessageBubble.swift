@@ -34,6 +34,10 @@ struct MessageBubble: View {
                     searchHitsSection
                 }
 
+                if let notice = message.retrievalNotice, message.role == .assistant {
+                    retrievalNoticeView(notice)
+                }
+
                 if !message.contextSources.isEmpty, message.role == .assistant {
                     contextSourcesSection
                 }
@@ -164,6 +168,22 @@ struct MessageBubble: View {
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    private func retrievalNoticeView(_ notice: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 9))
+                .foregroundStyle(.orange)
+
+            Text(notice)
+                .font(.caption2)
+                .foregroundStyle(.orange.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(.orange.opacity(0.07), in: .rect(cornerRadius: 8))
     }
 
     private func patchSummaryStrip(planID: UUID) -> some View {

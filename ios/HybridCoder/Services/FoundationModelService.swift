@@ -65,9 +65,9 @@ final class FoundationModelService {
     private let patchSessionID = "fm-patch-planning"
     private let compactionSessionID = "fm-compaction"
 
-    private let maxRouteClassifierTurns = 8
-    private let maxExplanationTurns = 4
-    private let maxPatchTurns = 3
+    private let maxRouteClassifierTurns = 1
+    private let maxExplanationTurns = 1
+    private let maxPatchTurns = 1
 
     init(registry: ModelRegistry, modelID: String) {
         self.registry = registry
@@ -269,15 +269,15 @@ final class FoundationModelService {
         isGenerating = true
         defer { isGenerating = false }
 
-        if compactionSession == nil {
-            compactionSession = LanguageModelSession {
-                """
-                You compress coding-chat memory. Keep critical constraints, decisions, and unresolved tasks.
-                Preserve file operation outcomes and avoid repeating obvious details.
-                """
-            }
-            sessionManager?.registerSession(id: compactionSessionID, purpose: .conversationSummary)
+        compactionSession = nil
+        sessionManager?.removeSession(id: compactionSessionID)
+        compactionSession = LanguageModelSession {
+            """
+            You compress coding-chat memory. Keep critical constraints, decisions, and unresolved tasks.
+            Preserve file operation outcomes and avoid repeating obvious details.
+            """
         }
+        sessionManager?.registerSession(id: compactionSessionID, purpose: .conversationSummary)
 
         let clippedSummary = String(priorSummary.prefix(800))
         let clippedOperations = String(fileOperationSummaries.prefix(600))

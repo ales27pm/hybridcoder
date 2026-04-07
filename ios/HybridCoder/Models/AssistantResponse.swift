@@ -6,6 +6,7 @@ nonisolated struct AssistantResponse: Sendable {
     let patchPlan: PatchPlan?
     let searchHits: [SearchHit]
     let contextSources: [ContextSource]
+    let retrievalNotice: String?
     let routeUsed: RouteKind
 
     nonisolated enum RouteKind: String, Sendable {
@@ -21,6 +22,7 @@ nonisolated struct AssistantResponse: Sendable {
         patchPlan: PatchPlan? = nil,
         searchHits: [SearchHit] = [],
         contextSources: [ContextSource] = [],
+        retrievalNotice: String? = nil,
         routeUsed: RouteKind = .explanation
     ) {
         self.text = text
@@ -28,6 +30,7 @@ nonisolated struct AssistantResponse: Sendable {
         self.patchPlan = patchPlan
         self.searchHits = searchHits
         self.contextSources = contextSources
+        self.retrievalNotice = retrievalNotice
         self.routeUsed = routeUsed
     }
 }

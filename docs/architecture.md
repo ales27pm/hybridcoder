@@ -12,10 +12,10 @@ HybridCoder uses a **FoundationModels/CoreML split runtime on iOS 26+**.
 4. Startup/warm-up orchestration initializes:
    - Foundation model status for routing + structured reasoning.
    - CoreML embedding download/load/index setup.
-   - Qwen/CoreMLPipelines state for code generation.
+   - Qwen/CoreMLPipelines state for code generation and codebase-heavy explanations.
 5. `AIOrchestrator` enforces deterministic provider selection by route:
-   - `FoundationModels` for route classification, explanations, and patch planning.
-   - `QwenCoreMLPipelines` for `codeGeneration`.
+   - `FoundationModels` for route classification, simple explanations, and patch planning.
+   - `QwenCoreMLPipelines` for `codeGeneration` and repository-grounded explanation requests.
    - No heuristic route fallback path is used.
 6. Route/provider telemetry is emitted through `os.Logger` (category: `AIOrchestrator`) for:
    - `route.classifier` (classifier-selected route + confidence)
@@ -35,8 +35,8 @@ HybridCoder uses a **FoundationModels/CoreML split runtime on iOS 26+**.
 | Capability | OS baseline | Provider | Behavior when unavailable |
 | --- | --- | --- | --- |
 | Route decision | iOS 26.0+ | Apple Foundation Models | Request fails (`noModelAvailable` or route-resolution error) |
-| Explanation + patch planning | iOS 26.0+ | Apple Foundation Models | Request fails (`noModelAvailable`) |
-| Code generation | iOS 26.0+ | Qwen via CoreMLPipelines | Request fails (`codeGenerationModelUnavailable`) |
+| Simple explanations + patch planning | iOS 26.0+ | Apple Foundation Models | Request fails (`noModelAvailable`) |
+| Code generation + codebase-heavy explanations | iOS 26.0+ | Qwen via CoreMLPipelines | Code generation fails (`codeGenerationModelUnavailable`); explanations fall back to Foundation Models if Qwen is unavailable before generation starts |
 | Semantic retrieval embeddings | iOS 26.0+ | CoreML CodeBERT | Warm-up/indexing reports model download/load error |
 
 ## Non-goals

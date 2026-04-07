@@ -1,6 +1,11 @@
 import Foundation
 
 nonisolated enum PromptBuilder: Sendable {
+    private static let defaultRequestLimit = 1000
+    private static let routeClassifierContextLimit = 1200
+    private static let foundationContextLimit = PromptContextBudget.foundationContextCap
+    private static let qwenContextLimit = PromptContextBudget.qwenContextCap
+
     nonisolated struct PromptEnvelope: Sendable, Equatable {
         let system: String
         let user: String
@@ -12,7 +17,7 @@ nonisolated enum PromptBuilder: Sendable {
             request: query,
             contextLabel: "repository_files",
             context: fileList.joined(separator: "\n"),
-            contextLimit: 2400,
+            contextLimit: routeClassifierContextLimit,
             extraSections: [
                 wrappedSection(
                     label: "routing_contract",
@@ -50,7 +55,7 @@ nonisolated enum PromptBuilder: Sendable {
                 request: query,
                 contextLabel: "repository_context",
                 context: repoContext,
-                contextLimit: 2800,
+                contextLimit: foundationContextLimit,
                 extraSections: [
                     wrappedSection(label: "handler_route", body: route.rawValue)
                 ]
@@ -77,7 +82,7 @@ nonisolated enum PromptBuilder: Sendable {
                 request: query,
                 contextLabel: "repository_context",
                 context: repoContext,
-                contextLimit: 2800,
+                contextLimit: foundationContextLimit,
                 extraSections: [
                     wrappedSection(
                         label: "patch_format",
@@ -114,9 +119,34 @@ nonisolated enum PromptBuilder: Sendable {
                 request: query,
                 contextLabel: "repository_context",
                 context: repoContext,
-                contextLimit: 2800,
+                contextLimit: qwenContextLimit,
                 extraSections: [
                     wrappedSection(label: "handler_route", body: Route.codeGeneration.rawValue)
+                ]
+            )
+        )
+    }
+
+    static func qwenCodeExplanationPrompt(query: String, repoContext: String) -> PromptEnvelope {
+        PromptEnvelope(
+            system: """
+            You are an expert codebase explainer for a local coding assistant.
+
+            Rules:
+            - Answer in concise technical prose grounded in the provided repository context.
+            - Reference concrete files, symbols, and control flow when they are available.
+            - Explain likely causes and tradeoffs for debugging or architecture questions.
+            - Do not propose exact search/replace patch operations.
+            - If context is insufficient, state the exact file, symbol, or runtime detail that is missing.
+            """,
+            user: assemblePrompt(
+                requestLabel: "user_request",
+                request: query,
+                contextLabel: "repository_context",
+                context: repoContext,
+                contextLimit: qwenContextLimit,
+                extraSections: [
+                    wrappedSection(label: "handler_route", body: Route.explanation.rawValue)
                 ]
             )
         )
@@ -204,6 +234,7 @@ nonisolated enum PromptBuilder: Sendable {
         contextLabel: String,
         context: String,
         contextLimit: Int,
+        requestLimit: Int = defaultRequestLimit,
         extraSections: [String] = []
     ) -> String {
         var sections = extraSections.filter { !$0.isEmpty }
@@ -213,7 +244,8 @@ nonisolated enum PromptBuilder: Sendable {
             sections.append(wrappedSection(label: contextLabel, body: String(normalizedContext.prefix(contextLimit))))
         }
 
-        sections.append(wrappedSection(label: requestLabel, body: request))
+        let normalizedRequest = request.trimmingCharacters(in: .whitespacesAndNewlines)
+        sections.append(wrappedSection(label: requestLabel, body: String(normalizedRequest.prefix(requestLimit))))
         return sections.joined(separator: "\n\n")
     }
 

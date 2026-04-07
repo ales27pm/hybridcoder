@@ -111,7 +111,8 @@ final class ChatViewModel {
                 patchPlanID: planID,
                 routeKind: response.routeUsed.rawValue,
                 searchHits: response.searchHits,
-                contextSources: response.contextSources
+                contextSources: response.contextSources,
+                retrievalNotice: response.retrievalNotice
             ))
             conversationTurns.append(.init(role: .assistant, content: response.text))
             onConversationSnippet?("assistant", response.text)

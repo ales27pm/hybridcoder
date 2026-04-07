@@ -1,11 +1,16 @@
 import Foundation
 import OSLog
 
-enum PromptContextBudget {
-    static let downstreamContextCap = 2800
-    static let minimumCodeContextBudget = 1600
-    static let maximumPolicyContextBudget = 500
-    static let maximumConversationContextBudget = 700
+nonisolated enum PromptContextBudget {
+    static let foundationContextCap = 2000
+    static let qwenContextCap = 32_000
+    static let downstreamContextCap = foundationContextCap
+    static let minimumCodeContextBudget = 1100
+    static let maximumPolicyContextBudget = 350
+    static let maximumConversationContextBudget = 400
+    static let qwenMinimumCodeContextBudget = 26_000
+    static let qwenMaximumPolicyContextBudget = 2_000
+    static let qwenMaximumConversationContextBudget = 2_000
 }
 
 nonisolated struct RouteResolution: Sendable, Equatable {
@@ -29,16 +34,21 @@ final class AIOrchestrator {
         case semanticSearch
         case foundationModel
         case qwenCodeGeneration
+        case qwenCodeAssistant
         case patchEngine
     }
 
     private static let downstreamContextCap = PromptContextBudget.downstreamContextCap
+    private static let qwenContextCap = PromptContextBudget.qwenContextCap
     private static let minimumCodeContextBudget = PromptContextBudget.minimumCodeContextBudget
     private static let maximumPolicyContextBudget = PromptContextBudget.maximumPolicyContextBudget
     private static let maximumConversationContextBudget = PromptContextBudget.maximumConversationContextBudget
+    private static let qwenMinimumCodeContextBudget = PromptContextBudget.qwenMinimumCodeContextBudget
+    private static let qwenMaximumPolicyContextBudget = PromptContextBudget.qwenMaximumPolicyContextBudget
+    private static let qwenMaximumConversationContextBudget = PromptContextBudget.qwenMaximumConversationContextBudget
     // Keep this equal to ConversationMemoryContext.renderForPrompt(maxCharacters:) input.
     // We intentionally enforce the same budget here as a second guardrail during final packing.
-    private static let conversationMemoryRenderBudget = maximumConversationContextBudget
+    private static let conversationMemoryRenderBudget = max(maximumConversationContextBudget, qwenMaximumConversationContextBudget)
 
     let repoAccess = RepoAccessService()
     let modelRegistry: ModelRegistry
@@ -723,12 +733,13 @@ final class AIOrchestrator {
     nonisolated static func expectedExecutionProviders(
         for route: Route,
         executesPatch: Bool = false,
-        includesRouteClassifier: Bool = true
+        includesRouteClassifier: Bool = true,
+        explanationProvider: ExecutionProvider = .foundationModel
     ) -> [ExecutionProvider] {
         let providers: [ExecutionProvider]
         switch route {
         case .explanation:
-            providers = [.semanticSearch, .foundationModel]
+            providers = [.semanticSearch, explanationProvider]
         case .codeGeneration:
             providers = [.semanticSearch, .qwenCodeGeneration]
         case .patchPlanning:
@@ -743,6 +754,38 @@ final class AIOrchestrator {
             return [.routeClassifier] + providers
         }
         return providers
+    }
+
+    nonisolated static func preferredExplanationProvider(
+        query: String,
+        contextSources: [ContextSource],
+        hasRepositoryContext: Bool
+    ) -> ExecutionProvider {
+        guard hasRepositoryContext || !contextSources.isEmpty else {
+            return .foundationModel
+        }
+
+        let normalized = query.lowercased()
+        let codebaseSignals = [
+            "codebase", "repo", "repository", "implementation", "architecture", "pipeline",
+            "flow", "call", "symbol", "function", "method", "class", "struct", "viewmodel",
+            "service", "route", "stream", "context", "file", "bug", "error", "fail",
+            "crash", "build", "test", ".swift", ".md", ".json", ".py", ".ts", ".js"
+        ]
+
+        if query.count > 240 {
+            return .qwenCodeAssistant
+        }
+
+        if contextSources.contains(where: { $0.method == .routeHint }) {
+            return .qwenCodeAssistant
+        }
+
+        if codebaseSignals.contains(where: { normalized.contains($0) }) {
+            return .qwenCodeAssistant
+        }
+
+        return .foundationModel
     }
 
     func processQuery(_ query: String, memory: ConversationMemoryContext? = nil) async throws -> AssistantResponse {
@@ -768,32 +811,69 @@ final class AIOrchestrator {
             relevantFiles: resolution.relevantFiles,
             memory: memory
         )
-        recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
-        logProviderSelection(query: resolved.query, route: route, mode: "non-stream")
-
         switch route {
         case .explanation:
-            let text = try await generateExplanation(query: resolved.query, context: gathered.context)
-            return AssistantResponse(text: text, contextSources: gathered.sources, routeUsed: .explanation)
+            let explanationProvider = Self.preferredExplanationProvider(
+                query: resolved.query,
+                contextSources: gathered.sources,
+                hasRepositoryContext: !gathered.qwenContext.isEmpty
+            )
+            let explanationContext = gathered.context(for: explanationProvider)
+            let generated = try await generateExplanation(
+                query: resolved.query,
+                context: explanationContext,
+                preferredProvider: explanationProvider
+            )
+            recordExecutionTrace(
+                route: route,
+                includesRouteClassifier: resolved.routeOverride == nil,
+                explanationProvider: generated.provider
+            )
+            logProviderSelection(query: resolved.query, route: route, mode: "non-stream", provider: generated.provider)
+            return AssistantResponse(
+                text: generated.text,
+                contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
+                routeUsed: .explanation
+            )
 
         case .codeGeneration:
-            let code = try await generateCode(query: resolved.query, context: gathered.context)
+            recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
+            logProviderSelection(query: resolved.query, route: route, mode: "non-stream")
+            let code = try await generateCode(query: resolved.query, context: gathered.qwenContext)
             let blocks = Self.extractCodeBlocks(from: code, fallbackToWholeText: true)
-            return AssistantResponse(text: code, codeBlocks: blocks, contextSources: gathered.sources, routeUsed: .codeGeneration)
+            return AssistantResponse(
+                text: code,
+                codeBlocks: blocks,
+                contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
+                routeUsed: .codeGeneration
+            )
 
         case .patchPlanning:
+            recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
+            logProviderSelection(query: resolved.query, route: route, mode: "non-stream")
             let plan = try await generatePatchPlan(query: resolved.query, context: gathered.context)
             return AssistantResponse(
                 text: plan.summary,
                 patchPlan: plan,
                 contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
                 routeUsed: .patchPlanning
             )
 
         case .search:
+            recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
+            logProviderSelection(query: resolved.query, route: route, mode: "non-stream")
             let hits = (try? await searchCode(query: resolved.query, topK: 5)) ?? []
             let summary = formatSearchResults(hits)
-            return AssistantResponse(text: summary, searchHits: hits, contextSources: gathered.sources, routeUsed: .search)
+            return AssistantResponse(
+                text: summary,
+                searchHits: hits,
+                contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
+                routeUsed: .search
+            )
         }
     }
 
@@ -820,30 +900,78 @@ final class AIOrchestrator {
             relevantFiles: resolution.relevantFiles,
             memory: memory
         )
-        recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
-        logProviderSelection(query: resolved.query, route: route, mode: "stream")
-
         switch route {
         case .explanation:
-            let text = try await streamText(query: resolved.query, context: gathered.context, route: route, onPartial: onPartial)
-            return (AssistantResponse(text: text, contextSources: gathered.sources, routeUsed: .explanation), route)
+            let explanationProvider = Self.preferredExplanationProvider(
+                query: resolved.query,
+                contextSources: gathered.sources,
+                hasRepositoryContext: !gathered.qwenContext.isEmpty
+            )
+            let explanationContext = gathered.context(for: explanationProvider)
+            let generated = try await streamExplanation(
+                query: resolved.query,
+                context: explanationContext,
+                preferredProvider: explanationProvider,
+                onPartial: onPartial
+            )
+            recordExecutionTrace(
+                route: route,
+                includesRouteClassifier: resolved.routeOverride == nil,
+                explanationProvider: generated.provider
+            )
+            logProviderSelection(query: resolved.query, route: route, mode: "stream", provider: generated.provider)
+            return (AssistantResponse(
+                text: generated.text,
+                contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
+                routeUsed: .explanation
+            ), route)
 
         case .codeGeneration:
-            let code = try await streamText(query: resolved.query, context: gathered.context, route: route, onPartial: onPartial)
+            recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
+            logProviderSelection(query: resolved.query, route: route, mode: "stream")
+            let code = try await streamText(query: resolved.query, context: gathered.qwenContext, route: route, onPartial: onPartial)
             let blocks = Self.extractCodeBlocks(from: code, fallbackToWholeText: true)
-            return (AssistantResponse(text: code, codeBlocks: blocks, contextSources: gathered.sources, routeUsed: .codeGeneration), route)
+            return (AssistantResponse(
+                text: code,
+                codeBlocks: blocks,
+                contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
+                routeUsed: .codeGeneration
+            ), route)
 
         case .patchPlanning:
+            recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
+            logProviderSelection(query: resolved.query, route: route, mode: "stream")
             let plan = try await generatePatchPlan(query: resolved.query, context: gathered.context)
             onPartial(plan.summary)
-            return (AssistantResponse(text: plan.summary, patchPlan: plan, contextSources: gathered.sources, routeUsed: .patchPlanning), route)
+            return (AssistantResponse(
+                text: plan.summary,
+                patchPlan: plan,
+                contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
+                routeUsed: .patchPlanning
+            ), route)
 
         case .search:
+            recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
+            logProviderSelection(query: resolved.query, route: route, mode: "stream")
             let hits = (try? await searchCode(query: resolved.query, topK: 5)) ?? []
             let summary = formatSearchResults(hits)
             onPartial(summary)
-            return (AssistantResponse(text: summary, searchHits: hits, contextSources: gathered.sources, routeUsed: .search), route)
+            return (AssistantResponse(
+                text: summary,
+                searchHits: hits,
+                contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
+                routeUsed: .search
+            ), route)
         }
+    }
+
+    nonisolated struct ProviderBackedText: Sendable {
+        let text: String
+        let provider: ExecutionProvider
     }
 
     private func resolveTemplateIfNeeded(_ query: String) async throws -> ResolvedPromptQuery {
@@ -888,6 +1016,42 @@ final class AIOrchestrator {
             }
             throw OrchestratorError.noModelAvailable
         }
+    }
+
+    private func streamExplanation(
+        query: String,
+        context: String,
+        preferredProvider: ExecutionProvider,
+        onPartial: @escaping (String) -> Void
+    ) async throws -> ProviderBackedText {
+        if preferredProvider == .qwenCodeAssistant {
+            do {
+                let coder = try await requireQwenCoder()
+                var accumulated = ""
+                let result = try await coder.generateCodeExplanationStreaming(prompt: query, context: context) { delta in
+                    accumulated += delta
+                    onPartial(accumulated)
+                }
+                return ProviderBackedText(text: result.text, provider: .qwenCodeAssistant)
+            } catch let error as OrchestratorError {
+                logger.warning("qwen.explanation.unavailable fallback=FoundationModels reason=\(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        guard #available(iOS 26.0, *) else {
+            throw OrchestratorError.noModelAvailable
+        }
+        let fm = try requireFoundationModel()
+        var fullText = ""
+        let stream = fm.streamAnswer(query: query, context: context, route: .explanation)
+        for try await chunk in stream {
+            fullText = chunk
+            onPartial(chunk)
+        }
+        if !fullText.isEmpty {
+            return ProviderBackedText(text: fullText, provider: .foundationModel)
+        }
+        throw OrchestratorError.noModelAvailable
     }
 
     func planPatch(query: String) async throws -> PatchPlan {
@@ -955,8 +1119,19 @@ final class AIOrchestrator {
 
     nonisolated struct GatherResult: Sendable {
         let context: String
+        let qwenContext: String
         let sources: [ContextSource]
         let usedSemanticSearch: Bool
+        let retrievalNotice: String?
+
+        func context(for provider: ExecutionProvider) -> String {
+            switch provider {
+            case .qwenCodeAssistant, .qwenCodeGeneration:
+                return qwenContext
+            case .routeClassifier, .semanticSearch, .foundationModel, .patchEngine:
+                return context
+            }
+        }
     }
 
     private func gatherContextWithSources(
@@ -966,25 +1141,34 @@ final class AIOrchestrator {
     ) async -> GatherResult {
         var codeContextParts: [String] = []
         var includedPaths: Set<String> = []
+        var routeHintPaths: Set<String> = []
+        var semanticChunkKeys: Set<String> = []
         var sources: [ContextSource] = []
         var usedSemanticSearch = false
+        var retrievalNotice: String?
 
-        let hintedFiles = Self.matchRelevantFiles(relevantFiles, within: repoFiles, limit: 4)
+        let hintedFiles = Self.matchRelevantFiles(relevantFiles, within: repoFiles, limit: 8)
         for file in hintedFiles {
             guard let content = await workspaceFileContent(for: file) else { continue }
             let header = "--- \(file.relativePath) ---"
-            codeContextParts.append("\(header)\n\(String(content.prefix(1200)))")
+            codeContextParts.append("\(header)\n\(String(content.prefix(6_000)))")
             includedPaths.insert(file.relativePath.lowercased())
+            routeHintPaths.insert(file.relativePath.lowercased())
             sources.append(ContextSource(filePath: file.relativePath, method: .routeHint))
         }
 
-        if let hits = try? await searchCode(query: retrievalQuery, topK: 5) {
+        do {
+            let hits = try await searchCode(query: retrievalQuery, topK: 12)
             usedSemanticSearch = true
             for hit in hits {
-                guard !includedPaths.contains(hit.filePath.lowercased()) else { continue }
+                let normalizedPath = hit.filePath.lowercased()
+                let chunkKey = "\(normalizedPath)#\(hit.chunk.startLine)-\(hit.chunk.endLine)"
+                guard !routeHintPaths.contains(normalizedPath) else { continue }
+                guard !semanticChunkKeys.contains(chunkKey) else { continue }
                 let header = "--- \(hit.filePath) L\(hit.chunk.startLine)-\(hit.chunk.endLine) ---"
                 codeContextParts.append("\(header)\n\(hit.chunk.content)")
-                includedPaths.insert(hit.filePath.lowercased())
+                includedPaths.insert(normalizedPath)
+                semanticChunkKeys.insert(chunkKey)
                 sources.append(ContextSource(
                     filePath: hit.filePath,
                     startLine: hit.chunk.startLine,
@@ -993,20 +1177,27 @@ final class AIOrchestrator {
                     score: hit.score
                 ))
             }
+        } catch {
+            if !repoFiles.isEmpty {
+                retrievalNotice = "Semantic search unavailable - using file hints or file sampling instead. Download/load the embedding model and reindex for better results."
+                logger.warning("context.semanticSearchUnavailable reason=\(error.localizedDescription, privacy: .public)")
+            }
         }
 
         if codeContextParts.isEmpty, !repoFiles.isEmpty {
-            let sample = repoFiles.filter { !includedPaths.contains($0.relativePath.lowercased()) }.prefix(5)
+            let sample = repoFiles.filter { !includedPaths.contains($0.relativePath.lowercased()) }.prefix(10)
             for file in sample {
                 if let content = await workspaceFileContent(for: file) {
                     let header = "--- \(file.relativePath) ---"
-                    codeContextParts.append("\(header)\n\(String(content.prefix(500)))")
+                    codeContextParts.append("\(header)\n\(String(content.prefix(1_000)))")
                     sources.append(ContextSource(filePath: file.relativePath, method: .fallbackSample))
                 }
             }
         }
 
-        let rawPolicyText = contextPolicySnapshot.renderForPrompt(maxCharacters: 2000)
+        let rawPolicyText = contextPolicySnapshot.renderForPrompt(
+            maxCharacters: max(Self.maximumPolicyContextBudget, Self.qwenMaximumPolicyContextBudget)
+        )
         let memoryBlock = memory?.renderForPrompt(maxCharacters: Self.conversationMemoryRenderBudget) ?? ""
         let context = Self.buildPromptContext(
             rawPolicyText: rawPolicyText,
@@ -1017,8 +1208,23 @@ final class AIOrchestrator {
             maxPolicyBudget: Self.maximumPolicyContextBudget,
             maxConversationBudget: Self.maximumConversationContextBudget
         )
+        let qwenContext = Self.buildPromptContext(
+            rawPolicyText: rawPolicyText,
+            conversationMemoryBlock: memoryBlock,
+            codeParts: codeContextParts,
+            totalLimit: Self.qwenContextCap,
+            minCodeBudget: Self.qwenMinimumCodeContextBudget,
+            maxPolicyBudget: Self.qwenMaximumPolicyContextBudget,
+            maxConversationBudget: Self.qwenMaximumConversationContextBudget
+        )
 
-        return GatherResult(context: context, sources: sources, usedSemanticSearch: usedSemanticSearch)
+        return GatherResult(
+            context: context,
+            qwenContext: qwenContext,
+            sources: sources,
+            usedSemanticSearch: usedSemanticSearch,
+            retrievalNotice: retrievalNotice
+        )
     }
 
     nonisolated static func buildPromptContext(
@@ -1218,12 +1424,27 @@ final class AIOrchestrator {
         totalEstimatedTokens >= threshold
     }
 
-    private func generateExplanation(query: String, context: String) async throws -> String {
+    private func generateExplanation(
+        query: String,
+        context: String,
+        preferredProvider: ExecutionProvider
+    ) async throws -> ProviderBackedText {
+        if preferredProvider == .qwenCodeAssistant {
+            do {
+                let coder = try await requireQwenCoder()
+                let text = try await coder.generateCodeExplanation(prompt: query, context: context)
+                return ProviderBackedText(text: text, provider: .qwenCodeAssistant)
+            } catch let error as OrchestratorError {
+                logger.warning("qwen.explanation.unavailable fallback=FoundationModels reason=\(error.localizedDescription, privacy: .public)")
+            }
+        }
+
         guard #available(iOS 26.0, *) else {
             throw OrchestratorError.noModelAvailable
         }
         let fm = try requireFoundationModel()
-        return try await fm.generateAnswer(query: query, context: context, route: .explanation)
+        let text = try await fm.generateAnswer(query: query, context: context, route: .explanation)
+        return ProviderBackedText(text: text, provider: .foundationModel)
     }
 
     private func generateCode(query: String, context: String) async throws -> String {
@@ -1286,17 +1507,28 @@ final class AIOrchestrator {
         }
     }
 
-    private func logProviderSelection(query: String, route: Route, mode: String) {
-        let provider: String = route == .codeGeneration ? "QwenCoreMLPipelines" : "FoundationModels"
-        logger.info("route.selected provider=\(provider, privacy: .public) route=\(route.rawValue, privacy: .public) mode=\(mode, privacy: .public) repoLoaded=\(self.isRepoLoaded, privacy: .public) query=\(query, privacy: .private)")
+    private func logProviderSelection(
+        query: String,
+        route: Route,
+        mode: String,
+        provider explicitProvider: ExecutionProvider? = nil
+    ) {
+        let provider = explicitProvider ?? (route == .codeGeneration ? .qwenCodeGeneration : .foundationModel)
+        logger.info("route.selected provider=\(provider.rawValue, privacy: .public) route=\(route.rawValue, privacy: .public) mode=\(mode, privacy: .public) repoLoaded=\(self.isRepoLoaded, privacy: .public) query=\(query, privacy: .private)")
     }
 
-    private func recordExecutionTrace(route: Route, executesPatch: Bool = false, includesRouteClassifier: Bool = true) {
+    private func recordExecutionTrace(
+        route: Route,
+        executesPatch: Bool = false,
+        includesRouteClassifier: Bool = true,
+        explanationProvider: ExecutionProvider = .foundationModel
+    ) {
         lastResolvedRoute = route
         lastExecutionProviders = Self.expectedExecutionProviders(
             for: route,
             executesPatch: executesPatch,
-            includesRouteClassifier: includesRouteClassifier
+            includesRouteClassifier: includesRouteClassifier,
+            explanationProvider: explanationProvider
         )
     }
 

@@ -5,11 +5,34 @@ import Testing
 struct WorkflowDiagnosticsTests {
     @Test func executionProvidersMatchExpectedWorkflowForEachRoute() {
         #expect(AIOrchestrator.expectedExecutionProviders(for: .explanation) == [.routeClassifier, .semanticSearch, .foundationModel])
+        #expect(AIOrchestrator.expectedExecutionProviders(for: .explanation, explanationProvider: .qwenCodeAssistant) == [.routeClassifier, .semanticSearch, .qwenCodeAssistant])
         #expect(AIOrchestrator.expectedExecutionProviders(for: .search) == [.routeClassifier, .semanticSearch])
         #expect(AIOrchestrator.expectedExecutionProviders(for: .codeGeneration) == [.routeClassifier, .semanticSearch, .qwenCodeGeneration])
         #expect(AIOrchestrator.expectedExecutionProviders(for: .patchPlanning) == [.routeClassifier, .semanticSearch, .foundationModel])
         #expect(AIOrchestrator.expectedExecutionProviders(for: .patchPlanning, executesPatch: true) == [.routeClassifier, .semanticSearch, .foundationModel, .patchEngine])
         #expect(AIOrchestrator.expectedExecutionProviders(for: .patchPlanning, includesRouteClassifier: false) == [.semanticSearch, .foundationModel])
+    }
+
+    @Test func explanationProviderPolicyKeepsSimpleTasksOnFoundationModels() {
+        let provider = AIOrchestrator.preferredExplanationProvider(
+            query: "What is dependency injection?",
+            contextSources: [],
+            hasRepositoryContext: false
+        )
+
+        #expect(provider == .foundationModel)
+    }
+
+    @Test func explanationProviderPolicyUsesQwenForCodebaseQuestions() {
+        let provider = AIOrchestrator.preferredExplanationProvider(
+            query: "Why does chat mode fail with exceeded context in AIOrchestrator.swift?",
+            contextSources: [
+                ContextSource(filePath: "ios/HybridCoder/Services/AIOrchestrator.swift", method: .semanticSearch)
+            ],
+            hasRepositoryContext: true
+        )
+
+        #expect(provider == .qwenCodeAssistant)
     }
 
     @Test func promptContextBudgetPreservesCodeSectionWhenPolicyAndMemoryAreLarge() throws {
