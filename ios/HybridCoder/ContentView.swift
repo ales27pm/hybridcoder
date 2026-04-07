@@ -3,8 +3,10 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @State private var viewModel = AppViewModel()
-    @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
+    @State private var isSidebarOpen: Bool = false
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private let sidebarWidth: CGFloat = 280
 
     var body: some View {
         if viewModel.showOnboarding {
@@ -18,58 +20,18 @@ struct ContentView: View {
     }
 
     private var mainContent: some View {
-        Group {
-            if horizontalSizeClass == .compact {
-                compactTabContent
-            } else {
-                NavigationSplitView(columnVisibility: $columnVisibility) {
-                    sidebarContent
-                        .navigationTitle("HybridCoder")
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbar {
-                            ToolbarItem(placement: .topBarLeading) {
-                                Menu {
-                                    Button("Import Folder", systemImage: "folder.badge.plus") {
-                                        viewModel.isImportingFolder = true
-                                    }
+        ZStack(alignment: .leading) {
+            detailLayer
+                .offset(x: isSidebarOpen && isCompact ? sidebarWidth : 0)
+                .allowsHitTesting(!isSidebarOpen || !isCompact)
 
-                                    if viewModel.activeRepositoryURL != nil {
-                                        Button("Reindex", systemImage: "arrow.triangle.2.circlepath") {
-                                            viewModel.reindexRepository()
-                                        }
-                                        .disabled(viewModel.orchestrator.isIndexing)
-                                    }
-
-                                    Divider()
-
-                                    Button("Models", systemImage: "cpu") {
-                                        viewModel.selectedSection = .models
-                                    }
-
-                                    Button("Settings", systemImage: "gearshape") {
-                                        viewModel.showSettings = true
-                                    }
-                                } label: {
-                                    Image(systemName: "ellipsis.circle")
-                                        .foregroundStyle(Theme.accent)
-                                }
-                            }
-
-                            ToolbarItem(placement: .topBarTrailing) {
-                                Button("Chat", systemImage: "bubble.left.and.text.bubble.right") {
-                                    viewModel.selectedSection = .chat
-                                }
-                                .foregroundStyle(Theme.accent)
-                            }
-                        }
-                } detail: {
-                    detailContent
-                }
+            if isCompact {
+                compactSidebarOverlay
             }
         }
-        .navigationSplitViewStyle(.balanced)
         .tint(Theme.accent)
         .preferredColorScheme(.dark)
+        .gesture(sidebarDragGesture)
         .fileImporter(
             isPresented: $viewModel.isImportingFolder,
             allowedContentTypes: [.folder],
@@ -79,6 +41,7 @@ struct ContentView: View {
             case .success(let urls):
                 if let url = urls.first {
                     viewModel.importFolder(url: url)
+                    viewModel.selectedSection = .chat
                 }
             case .failure(let error):
                 viewModel.importError = error.localizedDescription
@@ -89,453 +52,243 @@ struct ContentView: View {
                 bookmarkService: viewModel.bookmarkService,
                 orchestrator: viewModel.orchestrator,
                 onOpenRepository: { repo in viewModel.openRepository(repo) },
-                onCloseRepository: { viewModel.closeRepository() }
+                onCloseRepository: { viewModel.closeRepository() },
+                privacyService: viewModel.privacyService,
+                sessionManager: viewModel.sessionManager
             )
+        }
+        .sheet(isPresented: $viewModel.showProjectHub) {
+            ProjectHubView(viewModel: viewModel)
+        }
+        .sheet(isPresented: $viewModel.showRecentPicker) {
+            RecentProjectPickerSheet(viewModel: viewModel)
+        }
+        .sheet(isPresented: $viewModel.showNewSandboxProject) {
+            NewSandboxProjectSheet(viewModel: viewModel.sandboxViewModel)
         }
         .task {
             viewModel.initialize()
+            await viewModel.sandboxViewModel.loadProjects()
         }
     }
 
-    private var compactTabContent: some View {
-        TabView(selection: compactTabSelection) {
-            NavigationStack {
-                ChatView(
-                    viewModel: viewModel.chatViewModel,
-                    orchestrator: viewModel.orchestrator,
-                    repositoryURL: viewModel.activeRepositoryURL,
-                    onImportRepo: { viewModel.isImportingFolder = true },
-                    onReindex: { viewModel.reindexRepository() }
-                )
-                .navigationTitle("Chat")
-                .navigationBarTitleDisplayMode(.inline)
-            }
-            .tabItem {
-                Label("Chat", systemImage: "bubble.left.and.text.bubble.right")
-            }
-            .tag(AppViewModel.SidebarSection.chat)
-
-            NavigationStack {
-                PatchListView(chatViewModel: viewModel.chatViewModel)
-                    .navigationTitle("Patches")
-                    .navigationBarTitleDisplayMode(.inline)
-            }
-            .tabItem {
-                Label("Patches", systemImage: "doc.badge.gearshape")
-            }
-            .tag(AppViewModel.SidebarSection.patches)
-
-            NavigationStack {
-                ModelManagerView(orchestrator: viewModel.orchestrator)
-                    .navigationTitle("Models")
-                    .navigationBarTitleDisplayMode(.inline)
-            }
-            .tabItem {
-                Label("Models", systemImage: "cpu")
-            }
-            .tag(AppViewModel.SidebarSection.models)
-        }
-        .onAppear {
-            normalizeCompactSelection()
-        }
-        .onChange(of: viewModel.selectedSection) { _, _ in
-            normalizeCompactSelection()
-        }
+    private var isCompact: Bool {
+        horizontalSizeClass == .compact
     }
 
-    private var compactTabSelection: Binding<AppViewModel.SidebarSection> {
-        Binding {
-            switch viewModel.selectedSection {
-            case .chat: return .chat
-            case .patches: return .patches
-            case .models: return .models
-            case .fileViewer: return .chat
-            }
-        } set: { newValue in
-            viewModel.selectedSection = newValue
-        }
-    }
+    // MARK: - Detail Layer
 
-    private func normalizeCompactSelection() {
-        if case .fileViewer = viewModel.selectedSection {
-            viewModel.selectedSection = .chat
-        }
-    }
-
-    @ViewBuilder
-    private var sidebarContent: some View {
-        VStack(spacing: 0) {
-            statusHeader
-
-            if let error = viewModel.importError {
-                importErrorBanner(error)
-            }
-
-            warmUpErrorBanner
-
-            if viewModel.orchestrator.isIndexing {
-                indexingBanner
-            }
-
-            if let tree = viewModel.fileTree {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(tree.children) { child in
-                            FileTreeView(
-                                node: child,
-                                selectedFile: viewModel.selectedFile,
-                                onSelect: { node in
-                                    viewModel.selectFile(node)
-                                }
-                            )
+    private var detailLayer: some View {
+        Group {
+            if isCompact {
+                NavigationStack {
+                    currentDetailView
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                sidebarToggleButton
+                            }
+                            ToolbarItem(placement: .topBarTrailing) {
+                                trailingToolbarContent
+                            }
                         }
+                }
+            } else {
+                HStack(spacing: 0) {
+                    SidebarMenuView(
+                        selectedSection: $viewModel.selectedSection,
+                        isOpen: .constant(true),
+                        viewModel: viewModel,
+                        onShowProjectHub: { viewModel.showProjectHub = true },
+                        onReindex: { viewModel.reindexRepository() },
+                        onShowSettings: { viewModel.showSettings = true }
+                    )
+                    .frame(width: sidebarWidth)
+
+                    Divider().overlay(Theme.border)
+
+                    NavigationStack {
+                        currentDetailView
+                            .toolbar {
+                                ToolbarItem(placement: .topBarTrailing) {
+                                    trailingToolbarContent
+                                }
+                            }
                     }
-                    .padding(.vertical, 4)
-                }
-            } else {
-                emptyRepositoryState
-            }
-
-            sidebarFooter
-        }
-        .background(Theme.sidebarBg)
-    }
-
-    private var statusHeader: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 8) {
-                HStack(spacing: 10) {
-                    repoStatusPill
-                    Spacer()
-                    indexStatusPill
-                }
-
-                HStack(spacing: 12) {
-                    foundationStatusLabel
-                    Spacer()
-                    semanticStatusLabel
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(Theme.cardBg)
-
-            Divider().overlay(Theme.border)
         }
+        .animation(.spring(duration: 0.35, bounce: 0.1), value: isSidebarOpen)
     }
 
-    private var repoStatusPill: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(viewModel.activeRepositoryURL != nil ? Theme.accent : .orange)
-                .frame(width: 6, height: 6)
-
-            if let url = viewModel.activeRepositoryURL {
-                Text(url.lastPathComponent)
-                    .font(.system(.caption2, design: .monospaced).weight(.medium))
-                    .foregroundStyle(.white.opacity(0.8))
-                    .lineLimit(1)
-            } else {
-                Text("No Repo")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(Theme.dimText)
-            }
-        }
-    }
-
-    private var indexStatusPill: some View {
-        HStack(spacing: 5) {
-            let stats = viewModel.orchestrator.indexStats
-            let isIndexing = viewModel.orchestrator.isIndexing
-            let isProcessing = viewModel.orchestrator.isProcessing
-            let chunkCount = stats?.embeddedChunks ?? 0
-
-            if isProcessing {
-                Image(systemName: "brain")
-                    .font(.system(size: 9))
-                    .foregroundStyle(Theme.accent)
-                    .symbolEffect(.pulse, isActive: true)
-            } else if isIndexing {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 9))
-                    .foregroundStyle(Theme.accent)
-                    .symbolEffect(.rotate, isActive: true)
-            } else {
-                Image(systemName: chunkCount > 0 ? "magnifyingglass" : "xmark.circle")
-                    .font(.system(size: 9))
-                    .foregroundStyle(chunkCount > 0 ? Theme.accent.opacity(0.6) : Theme.dimText)
-            }
-
-            if isProcessing {
-                Text("Processing…")
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(Theme.accent)
-            } else {
-                Text(isIndexing ? "Indexing…" : (chunkCount > 0 ? "\(chunkCount) chunks" : "Not indexed"))
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(Theme.dimText)
-            }
-        }
-    }
-
-    private var foundationStatusLabel: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "brain")
-                .font(.system(size: 8))
-
-            Text(viewModel.chatViewModel.foundationModelStatus)
-                .font(.system(size: 9, design: .monospaced))
-                .lineLimit(1)
-        }
-        .foregroundStyle(Theme.dimText)
-    }
-
-    private var semanticStatusLabel: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "waveform.badge.magnifyingglass")
-                .font(.system(size: 8))
-
-            Text(viewModel.chatViewModel.semanticStatus)
-                .font(.system(size: 9, design: .monospaced))
-                .lineLimit(1)
-        }
-        .foregroundStyle(Theme.dimText)
-    }
+    // MARK: - Compact Sidebar Overlay
 
     @ViewBuilder
-    private var warmUpErrorBanner: some View {
-        if let error = viewModel.orchestrator.warmUpError {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-
-                Text(error)
-                    .font(.caption2)
-                    .foregroundStyle(.orange.opacity(0.9))
-                    .lineLimit(2)
-
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.orange.opacity(0.08))
-        }
-    }
-
-    private func importErrorBanner(_ message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.caption2)
-                .foregroundStyle(.orange)
-
-            Text(message)
-                .font(.caption2)
-                .foregroundStyle(.orange.opacity(0.9))
-                .lineLimit(2)
-
-            Spacer()
-
-            Button {
-                viewModel.importError = nil
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.dimText)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.orange.opacity(0.08))
-    }
-
-    private var indexingBanner: some View {
-        VStack(spacing: 4) {
-            let progress: Double = {
-                guard let p = viewModel.orchestrator.indexingProgress, p.total > 0 else { return 0 }
-                return Double(p.completed) / Double(p.total)
-            }()
-
-            ProgressView(value: progress)
-                .tint(Theme.accent)
-
-            HStack {
-                Text("Indexing files…")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.dimText)
-
-                Spacer()
-
-                Text("\(Int(progress * 100))%")
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(Theme.accent)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Theme.codeBg)
-    }
-
-    private var emptyRepositoryState: some View {
-        VStack(spacing: 16) {
-            Spacer()
-
-            Image(systemName: "folder.badge.plus")
-                .font(.system(size: 36, weight: .light))
-                .foregroundStyle(Theme.accent.opacity(0.4))
-
-            Text("No Repository")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.white.opacity(0.6))
-
-            Text("Import a folder from the\nFiles app to get started.")
-                .font(.caption)
-                .foregroundStyle(Theme.dimText)
-                .multilineTextAlignment(.center)
-
-            Button {
-                viewModel.isImportingFolder = true
-            } label: {
-                Label("Import Folder", systemImage: "folder.badge.plus")
-                    .font(.caption.weight(.medium))
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Theme.accent)
-            .controlSize(.small)
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private var sidebarFooter: some View {
-        VStack(spacing: 0) {
-            Divider().overlay(Theme.border)
-
-            HStack(spacing: 0) {
-                sidebarTab(
-                    icon: "bubble.left.and.text.bubble.right",
-                    label: "Chat",
-                    isActive: viewModel.selectedSection == .chat
-                ) {
-                    viewModel.selectedSection = .chat
+    private var compactSidebarOverlay: some View {
+        if isSidebarOpen {
+            Color.black.opacity(0.5)
+                .ignoresSafeArea()
+                .offset(x: sidebarWidth)
+                .onTapGesture {
+                    withAnimation(.spring(duration: 0.35, bounce: 0.1)) {
+                        isSidebarOpen = false
+                    }
                 }
-
-                sidebarTab(
-                    icon: "doc.badge.gearshape",
-                    label: "Patches",
-                    badge: viewModel.chatViewModel.totalPendingPatches,
-                    isActive: {
-                        if case .patches = viewModel.selectedSection { return true }
-                        return false
-                    }()
-                ) {
-                    viewModel.selectedSection = .patches
-                }
-
-                sidebarTab(icon: "cpu", label: "Models", isActive: {
-                    if case .models = viewModel.selectedSection { return true }
-                    return false
-                }()) {
-                    viewModel.selectedSection = .models
-                }
-            }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 8)
-            .background(Theme.cardBg)
+                .transition(.opacity)
         }
+
+        SidebarMenuView(
+            selectedSection: $viewModel.selectedSection,
+            isOpen: $isSidebarOpen,
+            viewModel: viewModel,
+            onShowProjectHub: { viewModel.showProjectHub = true },
+            onReindex: { viewModel.reindexRepository() },
+            onShowSettings: { viewModel.showSettings = true }
+        )
+        .frame(width: sidebarWidth)
+        .offset(x: isSidebarOpen ? 0 : -sidebarWidth)
+        .shadow(color: .black.opacity(isSidebarOpen ? 0.4 : 0), radius: 20, x: 5)
     }
 
-    private func sidebarTab(
-        icon: String,
-        label: String,
-        badge: Int = 0,
-        isActive: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
+    // MARK: - Toolbar
+
+    private var sidebarToggleButton: some View {
         Button {
-            action()
-        } label: {
-            VStack(spacing: 4) {
-                ZStack(alignment: .topTrailing) {
-                    Image(systemName: icon)
-                        .font(.subheadline)
-
-                    if badge > 0 {
-                        Text("\(badge)")
-                            .font(.system(size: 9, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
-                            .padding(3)
-                            .background(.red, in: Circle())
-                            .offset(x: 6, y: -4)
-                    }
-                }
-
-                Text(label)
-                    .font(.caption2)
+            withAnimation(.spring(duration: 0.35, bounce: 0.1)) {
+                isSidebarOpen.toggle()
             }
-            .foregroundStyle(isActive ? Theme.accent : Theme.dimText)
-            .frame(maxWidth: .infinity)
+        } label: {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(Theme.accent)
         }
-        .buttonStyle(.plain)
-        .sensoryFeedback(.selection, trigger: isActive)
+        .sensoryFeedback(.impact(weight: .light), trigger: isSidebarOpen)
     }
 
     @ViewBuilder
-    private var detailContent: some View {
+    private var trailingToolbarContent: some View {
+        switch viewModel.selectedSection {
+        case .chat:
+            Menu {
+                Button("Projects", systemImage: "square.grid.2x2") {
+                    viewModel.showProjectHub = true
+                }
+                if viewModel.activeRepositoryURL != nil {
+                    Button("Reindex Repository", systemImage: "arrow.triangle.2.circlepath") {
+                        viewModel.reindexRepository()
+                    }
+                    .disabled(viewModel.orchestrator.isIndexing)
+                }
+                if !viewModel.chatViewModel.messages.isEmpty {
+                    Divider()
+                    Button("Clear Chat", systemImage: "trash", role: .destructive) {
+                        viewModel.chatViewModel.clearChat()
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .foregroundStyle(Theme.dimText)
+            }
+
+        case .sandbox:
+            Menu {
+                Button("New Project", systemImage: "plus.rectangle.on.folder") {
+                    viewModel.prepareNewPrototypeProject()
+                }
+                Button("All Projects", systemImage: "square.grid.2x2") {
+                    viewModel.showProjectHub = true
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .foregroundStyle(Theme.accent)
+            }
+
+        default:
+            EmptyView()
+        }
+    }
+
+    // MARK: - Detail Content
+
+    @ViewBuilder
+    private var currentDetailView: some View {
         switch viewModel.selectedSection {
         case .chat:
             ChatView(
                 viewModel: viewModel.chatViewModel,
                 orchestrator: viewModel.orchestrator,
-                repositoryURL: viewModel.activeRepositoryURL,
-                onImportRepo: { viewModel.isImportingFolder = true },
-                onReindex: { viewModel.reindexRepository() }
+                hasActiveWorkspace: viewModel.hasActiveWorkspace,
+                onOpenProjectHub: { viewModel.showProjectHub = true },
+                onReindex: { viewModel.reindexRepository() },
+                onNavigateToPatches: {
+                    withAnimation(.snappy(duration: 0.25)) {
+                        viewModel.selectedSection = .patches
+                    }
+                },
+                onNavigateToFile: { filePath in
+                    viewModel.navigateToFileByPath(filePath)
+                }
             )
             .navigationTitle("Chat")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        if viewModel.activeRepositoryURL != nil {
-                            Button("Reindex Repository", systemImage: "arrow.triangle.2.circlepath") {
-                                viewModel.reindexRepository()
-                            }
-                            .disabled(viewModel.orchestrator.isIndexing)
-                        }
-
-                        if !viewModel.chatViewModel.messages.isEmpty {
-                            Button("Clear Chat", systemImage: "trash", role: .destructive) {
-                                viewModel.chatViewModel.clearChat()
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .foregroundStyle(Theme.dimText)
-                    }
-                }
-            }
 
         case .fileViewer(let node):
             FileViewerView(
                 file: node,
-                repoAccess: viewModel.orchestrator.repoAccess
+                repoAccess: viewModel.orchestrator.repoAccess,
+                onSave: { viewModel.handleRepositoryFileSaved() }
             )
             .navigationTitle(node.name)
             .navigationBarTitleDisplayMode(.inline)
 
         case .patches:
-            PatchListView(
-                chatViewModel: viewModel.chatViewModel
-            )
-            .navigationTitle("Patches")
-            .navigationBarTitleDisplayMode(.inline)
+            PatchListView(chatViewModel: viewModel.chatViewModel)
+                .navigationTitle("Patches")
+                .navigationBarTitleDisplayMode(.inline)
 
         case .models:
             ModelManagerView(orchestrator: viewModel.orchestrator)
                 .navigationTitle("Models")
                 .navigationBarTitleDisplayMode(.inline)
+
+        case .sandbox:
+            sandboxContent
+                .navigationTitle(viewModel.sandboxNavigationTitle)
+                .navigationBarTitleDisplayMode(.inline)
         }
+    }
+
+    @ViewBuilder
+    private var sandboxContent: some View {
+        if case .some(.repository) = viewModel.activeSandboxWorkspace {
+            RepositorySandboxView(viewModel: viewModel)
+        } else if let project = viewModel.sandboxViewModel.activeProject {
+            BuilderWorkspaceView(
+                viewModel: viewModel.sandboxViewModel,
+                project: project
+            )
+        } else {
+            SandboxListView(viewModel: viewModel.sandboxViewModel)
+        }
+    }
+
+    // MARK: - Drag Gesture
+
+    private var sidebarDragGesture: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onEnded { value in
+                guard isCompact else { return }
+                let horizontal = value.translation.width
+                let velocity = value.velocity.width
+
+                if !isSidebarOpen && horizontal > 60 && velocity > -200 {
+                    withAnimation(.spring(duration: 0.35, bounce: 0.1)) {
+                        isSidebarOpen = true
+                    }
+                } else if isSidebarOpen && horizontal < -60 && velocity < 200 {
+                    withAnimation(.spring(duration: 0.35, bounce: 0.1)) {
+                        isSidebarOpen = false
+                    }
+                }
+            }
     }
 }

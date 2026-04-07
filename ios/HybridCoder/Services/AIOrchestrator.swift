@@ -1,21 +1,79 @@
 import Foundation
 import OSLog
 
+nonisolated enum PromptContextBudget {
+    static let foundationContextCap = 2000
+    static let qwenContextCap = 32_000
+    static let downstreamContextCap = foundationContextCap
+    static let minimumCodeContextBudget = 1100
+    static let maximumPolicyContextBudget = 350
+    static let maximumConversationContextBudget = 400
+    static let qwenMinimumCodeContextBudget = 26_000
+    static let qwenMaximumPolicyContextBudget = 2_000
+    static let qwenMaximumConversationContextBudget = 2_000
+}
+
+nonisolated struct RouteResolution: Sendable, Equatable {
+    let route: Route
+    let retrievalQuery: String
+    let relevantFiles: [String]
+    let reasoning: String
+    let confidence: Int
+}
+
 @Observable
 @MainActor
 final class AIOrchestrator {
+    nonisolated enum WorkspaceSource: String, Sendable {
+        case repository
+        case prototype
+    }
+
+    nonisolated enum ExecutionProvider: String, Sendable, CaseIterable {
+        case routeClassifier
+        case semanticSearch
+        case foundationModel
+        case qwenCodeGeneration
+        case qwenCodeAssistant
+        case patchEngine
+    }
+
+    private static let downstreamContextCap = PromptContextBudget.downstreamContextCap
+    private static let qwenContextCap = PromptContextBudget.qwenContextCap
+    private static let minimumCodeContextBudget = PromptContextBudget.minimumCodeContextBudget
+    private static let maximumPolicyContextBudget = PromptContextBudget.maximumPolicyContextBudget
+    private static let maximumConversationContextBudget = PromptContextBudget.maximumConversationContextBudget
+    private static let qwenMinimumCodeContextBudget = PromptContextBudget.qwenMinimumCodeContextBudget
+    private static let qwenMaximumPolicyContextBudget = PromptContextBudget.qwenMaximumPolicyContextBudget
+    private static let qwenMaximumConversationContextBudget = PromptContextBudget.qwenMaximumConversationContextBudget
+    // Keep this equal to ConversationMemoryContext.renderForPrompt(maxCharacters:) input.
+    // We intentionally enforce the same budget here as a second guardrail during final packing.
+    private static let conversationMemoryRenderBudget = max(maximumConversationContextBudget, qwenMaximumConversationContextBudget)
+
     let repoAccess = RepoAccessService()
     let modelRegistry: ModelRegistry
     let embeddingService: CoreMLEmbeddingService
     let modelDownload: ModelDownloadService
+    let contextPolicyLoader: ContextPolicyLoader
+    let promptTemplateService: PromptTemplateService
+    let globalPolicyDirectory: URL?
 
     private(set) var searchIndex: SemanticSearchIndex?
     private(set) var patchEngine: PatchEngine?
     private(set) var foundationModel: AnyObject?
+    private(set) var qwenCoderService: QwenCoderService?
+    private(set) var contextPolicySnapshot: ContextPolicySnapshot = .init(files: [])
+    private(set) var templateDiagnostics: [DiscoveryDiagnostic] = []
+    private(set) var policyWorkingDirectory: URL?
+    private(set) var sessionManager: LanguageModelSessionManager?
 
     private(set) var repoRoot: URL?
     private(set) var repoFiles: [RepoFile] = []
     private(set) var indexStats: RepoIndexStats?
+    private(set) var activeWorkspaceSource: WorkspaceSource?
+    private(set) var activePrototypeProject: SandboxProject?
+    private(set) var lastResolvedRoute: Route?
+    private(set) var lastExecutionProviders: [ExecutionProvider] = []
 
     private(set) var isWarmingUp: Bool = false
     private(set) var isIndexing: Bool = false
@@ -23,27 +81,100 @@ final class AIOrchestrator {
     private(set) var warmUpError: String?
     private(set) var indexingProgress: (completed: Int, total: Int)?
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "AIOrchestrator")
+    private var codeGenerationLifecycleToken: UInt64 = 0
+    private var isCodeGenerationWarmUpInFlight: Bool = false
+    private var workspaceStateGeneration: UInt64 = 0
+    private var prototypeRebuildRequestedGeneration: UInt64 = 0
+    private var prototypeRebuildCompletedGeneration: UInt64 = 0
+    private var prototypeRebuildQueuedWhileIndexing: Bool = false
 
     var isRepoLoaded: Bool { repoRoot != nil }
+    var isPrototypeLoaded: Bool { activePrototypeProject != nil }
 
-    init() {
+    init(
+        promptTemplateService: PromptTemplateService = PromptTemplateService(),
+        globalPolicyDirectory: URL? = HybridCoderResourceLocator.globalPoliciesDirectory(),
+        sessionManager: LanguageModelSessionManager? = nil
+    ) {
         let registry = ModelRegistry()
         self.modelRegistry = registry
         self.embeddingService = CoreMLEmbeddingService(modelID: registry.activeEmbeddingModelID, registry: registry)
         self.modelDownload = ModelDownloadService(registry: registry)
-        refreshRegistryInstallState()
+        self.contextPolicyLoader = ContextPolicyLoader()
+        self.promptTemplateService = promptTemplateService
+        self.globalPolicyDirectory = globalPolicyDirectory
+        self.sessionManager = sessionManager
+        Task { [weak self] in
+            await self?.refreshRegistryInstallState()
+        }
+    }
+
+    func configureSessionManager(_ manager: LanguageModelSessionManager) {
+        self.sessionManager = manager
+        configureFoundationModelTools()
+    }
+
+    private func configureFoundationModelTools() {
+        if #available(iOS 26.0, *) {
+            guard let fm = foundationModel as? FoundationModelService else { return }
+            let toolProviders = buildToolProviders()
+            fm.configure(toolProviders: toolProviders, sessionManager: sessionManager)
+        }
+    }
+
+    private func buildToolProviders() -> ToolProviders {
+        let repoAccessRef = repoAccess
+        let repoFilesSnapshot = repoFiles
+        let searchIndexRef = searchIndex
+        let activeWorkspace = activeWorkspaceSource
+        let activePrototype = activePrototypeProject
+
+        let readFile: @Sendable (String) async -> String? = { path in
+            let matched = AIOrchestrator.matchRelevantFiles([path], within: repoFilesSnapshot, limit: 1)
+            guard let file = matched.first else { return nil }
+
+            if activeWorkspace == .prototype,
+               let project = activePrototype,
+               let protoFile = project.files.first(where: { $0.name == file.relativePath }) {
+                return protoFile.content
+            }
+            return await repoAccessRef.readUTF8(at: file.absoluteURL)
+        }
+
+        let searchCode: @Sendable (String, Int) async -> [(filePath: String, startLine: Int, endLine: Int, content: String, score: Float)] = { query, topK in
+            guard let index = searchIndexRef else { return [] }
+            guard let hits = try? await index.search(query: query, topK: topK) else { return [] }
+            return hits.map { ($0.filePath, $0.chunk.startLine, $0.chunk.endLine, $0.chunk.content, $0.score) }
+        }
+
+        let listFiles: @Sendable (String?) async -> [String] = { filter in
+            if let filter {
+                let lowered = filter.lowercased()
+                if lowered.hasPrefix(".") {
+                    return repoFilesSnapshot.filter { $0.fileExtension == String(lowered.dropFirst()) }.map(\.relativePath)
+                }
+                return repoFilesSnapshot.filter { $0.relativePath.lowercased().contains(lowered) }.map(\.relativePath)
+            }
+            return repoFilesSnapshot.map(\.relativePath)
+        }
+
+        return ToolProviders(readFile: readFile, searchCode: searchCode, listFiles: listFiles)
     }
 
     var foundationModelStatus: String {
-        if let fm = foundationModel as? FoundationModelService {
-            return fm.statusText
+        if #available(iOS 26.0, *) {
+            if let fm = foundationModel as? FoundationModelService {
+                return fm.statusText
+            }
         }
-        return "Unavailable"
+        return "Requires iOS 26"
     }
 
     var isFoundationModelAvailable: Bool {
-        if let fm = foundationModel as? FoundationModelService {
-            return fm.isAvailable
+        if #available(iOS 26.0, *) {
+            if let fm = foundationModel as? FoundationModelService {
+                return fm.isAvailable
+            }
         }
         return false
     }
@@ -77,15 +208,25 @@ final class AIOrchestrator {
 
         if searchIndex == nil {
             searchIndex = SemanticSearchIndex(embeddingService: embeddingService)
+            await searchIndex?.restorePersistedSnapshotIfAvailable()
         }
         if patchEngine == nil {
             patchEngine = PatchEngine(repoAccess: repoAccess)
         }
 
         if foundationModel == nil {
-            let fm = FoundationModelService(registry: modelRegistry, modelID: modelRegistry.activeGenerationModelID)
-            fm.refreshStatus()
-            foundationModel = fm
+            if #available(iOS 26.0, *) {
+                let fm = FoundationModelService(registry: modelRegistry, modelID: modelRegistry.activeGenerationModelID)
+                fm.refreshStatus()
+                let toolProviders = buildToolProviders()
+                fm.configure(toolProviders: toolProviders, sessionManager: sessionManager)
+                foundationModel = fm
+            }
+        }
+
+        if qwenCoderService == nil {
+            qwenCoderService = makeQwenCoderService(modelID: modelRegistry.activeCodeGenerationModelID)
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
         }
 
         isWarmingUp = false
@@ -103,8 +244,111 @@ final class AIOrchestrator {
         modelDownload.deleteDownloadedModels(modelID: modelRegistry.activeEmbeddingModelID)
     }
 
-    func refreshRegistryInstallState() {
-        modelDownload.refreshInstallState(modelID: modelRegistry.activeEmbeddingModelID)
+    func refreshRegistryInstallState() async {
+        await modelDownload.refreshInstallState(modelID: modelRegistry.activeEmbeddingModelID)
+
+        let codeGenerationModelID = modelRegistry.activeCodeGenerationModelID
+        let qwenInstalled = modelRegistry.isCodeGenerationModelInstalled(modelID: codeGenerationModelID)
+        modelRegistry.setInstallState(for: codeGenerationModelID, qwenInstalled ? .installed : .notInstalled)
+    }
+
+    private func makeQwenCoderService(modelID: String) -> QwenCoderService {
+        let downloadService = modelDownload
+        let tokenProvider: () -> String? = { [weak downloadService] in
+            guard let downloadService else { return nil }
+            let token = downloadService.huggingFaceToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            return token.isEmpty ? nil : token
+        }
+        return QwenCoderService(
+            modelName: modelID,
+            hubDownloadBase: ModelRegistry.coreMLPipelinesDownloadRoot,
+            accessTokenProvider: tokenProvider
+        )
+    }
+
+    private func ensureQwenServiceMatchesActiveModel() async -> QwenCoderService {
+        let activeModelID = modelRegistry.activeCodeGenerationModelID
+
+        if let existing = qwenCoderService,
+           existing.modelName == activeModelID {
+            return existing
+        }
+
+        let service = makeQwenCoderService(modelID: activeModelID)
+        qwenCoderService = service
+        return service
+    }
+
+    func warmUpCodeGenerationModel() async throws {
+        guard !isCodeGenerationWarmUpInFlight else { return }
+
+        isCodeGenerationWarmUpInFlight = true
+        codeGenerationLifecycleToken &+= 1
+        let token = codeGenerationLifecycleToken
+        let activeModelID = modelRegistry.activeCodeGenerationModelID
+        let wasInstalled = modelRegistry.isCodeGenerationModelInstalled(modelID: activeModelID)
+
+        modelRegistry.setInstallState(for: activeModelID, .downloading(progress: 0.05))
+        modelRegistry.setLoadState(for: activeModelID, .loading)
+
+        defer {
+            if codeGenerationLifecycleToken == token {
+                isCodeGenerationWarmUpInFlight = false
+            }
+        }
+
+        do {
+            let service = await ensureQwenServiceMatchesActiveModel()
+            try await service.warmUp { [weak self] progress in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let bounded = min(max(progress, 0.05), 0.99)
+                    self.modelRegistry.setInstallState(for: activeModelID, .downloading(progress: bounded))
+                }
+            }
+            guard codeGenerationLifecycleToken == token else { return }
+
+            if modelRegistry.areCodeGenerationModelFilesInstalled(modelID: activeModelID) {
+                modelRegistry.markCodeGenerationModelInstalled(modelID: activeModelID)
+                modelRegistry.setInstallState(for: activeModelID, .installed)
+                modelRegistry.setLoadState(for: activeModelID, .loaded)
+                warmUpError = nil
+            } else {
+                let message = "CoreMLPipelines finished warm-up, but expected Qwen snapshot files were not found in Application Support."
+                modelRegistry.setInstallState(for: activeModelID, .notInstalled)
+                modelRegistry.setLoadState(for: activeModelID, .failed(message))
+                warmUpError = message
+                throw OrchestratorError.codeGenerationModelUnavailable(message)
+            }
+        } catch {
+            guard codeGenerationLifecycleToken == token else { return }
+            modelRegistry.setInstallState(for: activeModelID, wasInstalled ? .installed : .notInstalled)
+            modelRegistry.setLoadState(for: activeModelID, .failed(error.localizedDescription))
+            warmUpError = error.localizedDescription
+            throw error
+        }
+    }
+
+    func unloadCodeGenerationModel() async {
+        codeGenerationLifecycleToken &+= 1
+        isCodeGenerationWarmUpInFlight = false
+
+        guard let service = qwenCoderService else {
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
+            return
+        }
+
+        _ = try? await service.unload()
+        modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
+    }
+
+    func resetCodeGenerationModelState() async {
+        await unloadCodeGenerationModel()
+        let activeModelID = modelRegistry.activeCodeGenerationModelID
+        modelRegistry.deleteCodeGenerationModelAssets(modelID: activeModelID)
+        modelRegistry.setInstallState(for: activeModelID, .notInstalled)
+        modelRegistry.setLoadState(for: activeModelID, .unloaded)
+        warmUpError = nil
     }
 
     func importRepo(url: URL) async throws {
@@ -118,7 +362,14 @@ final class AIOrchestrator {
 
         repoRoot = url
         repoFiles = files
+        activePrototypeProject = nil
+        activeWorkspaceSource = .repository
+        workspaceStateGeneration &+= 1
+        await promptTemplateService.invalidateCache(for: url)
+        await refreshTemplateDiagnostics(repoRoot: url)
+        await refreshContextPolicies(repoRoot: url)
 
+        invalidateFoundationModelSessions()
         await rebuildIndex()
     }
 
@@ -135,18 +386,232 @@ final class AIOrchestrator {
         let files = await repoAccess.listSourceFiles(in: url)
         repoRoot = url
         repoFiles = files
+        activePrototypeProject = nil
+        activeWorkspaceSource = .repository
+        workspaceStateGeneration &+= 1
+        await promptTemplateService.invalidateCache(for: url)
+        await refreshTemplateDiagnostics(repoRoot: url)
+        await refreshContextPolicies(repoRoot: url)
         return true
     }
 
     func closeRepo() async {
+        guard activeWorkspaceSource == .repository else { return }
+        let expectedGeneration = workspaceStateGeneration
+        let expectedRoot = repoRoot
+
         if let root = repoRoot {
             await repoAccess.stopAccessing(root)
+            guard workspaceStateGeneration == expectedGeneration,
+                  activeWorkspaceSource == .repository,
+                  repoRoot == expectedRoot else { return }
         }
+
         repoRoot = nil
         repoFiles = []
         indexStats = nil
         indexingProgress = nil
+        activePrototypeProject = nil
+        if activeWorkspaceSource == .repository {
+            activeWorkspaceSource = nil
+        }
+        lastResolvedRoute = nil
+        lastExecutionProviders = []
+        contextPolicySnapshot = .init(files: [])
+        templateDiagnostics = []
+        policyWorkingDirectory = nil
+        invalidateFoundationModelSessions()
+        await promptTemplateService.clearCache()
+        guard workspaceStateGeneration == expectedGeneration,
+              activeWorkspaceSource == .repository,
+              repoRoot == nil else { return }
         await searchIndex?.clear()
+    }
+
+    func openPrototypeWorkspace(_ project: SandboxProject) async {
+        activePrototypeProject = project
+        activeWorkspaceSource = .prototype
+        workspaceStateGeneration &+= 1
+        prototypeRebuildRequestedGeneration &+= 1
+        let protoRoot = Self.prototypeWorkspaceRoot(for: project)
+        Self.materializePrototypeFiles(project, to: protoRoot)
+        repoRoot = protoRoot
+        repoFiles = Self.prototypeRepoFiles(for: project)
+        contextPolicySnapshot = .init(files: [])
+        templateDiagnostics = []
+        policyWorkingDirectory = nil
+        if patchEngine == nil {
+            patchEngine = PatchEngine(repoAccess: repoAccess)
+        }
+        invalidateFoundationModelSessions()
+        await promptTemplateService.clearCache()
+        await rebuildPrototypeIndex()
+    }
+
+    func updatePrototypeWorkspace(_ project: SandboxProject) async {
+        guard activePrototypeProject?.id == project.id else { return }
+        await openPrototypeWorkspace(project)
+    }
+
+    func closePrototypeWorkspace() async {
+        guard activeWorkspaceSource == .prototype else { return }
+        let expectedGeneration = workspaceStateGeneration
+
+        activePrototypeProject = nil
+        repoRoot = nil
+        repoFiles = []
+        indexStats = nil
+        indexingProgress = nil
+        if activeWorkspaceSource == .prototype {
+            activeWorkspaceSource = nil
+        }
+        lastResolvedRoute = nil
+        lastExecutionProviders = []
+        prototypeRebuildRequestedGeneration = prototypeRebuildCompletedGeneration
+        guard workspaceStateGeneration == expectedGeneration,
+              activeWorkspaceSource == nil else { return }
+        await searchIndex?.clear()
+    }
+
+
+
+    func invalidateFoundationModelSessions() {
+        if #available(iOS 26.0, *) {
+            if let fm = foundationModel as? FoundationModelService {
+                fm.invalidateSessions()
+                let toolProviders = buildToolProviders()
+                fm.configure(toolProviders: toolProviders, sessionManager: sessionManager)
+            }
+        }
+    }
+
+    func setPolicyWorkingContext(_ url: URL?) {
+        guard let url else {
+            policyWorkingDirectory = nil
+            return
+        }
+
+        let standardized = url.standardizedFileURL
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: standardized.path(percentEncoded: false), isDirectory: &isDirectory)
+
+        if exists {
+            policyWorkingDirectory = isDirectory.boolValue ? standardized : standardized.deletingLastPathComponent()
+            return
+        }
+
+        policyWorkingDirectory = standardized.hasDirectoryPath ? standardized : standardized.deletingLastPathComponent()
+    }
+
+    func loadContextPolicies(repoRoot: URL) async -> ContextPolicySnapshot {
+        let anchors = Self.resolvePolicyLoadAnchors(repoRoot: repoRoot, preferredWorkingDirectory: policyWorkingDirectory)
+        let repoSnapshot = await contextPolicyLoader.loadPolicyFiles(startingAt: anchors.start, stopAt: anchors.stopAt)
+
+        guard let globalPolicyDirectory else {
+            return repoSnapshot
+        }
+
+        let globalSnapshot = await contextPolicyLoader.loadPolicyFiles(
+            startingAt: globalPolicyDirectory,
+            stopAt: globalPolicyDirectory
+        )
+
+        return Self.mergePolicySnapshots([
+            Self.prefixedPolicySnapshot(globalSnapshot, prefix: "app"),
+            repoSnapshot
+        ])
+    }
+
+    func refreshContextPolicies(repoRoot overrideRepoRoot: URL? = nil) async {
+        guard let root = overrideRepoRoot ?? repoRoot else {
+            contextPolicySnapshot = .init(files: [])
+            return
+        }
+
+        contextPolicySnapshot = await loadContextPolicies(repoRoot: root)
+    }
+
+    func refreshTemplateDiagnostics(repoRoot overrideRepoRoot: URL? = nil) async {
+        guard let root = overrideRepoRoot ?? repoRoot else {
+            templateDiagnostics = []
+            return
+        }
+
+        do {
+            templateDiagnostics = try await promptTemplateService.diagnostics(for: root)
+        } catch {
+            logger.error("template.diagnostics.failed reason=\(error.localizedDescription, privacy: .public)")
+            templateDiagnostics = [.error(ErrorDiagnostic(sourcePath: ".hybridcoder/prompts", message: error.localizedDescription))]
+        }
+    }
+
+    func setPolicyWorkingContextAndReload(_ url: URL?) async {
+        setPolicyWorkingContext(url)
+        await refreshContextPolicies()
+    }
+
+
+    nonisolated static func resolvePolicyLoadAnchors(repoRoot: URL, preferredWorkingDirectory: URL?) -> (start: URL, stopAt: URL) {
+        let resolvedRepoRoot = repoRoot.standardizedFileURL.resolvingSymlinksInPath()
+
+        guard let preferredWorkingDirectory else {
+            return (resolvedRepoRoot, resolvedRepoRoot)
+        }
+
+        let resolvedPreferred = preferredWorkingDirectory.standardizedFileURL.resolvingSymlinksInPath()
+        let repoComponents = resolvedRepoRoot.pathComponents.map { $0.lowercased() }
+        let preferredComponents = resolvedPreferred.pathComponents.map { $0.lowercased() }
+
+        guard preferredComponents.count >= repoComponents.count,
+              zip(repoComponents, preferredComponents).allSatisfy({ $0 == $1 })
+        else {
+            return (resolvedRepoRoot, resolvedRepoRoot)
+        }
+
+        return (resolvedPreferred, resolvedRepoRoot)
+    }
+
+    nonisolated static func mergePolicySnapshots(_ snapshots: [ContextPolicySnapshot]) -> ContextPolicySnapshot {
+        ContextPolicySnapshot(
+            files: snapshots.flatMap(\.files),
+            diagnostics: snapshots.flatMap(\.diagnostics)
+        )
+    }
+
+    nonisolated static func prefixedPolicySnapshot(_ snapshot: ContextPolicySnapshot, prefix: String) -> ContextPolicySnapshot {
+        let normalizedPrefix = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedPrefix.isEmpty else { return snapshot }
+
+        let files = snapshot.files.map { file in
+            ContextPolicyFile(
+                displayPath: "\(normalizedPrefix)/\(file.displayPath)",
+                content: file.content
+            )
+        }
+        let diagnostics = snapshot.diagnostics.map { diagnostic in
+            switch diagnostic {
+            case .warning(let warning):
+                return DiscoveryDiagnostic.warning(WarningDiagnostic(
+                    sourcePath: "\(normalizedPrefix)/\(warning.sourcePath)",
+                    message: warning.message,
+                    contextID: warning.contextID
+                ))
+            case .error(let error):
+                return DiscoveryDiagnostic.error(ErrorDiagnostic(
+                    sourcePath: "\(normalizedPrefix)/\(error.sourcePath)",
+                    message: error.message,
+                    contextID: error.contextID
+                ))
+            case .collision(let collision):
+                return DiscoveryDiagnostic.collision(CollisionDiagnostic(
+                    sourcePath: "\(normalizedPrefix)/\(collision.sourcePath)",
+                    conflictingPath: "\(normalizedPrefix)/\(collision.conflictingPath)",
+                    message: collision.message
+                ))
+            }
+        }
+
+        return ContextPolicySnapshot(files: files, diagnostics: diagnostics)
     }
 
     func rebuildIndex() async {
@@ -168,6 +633,77 @@ final class AIOrchestrator {
         }
 
         isIndexing = false
+        if prototypeRebuildQueuedWhileIndexing {
+            prototypeRebuildQueuedWhileIndexing = false
+            await rebuildPrototypeIndex()
+        }
+    }
+
+    private func rebuildPrototypeIndex() async {
+        if searchIndex == nil {
+            searchIndex = SemanticSearchIndex(embeddingService: embeddingService)
+            await searchIndex?.restorePersistedSnapshotIfAvailable()
+        }
+
+        guard let index = searchIndex else {
+            if let project = activePrototypeProject {
+                indexStats = Self.placeholderPrototypeIndexStats(for: project)
+            }
+            return
+        }
+
+        guard !isIndexing else {
+            prototypeRebuildQueuedWhileIndexing = true
+            return
+        }
+        isIndexing = true
+
+        while prototypeRebuildCompletedGeneration < prototypeRebuildRequestedGeneration {
+            let rebuildGeneration = prototypeRebuildRequestedGeneration
+
+            guard activeWorkspaceSource == .prototype, let project = activePrototypeProject else {
+                prototypeRebuildCompletedGeneration = rebuildGeneration
+                break
+            }
+
+            let files = Self.prototypeIndexableFiles(for: project)
+            guard !files.isEmpty else {
+                await index.clear()
+                indexStats = .empty
+                warmUpError = nil
+                prototypeRebuildCompletedGeneration = rebuildGeneration
+                continue
+            }
+
+            guard await embeddingService.isLoaded else {
+                await index.clear()
+                indexStats = Self.placeholderPrototypeIndexStats(for: project)
+                prototypeRebuildCompletedGeneration = rebuildGeneration
+                continue
+            }
+
+            indexingProgress = (0, files.count)
+            do {
+                try await index.rebuild(files: files) { [weak self] completed, total in
+                    Task { @MainActor [weak self] in
+                        self?.indexingProgress = (completed, total)
+                    }
+                }
+                indexStats = await index.stats
+                warmUpError = nil
+            } catch {
+                warmUpError = "Prototype indexing failed: \(error.localizedDescription)"
+                indexStats = Self.placeholderPrototypeIndexStats(for: project)
+            }
+            prototypeRebuildCompletedGeneration = rebuildGeneration
+        }
+
+        indexingProgress = nil
+        isIndexing = false
+        if prototypeRebuildQueuedWhileIndexing || prototypeRebuildCompletedGeneration < prototypeRebuildRequestedGeneration {
+            prototypeRebuildQueuedWhileIndexing = false
+            await rebuildPrototypeIndex()
+        }
     }
 
     func searchCode(query: String, topK: Int = 5) async throws -> [SearchHit] {
@@ -177,82 +713,344 @@ final class AIOrchestrator {
         return try await index.search(query: query, topK: topK)
     }
 
-    func processQuery(_ query: String) async throws -> AssistantResponse {
+    func refreshRepositoryWorkspaceAfterChanges() async {
+        guard activeWorkspaceSource == .repository, let root = repoRoot else { return }
+        repoFiles = await repoAccess.listSourceFiles(in: root)
+        await promptTemplateService.invalidateCache(for: root)
+        await refreshTemplateDiagnostics(repoRoot: root)
+        await refreshContextPolicies(repoRoot: root)
+        await rebuildIndex()
+    }
+
+    var discoveryDiagnostics: [DiscoveryDiagnostic] {
+        contextPolicySnapshot.diagnostics + templateDiagnostics
+    }
+
+    var contextPolicyDiagnostics: [DiscoveryDiagnostic] {
+        contextPolicySnapshot.diagnostics
+    }
+
+    nonisolated static func expectedExecutionProviders(
+        for route: Route,
+        executesPatch: Bool = false,
+        includesRouteClassifier: Bool = true,
+        explanationProvider: ExecutionProvider = .foundationModel
+    ) -> [ExecutionProvider] {
+        let providers: [ExecutionProvider]
+        switch route {
+        case .explanation:
+            providers = [.semanticSearch, explanationProvider]
+        case .codeGeneration:
+            providers = [.semanticSearch, .qwenCodeGeneration]
+        case .patchPlanning:
+            providers = executesPatch
+                ? [.semanticSearch, .foundationModel, .patchEngine]
+                : [.semanticSearch, .foundationModel]
+        case .search:
+            providers = [.semanticSearch]
+        }
+
+        if includesRouteClassifier {
+            return [.routeClassifier] + providers
+        }
+        return providers
+    }
+
+    nonisolated static func preferredExplanationProvider(
+        query: String,
+        contextSources: [ContextSource],
+        hasRepositoryContext: Bool
+    ) -> ExecutionProvider {
+        guard hasRepositoryContext || !contextSources.isEmpty else {
+            return .foundationModel
+        }
+
+        let normalized = query.lowercased()
+        let codebaseSignals = [
+            "codebase", "repo", "repository", "implementation", "architecture", "pipeline",
+            "flow", "call", "symbol", "function", "method", "class", "struct", "viewmodel",
+            "service", "route", "stream", "context", "file", "bug", "error", "fail",
+            "crash", "build", "test", ".swift", ".md", ".json", ".py", ".ts", ".js"
+        ]
+
+        if query.count > 240 {
+            return .qwenCodeAssistant
+        }
+
+        if contextSources.contains(where: { $0.method == .routeHint }) {
+            return .qwenCodeAssistant
+        }
+
+        if codebaseSignals.contains(where: { normalized.contains($0) }) {
+            return .qwenCodeAssistant
+        }
+
+        return .foundationModel
+    }
+
+    func processQuery(_ query: String, memory: ConversationMemoryContext? = nil) async throws -> AssistantResponse {
         isProcessing = true
         defer { isProcessing = false }
 
-        let route = try await resolveRoute(for: query)
-        let context = await gatherContext(for: query, route: route)
-        logProviderSelection(query: query, route: route, mode: "non-stream")
-
+        let resolved = try await resolveTemplateIfNeeded(query)
+        let resolution: RouteResolution
+        if let override = resolved.routeOverride {
+            resolution = RouteResolution(
+                route: override,
+                retrievalQuery: resolved.query,
+                relevantFiles: [],
+                reasoning: "Template route override",
+                confidence: 5
+            )
+        } else {
+            resolution = try await resolveRoute(for: resolved.query)
+        }
+        let route = resolution.route
+        let gathered = await gatherContextWithSources(
+            retrievalQuery: resolution.retrievalQuery,
+            relevantFiles: resolution.relevantFiles,
+            memory: memory
+        )
         switch route {
         case .explanation:
-            let text = try await generateExplanation(query: query, context: context)
-            return AssistantResponse(text: text, routeUsed: .explanation)
+            let explanationProvider = Self.preferredExplanationProvider(
+                query: resolved.query,
+                contextSources: gathered.sources,
+                hasRepositoryContext: !gathered.qwenContext.isEmpty
+            )
+            let explanationContext = gathered.context(for: explanationProvider)
+            let generated = try await generateExplanation(
+                query: resolved.query,
+                context: explanationContext,
+                preferredProvider: explanationProvider
+            )
+            recordExecutionTrace(
+                route: route,
+                includesRouteClassifier: resolved.routeOverride == nil,
+                explanationProvider: generated.provider
+            )
+            logProviderSelection(query: resolved.query, route: route, mode: "non-stream", provider: generated.provider)
+            return AssistantResponse(
+                text: generated.text,
+                contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
+                routeUsed: .explanation
+            )
 
         case .codeGeneration:
-            let code = try await generateCode(query: query, context: context)
-            let blocks = extractCodeBlocks(from: code)
-            return AssistantResponse(text: code, codeBlocks: blocks, routeUsed: .codeGeneration)
+            recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
+            logProviderSelection(query: resolved.query, route: route, mode: "non-stream")
+            let code = try await generateCode(query: resolved.query, context: gathered.qwenContext)
+            let blocks = Self.extractCodeBlocks(from: code, fallbackToWholeText: true)
+            return AssistantResponse(
+                text: code,
+                codeBlocks: blocks,
+                contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
+                routeUsed: .codeGeneration
+            )
 
         case .patchPlanning:
-            let plan = try await generatePatchPlan(query: query, context: context)
+            recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
+            logProviderSelection(query: resolved.query, route: route, mode: "non-stream")
+            let plan = try await generatePatchPlan(query: resolved.query, context: gathered.context)
             return AssistantResponse(
                 text: plan.summary,
                 patchPlan: plan,
+                contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
                 routeUsed: .patchPlanning
             )
 
         case .search:
-            let hits = (try? await searchCode(query: query, topK: 5)) ?? []
+            recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
+            logProviderSelection(query: resolved.query, route: route, mode: "non-stream")
+            let hits = (try? await searchCode(query: resolved.query, topK: 5)) ?? []
             let summary = formatSearchResults(hits)
-            return AssistantResponse(text: summary, searchHits: hits, routeUsed: .search)
+            return AssistantResponse(
+                text: summary,
+                searchHits: hits,
+                contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
+                routeUsed: .search
+            )
         }
     }
 
-    func processQueryStreaming(_ query: String, onPartial: @escaping (String) -> Void) async throws -> (response: AssistantResponse, route: Route) {
+    func processQueryStreaming(_ query: String, memory: ConversationMemoryContext? = nil, onPartial: @escaping (String) -> Void) async throws -> (response: AssistantResponse, route: Route) {
         isProcessing = true
         defer { isProcessing = false }
 
-        let route = try await resolveRoute(for: query)
-        let context = await gatherContext(for: query, route: route)
-        logProviderSelection(query: query, route: route, mode: "stream")
-
+        let resolved = try await resolveTemplateIfNeeded(query)
+        let resolution: RouteResolution
+        if let override = resolved.routeOverride {
+            resolution = RouteResolution(
+                route: override,
+                retrievalQuery: resolved.query,
+                relevantFiles: [],
+                reasoning: "Template route override",
+                confidence: 5
+            )
+        } else {
+            resolution = try await resolveRoute(for: resolved.query)
+        }
+        let route = resolution.route
+        let gathered = await gatherContextWithSources(
+            retrievalQuery: resolution.retrievalQuery,
+            relevantFiles: resolution.relevantFiles,
+            memory: memory
+        )
         switch route {
         case .explanation:
-            let text = try await streamText(query: query, context: context, route: route, onPartial: onPartial)
-            return (AssistantResponse(text: text, routeUsed: .explanation), route)
+            let explanationProvider = Self.preferredExplanationProvider(
+                query: resolved.query,
+                contextSources: gathered.sources,
+                hasRepositoryContext: !gathered.qwenContext.isEmpty
+            )
+            let explanationContext = gathered.context(for: explanationProvider)
+            let generated = try await streamExplanation(
+                query: resolved.query,
+                context: explanationContext,
+                preferredProvider: explanationProvider,
+                onPartial: onPartial
+            )
+            recordExecutionTrace(
+                route: route,
+                includesRouteClassifier: resolved.routeOverride == nil,
+                explanationProvider: generated.provider
+            )
+            logProviderSelection(query: resolved.query, route: route, mode: "stream", provider: generated.provider)
+            return (AssistantResponse(
+                text: generated.text,
+                contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
+                routeUsed: .explanation
+            ), route)
 
         case .codeGeneration:
-            let code = try await streamText(query: query, context: context, route: route, onPartial: onPartial)
-            let blocks = extractCodeBlocks(from: code)
-            return (AssistantResponse(text: code, codeBlocks: blocks, routeUsed: .codeGeneration), route)
+            recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
+            logProviderSelection(query: resolved.query, route: route, mode: "stream")
+            let code = try await streamText(query: resolved.query, context: gathered.qwenContext, route: route, onPartial: onPartial)
+            let blocks = Self.extractCodeBlocks(from: code, fallbackToWholeText: true)
+            return (AssistantResponse(
+                text: code,
+                codeBlocks: blocks,
+                contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
+                routeUsed: .codeGeneration
+            ), route)
 
         case .patchPlanning:
-            let plan = try await generatePatchPlan(query: query, context: context)
+            recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
+            logProviderSelection(query: resolved.query, route: route, mode: "stream")
+            let plan = try await generatePatchPlan(query: resolved.query, context: gathered.context)
             onPartial(plan.summary)
-            return (AssistantResponse(text: plan.summary, patchPlan: plan, routeUsed: .patchPlanning), route)
+            return (AssistantResponse(
+                text: plan.summary,
+                patchPlan: plan,
+                contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
+                routeUsed: .patchPlanning
+            ), route)
 
         case .search:
-            let hits = (try? await searchCode(query: query, topK: 5)) ?? []
+            recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
+            logProviderSelection(query: resolved.query, route: route, mode: "stream")
+            let hits = (try? await searchCode(query: resolved.query, topK: 5)) ?? []
             let summary = formatSearchResults(hits)
             onPartial(summary)
-            return (AssistantResponse(text: summary, searchHits: hits, routeUsed: .search), route)
+            return (AssistantResponse(
+                text: summary,
+                searchHits: hits,
+                contextSources: gathered.sources,
+                retrievalNotice: gathered.retrievalNotice,
+                routeUsed: .search
+            ), route)
+        }
+    }
+
+    nonisolated struct ProviderBackedText: Sendable {
+        let text: String
+        let provider: ExecutionProvider
+    }
+
+    private func resolveTemplateIfNeeded(_ query: String) async throws -> ResolvedPromptQuery {
+        let repoRoot = self.repoRoot
+        let service = promptTemplateService
+        do {
+            return try await Task.detached(priority: .userInitiated) {
+                try await service.resolve(query: query, repoRoot: repoRoot)
+            }.value
+        } catch let templateError as PromptTemplateService.TemplateError {
+            throw OrchestratorError.templateResolutionFailed(templateError.localizedDescription)
+        } catch {
+            logger.error("template.resolve.failed reason=\(error.localizedDescription, privacy: .public)")
+            throw OrchestratorError.templateResolutionFailed(error.localizedDescription)
         }
     }
 
     private func streamText(query: String, context: String, route: Route, onPartial: @escaping (String) -> Void) async throws -> String {
+        switch route {
+        case .codeGeneration:
+            let coder = try await requireQwenCoder()
+            var accumulated = ""
+            let result = try await coder.generateCodeStreaming(prompt: query, context: context) { delta in
+                accumulated += delta
+                onPartial(accumulated)
+            }
+            return result.text
+
+        case .explanation, .patchPlanning, .search:
+            guard #available(iOS 26.0, *) else {
+                throw OrchestratorError.noModelAvailable
+            }
+            let fm = try requireFoundationModel()
+            var fullText = ""
+            let stream = fm.streamAnswer(query: query, context: context, route: route)
+            for try await chunk in stream {
+                fullText = chunk
+                onPartial(chunk)
+            }
+            if !fullText.isEmpty {
+                return fullText
+            }
+            throw OrchestratorError.noModelAvailable
+        }
+    }
+
+    private func streamExplanation(
+        query: String,
+        context: String,
+        preferredProvider: ExecutionProvider,
+        onPartial: @escaping (String) -> Void
+    ) async throws -> ProviderBackedText {
+        if preferredProvider == .qwenCodeAssistant {
+            do {
+                let coder = try await requireQwenCoder()
+                var accumulated = ""
+                let result = try await coder.generateCodeExplanationStreaming(prompt: query, context: context) { delta in
+                    accumulated += delta
+                    onPartial(accumulated)
+                }
+                return ProviderBackedText(text: result.text, provider: .qwenCodeAssistant)
+            } catch let error as OrchestratorError {
+                logger.warning("qwen.explanation.unavailable fallback=FoundationModels reason=\(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        guard #available(iOS 26.0, *) else {
+            throw OrchestratorError.noModelAvailable
+        }
         let fm = try requireFoundationModel()
         var fullText = ""
-        let stream = fm.streamAnswer(query: query, context: context, route: route)
+        let stream = fm.streamAnswer(query: query, context: context, route: .explanation)
         for try await chunk in stream {
             fullText = chunk
             onPartial(chunk)
         }
         if !fullText.isEmpty {
-            return fullText
+            return ProviderBackedText(text: fullText, provider: .foundationModel)
         }
-
         throw OrchestratorError.noModelAvailable
     }
 
@@ -260,8 +1058,8 @@ final class AIOrchestrator {
         isProcessing = true
         defer { isProcessing = false }
 
-        let context = await gatherContext(for: query, route: .patchPlanning)
-        return try await generatePatchPlan(query: query, context: context)
+        let gathered = await gatherContextWithSources(retrievalQuery: query, relevantFiles: [], memory: nil)
+        return try await generatePatchPlan(query: query, context: gathered.context)
     }
 
     func applyPatch(_ plan: PatchPlan) async throws -> PatchEngine.PatchResult {
@@ -269,14 +1067,22 @@ final class AIOrchestrator {
             throw OrchestratorError.repoNotLoaded
         }
 
+        if activeWorkspaceSource == .prototype, let project = activePrototypeProject {
+            Self.materializePrototypeFiles(project, to: root)
+        }
+
         isProcessing = true
         defer { isProcessing = false }
+        recordExecutionTrace(route: .patchPlanning, executesPatch: true, includesRouteClassifier: false)
 
         let result = await engine.apply(plan, repoRoot: root)
 
         if !result.changedFiles.isEmpty {
-            repoFiles = await repoAccess.listSourceFiles(in: root)
-            await rebuildIndex()
+            if activeWorkspaceSource == .prototype {
+                await syncPrototypeFilesFromDisk()
+            } else {
+                await refreshRepositoryWorkspaceAfterChanges()
+            }
         }
 
         return result
@@ -284,10 +1090,16 @@ final class AIOrchestrator {
 
     func validatePatch(_ plan: PatchPlan) async -> [PatchEngine.OperationFailure] {
         guard let engine = patchEngine, let root = repoRoot else { return [] }
+        if activeWorkspaceSource == .prototype, let project = activePrototypeProject {
+            Self.materializePrototypeFiles(project, to: root)
+        }
         return await engine.validate(plan, repoRoot: root)
     }
 
-    private func resolveRoute(for query: String) async throws -> Route {
+    private func resolveRoute(for query: String) async throws -> RouteResolution {
+        guard #available(iOS 26.0, *) else {
+            throw OrchestratorError.noModelAvailable
+        }
         let fm = try requireFoundationModel()
         let fileNames = repoFiles.prefix(60).map(\.relativePath)
         let decision = try await fm.classifyRoute(query: query, fileList: fileNames)
@@ -295,48 +1107,360 @@ final class AIOrchestrator {
             throw OrchestratorError.routeResolutionFailed("Unsupported route \"\(decision.route)\" from Foundation Models.")
         }
 
-        logger.info("route.classifier provider=FoundationModels route=\(route.rawValue, privacy: .public) confidence=\(decision.confidence) query=\(query, privacy: .public)")
-        return route
+        logger.info("route.classifier provider=FoundationModels route=\(route.rawValue, privacy: .public) confidence=\(decision.confidence) query=\(query, privacy: .private)")
+        return RouteResolution(
+            route: route,
+            retrievalQuery: Self.buildRetrievalQuery(baseQuery: query, searchTerms: decision.searchTerms),
+            relevantFiles: decision.relevantFiles,
+            reasoning: decision.reasoning,
+            confidence: decision.confidence
+        )
     }
 
-    private func gatherContext(for query: String, route: Route) async -> String {
-        var contextParts: [String] = []
+    nonisolated struct GatherResult: Sendable {
+        let context: String
+        let qwenContext: String
+        let sources: [ContextSource]
+        let usedSemanticSearch: Bool
+        let retrievalNotice: String?
 
-        if let hits = try? await searchCode(query: query, topK: 3) {
+        func context(for provider: ExecutionProvider) -> String {
+            switch provider {
+            case .qwenCodeAssistant, .qwenCodeGeneration:
+                return qwenContext
+            case .routeClassifier, .semanticSearch, .foundationModel, .patchEngine:
+                return context
+            }
+        }
+    }
+
+    private func gatherContextWithSources(
+        retrievalQuery: String,
+        relevantFiles: [String],
+        memory: ConversationMemoryContext?
+    ) async -> GatherResult {
+        var codeContextParts: [String] = []
+        var includedPaths: Set<String> = []
+        var routeHintPaths: Set<String> = []
+        var semanticChunkKeys: Set<String> = []
+        var sources: [ContextSource] = []
+        var usedSemanticSearch = false
+        var retrievalNotice: String?
+
+        let hintedFiles = Self.matchRelevantFiles(relevantFiles, within: repoFiles, limit: 8)
+        for file in hintedFiles {
+            guard let content = await workspaceFileContent(for: file) else { continue }
+            let header = "--- \(file.relativePath) ---"
+            codeContextParts.append("\(header)\n\(String(content.prefix(6_000)))")
+            includedPaths.insert(file.relativePath.lowercased())
+            routeHintPaths.insert(file.relativePath.lowercased())
+            sources.append(ContextSource(filePath: file.relativePath, method: .routeHint))
+        }
+
+        do {
+            let hits = try await searchCode(query: retrievalQuery, topK: 12)
+            usedSemanticSearch = true
             for hit in hits {
+                let normalizedPath = hit.filePath.lowercased()
+                let chunkKey = "\(normalizedPath)#\(hit.chunk.startLine)-\(hit.chunk.endLine)"
+                guard !routeHintPaths.contains(normalizedPath) else { continue }
+                guard !semanticChunkKeys.contains(chunkKey) else { continue }
                 let header = "--- \(hit.filePath) L\(hit.chunk.startLine)-\(hit.chunk.endLine) ---"
-                contextParts.append("\(header)\n\(hit.chunk.content)")
+                codeContextParts.append("\(header)\n\(hit.chunk.content)")
+                includedPaths.insert(normalizedPath)
+                semanticChunkKeys.insert(chunkKey)
+                sources.append(ContextSource(
+                    filePath: hit.filePath,
+                    startLine: hit.chunk.startLine,
+                    endLine: hit.chunk.endLine,
+                    method: .semanticSearch,
+                    score: hit.score
+                ))
+            }
+        } catch {
+            if !repoFiles.isEmpty {
+                retrievalNotice = "Semantic search unavailable - using file hints or file sampling instead. Download/load the embedding model and reindex for better results."
+                logger.warning("context.semanticSearchUnavailable reason=\(error.localizedDescription, privacy: .public)")
             }
         }
 
-        if contextParts.isEmpty, repoRoot != nil {
-            let sample = repoFiles.prefix(5)
+        if codeContextParts.isEmpty, !repoFiles.isEmpty {
+            let sample = repoFiles.filter { !includedPaths.contains($0.relativePath.lowercased()) }.prefix(10)
             for file in sample {
-                if let content = await repoAccess.readUTF8(at: file.absoluteURL) {
+                if let content = await workspaceFileContent(for: file) {
                     let header = "--- \(file.relativePath) ---"
-                    contextParts.append("\(header)\n\(String(content.prefix(500)))")
+                    codeContextParts.append("\(header)\n\(String(content.prefix(1_000)))")
+                    sources.append(ContextSource(filePath: file.relativePath, method: .fallbackSample))
                 }
             }
         }
 
-        return contextParts.joined(separator: "\n\n")
+        let rawPolicyText = contextPolicySnapshot.renderForPrompt(
+            maxCharacters: max(Self.maximumPolicyContextBudget, Self.qwenMaximumPolicyContextBudget)
+        )
+        let memoryBlock = memory?.renderForPrompt(maxCharacters: Self.conversationMemoryRenderBudget) ?? ""
+        let context = Self.buildPromptContext(
+            rawPolicyText: rawPolicyText,
+            conversationMemoryBlock: memoryBlock,
+            codeParts: codeContextParts,
+            totalLimit: Self.downstreamContextCap,
+            minCodeBudget: Self.minimumCodeContextBudget,
+            maxPolicyBudget: Self.maximumPolicyContextBudget,
+            maxConversationBudget: Self.maximumConversationContextBudget
+        )
+        let qwenContext = Self.buildPromptContext(
+            rawPolicyText: rawPolicyText,
+            conversationMemoryBlock: memoryBlock,
+            codeParts: codeContextParts,
+            totalLimit: Self.qwenContextCap,
+            minCodeBudget: Self.qwenMinimumCodeContextBudget,
+            maxPolicyBudget: Self.qwenMaximumPolicyContextBudget,
+            maxConversationBudget: Self.qwenMaximumConversationContextBudget
+        )
+
+        return GatherResult(
+            context: context,
+            qwenContext: qwenContext,
+            sources: sources,
+            usedSemanticSearch: usedSemanticSearch,
+            retrievalNotice: retrievalNotice
+        )
     }
 
-    private func generateExplanation(query: String, context: String) async throws -> String {
+    nonisolated static func buildPromptContext(
+        rawPolicyText: String,
+        conversationMemoryBlock: String,
+        codeParts: [String],
+        totalLimit: Int,
+        minCodeBudget: Int,
+        maxPolicyBudget: Int,
+        maxConversationBudget: Int
+    ) -> String {
+        guard totalLimit > 0 else { return "" }
+
+        let codeText = codeParts.joined(separator: "\n\n")
+        let hasCode = !codeText.isEmpty
+
+        let allowedPolicyBudget: Int
+        if hasCode {
+            allowedPolicyBudget = max(0, min(maxPolicyBudget, totalLimit - minCodeBudget))
+        } else {
+            allowedPolicyBudget = min(maxPolicyBudget, totalLimit)
+        }
+
+        let policyText = String(rawPolicyText.prefix(allowedPolicyBudget)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let maxNonCodeBudget = hasCode ? max(0, totalLimit - minCodeBudget) : totalLimit
+        let remainingConversationBudget = max(0, maxNonCodeBudget - policyText.count)
+        let allowedConversationBudget = min(maxConversationBudget, remainingConversationBudget)
+        let conversationText = conversationMemoryBlock.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var sections: [String] = []
+        var remaining = totalLimit
+        var remainingNonCodeBudget = maxNonCodeBudget
+
+        if !policyText.isEmpty {
+            let policyLimit = min(remaining, remainingNonCodeBudget)
+            let clipped = clipWrappedSection(
+                openingTag: "<policy_context>\n",
+                body: policyText,
+                closingTag: "\n</policy_context>",
+                limit: policyLimit
+            )
+            if !clipped.isEmpty {
+                sections.append(clipped)
+                remaining -= clipped.count
+                remainingNonCodeBudget = max(0, remainingNonCodeBudget - clipped.count)
+            }
+        }
+
+        if !conversationText.isEmpty, remaining > 0, remainingNonCodeBudget > 0 {
+            let conversationLimit = min(remaining, remainingNonCodeBudget)
+            let clipped = clipExistingWrappedBlock(
+                conversationText,
+                openingTag: "<conversation_memory>\n",
+                closingTag: "\n</conversation_memory>",
+                limit: min(conversationLimit, allowedConversationBudget)
+            )
+            if !clipped.isEmpty {
+                sections.append(clipped)
+                remaining -= clipped.count
+                remainingNonCodeBudget = max(0, remainingNonCodeBudget - clipped.count)
+            }
+        }
+
+        if hasCode, remaining > 0 {
+            let clippedCode = String(codeText.prefix(remaining)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !clippedCode.isEmpty {
+                sections.append(clippedCode)
+            }
+        }
+
+        return sections.joined(separator: "\n\n")
+    }
+
+    nonisolated static func buildRetrievalQuery(baseQuery: String, searchTerms: [String]) -> String {
+        let cleanedTerms = searchTerms
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !cleanedTerms.isEmpty else { return baseQuery }
+
+        var seen: Set<String> = []
+        var orderedTerms: [String] = [baseQuery]
+        seen.insert(baseQuery.lowercased())
+
+        for term in cleanedTerms {
+            let key = term.lowercased()
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            orderedTerms.append(term)
+        }
+
+        return orderedTerms.joined(separator: "\n")
+    }
+
+    nonisolated static func matchRelevantFiles(_ hints: [String], within repoFiles: [RepoFile], limit: Int = 2) -> [RepoFile] {
+        guard limit > 0 else { return [] }
+
+        var results: [RepoFile] = []
+        var seen: Set<String> = []
+
+        func appendMatches(_ predicate: (RepoFile, String) -> Bool, for normalizedHint: String) {
+            for file in repoFiles where predicate(file, normalizedHint) {
+                let key = file.relativePath.lowercased()
+                guard !seen.contains(key) else { continue }
+                seen.insert(key)
+                results.append(file)
+                if results.count >= limit { return }
+            }
+        }
+
+        for hint in hints {
+            let normalizedHint = hint
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\\", with: "/")
+                .lowercased()
+
+            guard !normalizedHint.isEmpty else { continue }
+
+            appendMatches({ file, hint in file.relativePath.lowercased() == hint }, for: normalizedHint)
+            if results.count >= limit { break }
+
+            appendMatches({ file, hint in file.fileName.lowercased() == (hint as NSString).lastPathComponent }, for: normalizedHint)
+            if results.count >= limit { break }
+
+            appendMatches({ file, hint in file.relativePath.lowercased().hasSuffix(hint) }, for: normalizedHint)
+            if results.count >= limit { break }
+
+            appendMatches({ file, hint in file.relativePath.lowercased().contains(hint) }, for: normalizedHint)
+            if results.count >= limit { break }
+        }
+
+        return results
+    }
+
+    nonisolated static func clipWrappedSection(
+        openingTag: String,
+        body: String,
+        closingTag: String,
+        limit: Int
+    ) -> String {
+        let wrapperOverhead = openingTag.count + closingTag.count
+        guard limit > wrapperOverhead else { return "" }
+
+        let clippedBody = String(body.prefix(limit - wrapperOverhead)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clippedBody.isEmpty else { return "" }
+        return "\(openingTag)\(clippedBody)\(closingTag)"
+    }
+
+    nonisolated static func clipExistingWrappedBlock(
+        _ block: String,
+        openingTag: String,
+        closingTag: String,
+        limit: Int
+    ) -> String {
+        let normalized = block.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.hasPrefix(openingTag), normalized.hasSuffix(closingTag) else {
+            return String(normalized.prefix(limit)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let wrapperOverhead = openingTag.count + closingTag.count
+        guard limit > wrapperOverhead else { return "" }
+
+        let bodyStart = normalized.index(normalized.startIndex, offsetBy: openingTag.count)
+        let bodyEnd = normalized.index(normalized.endIndex, offsetBy: -closingTag.count)
+        let body = String(normalized[bodyStart..<bodyEnd])
+        let clippedBody = String(body.prefix(limit - wrapperOverhead)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clippedBody.isEmpty else { return "" }
+
+        return "\(openingTag)\(clippedBody)\(closingTag)"
+    }
+
+    func summarizeConversationForCompaction(
+        priorSummary: String?,
+        turnsToCompact: [ConversationMemoryTurn],
+        fileOperationSummaries: [String]
+    ) async -> String? {
+        guard !turnsToCompact.isEmpty || !(priorSummary ?? "").isEmpty else { return priorSummary }
+
+        guard #available(iOS 26.0, *) else { return nil }
+        let fm: FoundationModelService
+        do {
+            fm = try requireFoundationModel()
+        } catch {
+            return nil
+        }
+
+        let renderedTurns = turnsToCompact.map { "\($0.role.rawValue): \($0.content)" }.joined(separator: "\n")
+        let renderedOps = fileOperationSummaries.map { "- \($0)" }.joined(separator: "\n")
+        return try? await fm.summarizeConversationMemory(
+            priorSummary: priorSummary ?? "",
+            turns: renderedTurns,
+            fileOperationSummaries: renderedOps
+        )
+    }
+
+    nonisolated static func shouldCompactConversation(totalEstimatedTokens: Int, threshold: Int) -> Bool {
+        totalEstimatedTokens >= threshold
+    }
+
+    private func generateExplanation(
+        query: String,
+        context: String,
+        preferredProvider: ExecutionProvider
+    ) async throws -> ProviderBackedText {
+        if preferredProvider == .qwenCodeAssistant {
+            do {
+                let coder = try await requireQwenCoder()
+                let text = try await coder.generateCodeExplanation(prompt: query, context: context)
+                return ProviderBackedText(text: text, provider: .qwenCodeAssistant)
+            } catch let error as OrchestratorError {
+                logger.warning("qwen.explanation.unavailable fallback=FoundationModels reason=\(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        guard #available(iOS 26.0, *) else {
+            throw OrchestratorError.noModelAvailable
+        }
         let fm = try requireFoundationModel()
-        return try await fm.generateAnswer(query: query, context: context, route: .explanation)
+        let text = try await fm.generateAnswer(query: query, context: context, route: .explanation)
+        return ProviderBackedText(text: text, provider: .foundationModel)
     }
 
     private func generateCode(query: String, context: String) async throws -> String {
-        let fm = try requireFoundationModel()
-        return try await fm.generateAnswer(query: query, context: context, route: .codeGeneration)
+        let coder = try await requireQwenCoder()
+        return try await coder.generateCode(prompt: query, context: context)
     }
 
     private func generatePatchPlan(query: String, context: String) async throws -> PatchPlan {
+        guard #available(iOS 26.0, *) else {
+            throw OrchestratorError.noModelAvailable
+        }
         let fm = try requireFoundationModel()
         return try await fm.generatePatchPlan(query: query, codeContext: context)
     }
 
+    @available(iOS 26.0, *)
     private func requireFoundationModel() throws -> FoundationModelService {
         guard let fm = foundationModel as? FoundationModelService else {
             throw OrchestratorError.foundationModelNotInitialized
@@ -348,11 +1472,175 @@ final class AIOrchestrator {
         return fm
     }
 
-    private func logProviderSelection(query: String, route: Route, mode: String) {
-        logger.info("route.selected provider=FoundationModels route=\(route.rawValue, privacy: .public) mode=\(mode, privacy: .public) repoLoaded=\(self.isRepoLoaded, privacy: .public) query=\(query, privacy: .public)")
+
+    private func requireQwenCoder() async throws -> QwenCoderService {
+        do {
+            let coder = try await ensureQwenCoderLoaded()
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loaded)
+            return coder
+        } catch {
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .failed(error.localizedDescription))
+            throw error
+        }
     }
 
-    private func extractCodeBlocks(from text: String) -> [CodeBlock] {
+    private func ensureQwenCoderLoaded() async throws -> QwenCoderService {
+        let activeModelID = modelRegistry.activeCodeGenerationModelID
+        let coder = await ensureQwenServiceMatchesActiveModel()
+
+        if await coder.isLoaded {
+            return coder
+        }
+
+        do {
+            try await coder.warmUp()
+            if modelRegistry.areCodeGenerationModelFilesInstalled(modelID: activeModelID) {
+                modelRegistry.markCodeGenerationModelInstalled(modelID: activeModelID)
+                modelRegistry.setInstallState(for: activeModelID, .installed)
+                return coder
+            }
+            let message = "CoreMLPipelines finished warm-up, but expected Qwen snapshot files were not found in Application Support."
+            modelRegistry.setInstallState(for: activeModelID, .notInstalled)
+            throw OrchestratorError.codeGenerationModelUnavailable(message)
+        } catch {
+            throw OrchestratorError.codeGenerationModelUnavailable(error.localizedDescription)
+        }
+    }
+
+    private func logProviderSelection(
+        query: String,
+        route: Route,
+        mode: String,
+        provider explicitProvider: ExecutionProvider? = nil
+    ) {
+        let provider = explicitProvider ?? (route == .codeGeneration ? .qwenCodeGeneration : .foundationModel)
+        logger.info("route.selected provider=\(provider.rawValue, privacy: .public) route=\(route.rawValue, privacy: .public) mode=\(mode, privacy: .public) repoLoaded=\(self.isRepoLoaded, privacy: .public) query=\(query, privacy: .private)")
+    }
+
+    private func recordExecutionTrace(
+        route: Route,
+        executesPatch: Bool = false,
+        includesRouteClassifier: Bool = true,
+        explanationProvider: ExecutionProvider = .foundationModel
+    ) {
+        lastResolvedRoute = route
+        lastExecutionProviders = Self.expectedExecutionProviders(
+            for: route,
+            executesPatch: executesPatch,
+            includesRouteClassifier: includesRouteClassifier,
+            explanationProvider: explanationProvider
+        )
+    }
+
+    private func workspaceFileContent(for file: RepoFile) async -> String? {
+        if activeWorkspaceSource == .prototype,
+           let project = activePrototypeProject,
+           let prototypeFile = project.files.first(where: { $0.name == file.relativePath }) {
+            return prototypeFile.content
+        }
+
+        return await repoAccess.readUTF8(at: file.absoluteURL)
+    }
+
+    nonisolated static func prototypeWorkspaceRoot(for project: SandboxProject) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("HybridCoderPrototypeWorkspace", isDirectory: true)
+            .appendingPathComponent(project.id.uuidString, isDirectory: true)
+    }
+
+    nonisolated static func materializePrototypeFiles(_ project: SandboxProject, to root: URL) {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+        for file in project.files {
+            let fileURL = root.appendingPathComponent(file.name)
+            let dir = fileURL.deletingLastPathComponent()
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? file.content.write(to: fileURL, atomically: true, encoding: .utf8)
+        }
+    }
+
+    func syncPrototypeFilesFromDisk() async {
+        guard activeWorkspaceSource == .prototype,
+              var project = activePrototypeProject,
+              let root = repoRoot else { return }
+
+        var updatedFiles: [SandboxFile] = []
+        let fm = FileManager.default
+        let rootPath = root.path(percentEncoded: false)
+
+        if let enumerator = fm.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            while let itemURL = enumerator.nextObject() as? URL {
+                let isDir = (try? itemURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+                guard !isDir else { continue }
+                let fullPath = itemURL.path(percentEncoded: false)
+                let relativePath = String(fullPath.dropFirst(rootPath.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                guard !relativePath.isEmpty else { continue }
+                let content = (try? String(contentsOf: itemURL, encoding: .utf8)) ?? ""
+                if let existing = project.files.first(where: { $0.name == relativePath }) {
+                    updatedFiles.append(SandboxFile(id: existing.id, name: relativePath, content: content, language: existing.language))
+                } else {
+                    updatedFiles.append(SandboxFile(name: relativePath, content: content, language: RepoFile.detectLanguage(for: relativePath)))
+                }
+            }
+        }
+
+        project.files = updatedFiles
+        activePrototypeProject = project
+        repoFiles = Self.prototypeRepoFiles(for: project)
+    }
+
+    nonisolated static func prototypeRepoFiles(for project: SandboxProject) -> [RepoFile] {
+        let baseURL = prototypeWorkspaceRoot(for: project)
+
+        return project.files
+            .map { file in
+                RepoFile(
+                    relativePath: file.name,
+                    absoluteURL: baseURL.appendingPathComponent(file.name),
+                    language: RepoFile.detectLanguage(for: file.name),
+                    sizeBytes: file.content.utf8.count,
+                    lastModified: project.lastOpenedAt
+                )
+            }
+            .sorted { $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending }
+    }
+
+    nonisolated static func prototypeIndexableFiles(for project: SandboxProject) -> [(RepoFile, String)] {
+        let repoFiles = prototypeRepoFiles(for: project)
+        var byPath: [String: String] = [:]
+        for file in project.files {
+            byPath[file.name] = file.content
+        }
+        return repoFiles.compactMap { file in
+            guard let content = byPath[file.relativePath] else { return nil }
+            return (file, content)
+        }
+    }
+
+    nonisolated static func placeholderPrototypeIndexStats(for project: SandboxProject) -> RepoIndexStats {
+        RepoIndexStats(
+            totalFiles: project.files.count,
+            indexedFiles: 0,
+            totalChunks: 0,
+            embeddedChunks: 0,
+            lastIndexedAt: nil,
+            languageBreakdown: prototypeLanguageBreakdown(for: project)
+        )
+    }
+
+    nonisolated static func prototypeLanguageBreakdown(for project: SandboxProject) -> [String: Int] {
+        var counts: [String: Int] = [:]
+        for file in project.files {
+            counts[RepoFile.detectLanguage(for: file.name), default: 0] += 1
+        }
+        return counts
+    }
+
+    nonisolated static func extractCodeBlocks(from text: String, fallbackToWholeText: Bool = false) -> [CodeBlock] {
         var blocks: [CodeBlock] = []
         let scanner = text as NSString
         let pattern = "```(\\w*)\\n([\\s\\S]*?)```"
@@ -364,6 +1652,13 @@ final class AIOrchestrator {
             let code = match.numberOfRanges > 2 ? scanner.substring(with: match.range(at: 2)) : ""
             if !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 blocks.append(CodeBlock(language: lang, code: code))
+            }
+        }
+
+        if blocks.isEmpty, fallbackToWholeText {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                blocks.append(CodeBlock(code: trimmed))
             }
         }
 
@@ -398,6 +1693,7 @@ final class AIOrchestrator {
             let searchText = String(content[searchRange.upperBound..<replaceRange.lowerBound])
             let replaceText = String(content[replaceRange.upperBound..<endRange.lowerBound])
 
+            if !searchText.isEmpty && searchText == replaceText { continue }
             operations.append(PatchOperation(
                 filePath: fileLine,
                 searchText: searchText,
@@ -418,6 +1714,8 @@ final class AIOrchestrator {
         case foundationModelNotInitialized
         case noModelAvailable
         case routeResolutionFailed(String)
+        case templateResolutionFailed(String)
+        case codeGenerationModelUnavailable(String)
 
         nonisolated var errorDescription: String? {
             switch self {
@@ -433,6 +1731,10 @@ final class AIOrchestrator {
                 return "No AI model is available. Use a device with Apple Intelligence enabled (iOS 26+)."
             case .routeResolutionFailed(let reason):
                 return "Route resolution failed: \(reason)"
+            case .templateResolutionFailed(let reason):
+                return "Template resolution failed: \(reason)"
+            case .codeGenerationModelUnavailable(let reason):
+                return "Code-generation model unavailable: \(reason)"
             }
         }
     }

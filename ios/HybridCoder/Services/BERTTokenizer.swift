@@ -34,7 +34,7 @@ actor HFTokenizer {
         let originalTokenCount: Int
     }
 
-    private struct TokenizerJSON: Decodable {
+    nonisolated fileprivate struct TokenizerJSON: Decodable {
         struct AddedToken: Decodable {
             let id: Int
             let content: String
@@ -43,16 +43,46 @@ actor HFTokenizer {
         struct PreTokenizer: Decodable {
             let type: String
             let add_prefix_space: Bool?
+            let pretokenizers: [PreTokenizer]?
         }
         struct PostProcessor: Decodable {
             let type: String
-            let sep: [JSONValue]?
-            let cls: [JSONValue]?
+            let processors: [PostProcessor]?
         }
         struct Model: Decodable {
+            struct MergeEntry: Decodable {
+                let pair: String
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.singleValueContainer()
+                    if let merged = try? container.decode(String.self) {
+                        self.pair = Self.normalizedPair(from: merged) ?? ""
+                        return
+                    }
+
+                    if let parts = try? container.decode([String].self), parts.count == 2 {
+                        self.pair = Self.normalizedPair(from: "\(parts[0]) \(parts[1])") ?? ""
+                        return
+                    }
+
+                    throw DecodingError.dataCorruptedError(
+                        in: container,
+                        debugDescription: "Unsupported merge entry format; expected string or 2-item string array"
+                    )
+                }
+
+                private static func normalizedPair(from raw: String) -> String? {
+                    let components = raw
+                        .split(whereSeparator: { $0.isWhitespace })
+                        .map(String.init)
+                    guard components.count == 2 else { return nil }
+                    return components.joined(separator: " ")
+                }
+            }
+
             let type: String
             let vocab: [String: Int]
-            let merges: [String]?
+            let merges: [MergeEntry]?
             let unk_token: String?
         }
 
@@ -60,34 +90,6 @@ actor HFTokenizer {
         let pre_tokenizer: PreTokenizer?
         let post_processor: PostProcessor?
         let model: Model
-    }
-
-    private enum JSONValue: Decodable {
-        case string(String)
-        case int(Int)
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.singleValueContainer()
-            if let intValue = try? container.decode(Int.self) {
-                self = .int(intValue)
-                return
-            }
-            if let stringValue = try? container.decode(String.self) {
-                self = .string(stringValue)
-                return
-            }
-            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported JSON value")
-        }
-
-        var intValue: Int? {
-            if case .int(let v) = self { return v }
-            return nil
-        }
-
-        var stringValue: String? {
-            if case .string(let v) = self { return v }
-            return nil
-        }
     }
 
     private static let byteLevelPattern = "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+"
@@ -132,14 +134,18 @@ actor HFTokenizer {
             throw TokenizerError.incompatibleTokenizer("Expected model.type=BPE, got \(decoded.model.type)")
         }
 
-        let preType = decoded.pre_tokenizer?.type.lowercased() ?? ""
-        guard preType == "bytelevel" else {
-            throw TokenizerError.incompatibleTokenizer("Expected pre_tokenizer.type=ByteLevel, got \(preType)")
+        let preTokenizer = decoded.pre_tokenizer
+        let preTokenizerTypes = preTokenizer?.flattenedTypes(path: "pre_tokenizer").joined(separator: ", ") ?? "none"
+        let hasByteLevelPreTokenizer = preTokenizer?.contains(type: "bytelevel") ?? false
+        guard hasByteLevelPreTokenizer else {
+            throw TokenizerError.incompatibleTokenizer("Expected ByteLevel pre-tokenizer, got \(preTokenizerTypes)")
         }
-        self.addPrefixSpace = decoded.pre_tokenizer?.add_prefix_space ?? false
+        self.addPrefixSpace = preTokenizer?.addPrefixSpaceValue() ?? false
 
-        if let postType = decoded.post_processor?.type, postType.lowercased().contains("roberta") == false {
-            throw TokenizerError.incompatibleTokenizer("Expected Roberta post-processor, got \(postType)")
+        if let post = decoded.post_processor,
+           post.containsAny(types: ["roberta"]) == false {
+            let postTypes = post.flattenedTypes(path: "post_processor").joined(separator: ", ")
+            throw TokenizerError.incompatibleTokenizer("Expected Roberta post-processor for current encode path, got \(postTypes)")
         }
 
         guard decoded.model.vocab.isEmpty == false else {
@@ -154,10 +160,10 @@ actor HFTokenizer {
 
         var ranked: [String: Int] = [:]
         ranked.reserveCapacity(merges.count)
-        for (idx, line) in merges.enumerated() {
-            let parts = line.split(separator: " ")
-            guard parts.count == 2 else { continue }
-            ranked["\(parts[0]) \(parts[1])"] = idx
+        for (idx, merge) in merges.enumerated() {
+            let pairParts = merge.pair.split(separator: " ", omittingEmptySubsequences: true)
+            guard pairParts.count == 2 else { continue }
+            ranked[merge.pair] = idx
         }
         guard ranked.isEmpty == false else {
             throw TokenizerError.invalidFormat("No valid merge pairs parsed from model.merges")
@@ -327,6 +333,45 @@ actor HFTokenizer {
             }
         }
         return table
+    }
+}
+
+private extension HFTokenizer.TokenizerJSON.PreTokenizer {
+    nonisolated func contains(type target: String) -> Bool {
+        let normalizedTarget = target.lowercased()
+        if type.lowercased() == normalizedTarget { return true }
+        return pretokenizers?.contains(where: { $0.contains(type: normalizedTarget) }) ?? false
+    }
+
+    nonisolated func addPrefixSpaceValue() -> Bool {
+        if let add_prefix_space { return add_prefix_space }
+        return pretokenizers?.first(where: { $0.contains(type: "bytelevel") })?.addPrefixSpaceValue() ?? false
+    }
+
+    nonisolated func flattenedTypes(path: String) -> [String] {
+        var values = ["\(path)=\(type)"]
+        for (index, tokenizer) in (pretokenizers ?? []).enumerated() {
+            values.append(contentsOf: tokenizer.flattenedTypes(path: "\(path).pretokenizers[\(index)]"))
+        }
+        return values
+    }
+}
+
+private extension HFTokenizer.TokenizerJSON.PostProcessor {
+    nonisolated func containsAny(types targets: [String]) -> Bool {
+        let normalized = type.lowercased()
+        if targets.contains(where: { normalized.contains($0.lowercased()) }) {
+            return true
+        }
+        return processors?.contains(where: { $0.containsAny(types: targets) }) ?? false
+    }
+
+    nonisolated func flattenedTypes(path: String) -> [String] {
+        var values = ["\(path)=\(type)"]
+        for (index, processor) in (processors ?? []).enumerated() {
+            values.append(contentsOf: processor.flattenedTypes(path: "\(path).processors[\(index)]"))
+        }
+        return values
     }
 }
 

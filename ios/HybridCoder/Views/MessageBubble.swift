@@ -2,6 +2,11 @@ import SwiftUI
 
 struct MessageBubble: View {
     let message: ChatMessage
+    var searchHits: [SearchHit] = []
+    var onTapPatchPlan: ((UUID) -> Void)? = nil
+    var onTapSearchHit: ((SearchHit) -> Void)? = nil
+    var onTapContextSource: ((ContextSource) -> Void)? = nil
+    @State private var showSources: Bool = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -25,8 +30,20 @@ struct MessageBubble: View {
                     }
                 }
 
-                if message.patchPlanID != nil {
-                    patchSummaryStrip
+                if !searchHits.isEmpty {
+                    searchHitsSection
+                }
+
+                if let notice = message.retrievalNotice, message.role == .assistant {
+                    retrievalNoticeView(notice)
+                }
+
+                if !message.contextSources.isEmpty, message.role == .assistant {
+                    contextSourcesSection
+                }
+
+                if let planID = message.patchPlanID {
+                    patchSummaryStrip(planID: planID)
                 }
 
                 HStack(spacing: 6) {
@@ -116,14 +133,78 @@ struct MessageBubble: View {
         )
     }
 
-    private var patchSummaryStrip: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "doc.badge.gearshape")
-                .font(.caption2)
-            Text("Patch proposed — review in Patches tab")
-                .font(.caption2)
+    private var searchHitsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(searchHits.prefix(5)) { hit in
+                Button {
+                    onTapSearchHit?(hit)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.purple)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(hit.filePath)
+                                .font(.system(.caption2, design: .monospaced).weight(.medium))
+                                .foregroundStyle(.white.opacity(0.85))
+                                .lineLimit(1)
+
+                            Text("L\(hit.chunk.startLine)–\(hit.chunk.endLine) · \(hit.relevancePercent)% match")
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(Theme.dimText)
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Theme.dimText)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(.purple.opacity(0.06), in: .rect(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .foregroundStyle(Theme.accent.opacity(0.7))
+    }
+
+    private func retrievalNoticeView(_ notice: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 9))
+                .foregroundStyle(.orange)
+
+            Text(notice)
+                .font(.caption2)
+                .foregroundStyle(.orange.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(.orange.opacity(0.07), in: .rect(cornerRadius: 8))
+    }
+
+    private func patchSummaryStrip(planID: UUID) -> some View {
+        Button {
+            onTapPatchPlan?(planID)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "doc.badge.gearshape")
+                    .font(.caption2)
+                Text("Patch proposed — tap to review")
+                    .font(.caption2)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9))
+            }
+            .foregroundStyle(Theme.accent.opacity(0.7))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Theme.accent.opacity(0.06), in: .rect(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
     }
 
     private func routeBadge(_ route: String) -> some View {
@@ -166,6 +247,80 @@ struct MessageBubble: View {
         case "patchPlanning": return .orange
         case "search": return .purple
         default: return Theme.dimText
+        }
+    }
+
+    private var contextSourcesSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.snappy(duration: 0.2)) {
+                    showSources.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 9))
+                    Text("\(message.contextSources.count) source\(message.contextSources.count == 1 ? "" : "s") used")
+                        .font(.system(size: 10, weight: .medium))
+                    Spacer()
+                    Image(systemName: showSources ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                .foregroundStyle(Theme.dimText)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+            }
+            .buttonStyle(.plain)
+
+            if showSources {
+                VStack(spacing: 4) {
+                    ForEach(message.contextSources) { source in
+                        Button {
+                            onTapContextSource?(source)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(sourceMethodColor(source.method))
+                                    .frame(width: 5, height: 5)
+
+                                Text(source.filePath)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.75))
+                                    .lineLimit(1)
+
+                                if let range = source.lineRangeText {
+                                    Text(range)
+                                        .font(.system(size: 9, design: .monospaced))
+                                        .foregroundStyle(Theme.dimText)
+                                }
+
+                                Spacer()
+
+                                Text(source.methodBadge)
+                                    .font(.system(size: 8, weight: .semibold))
+                                    .foregroundStyle(sourceMethodColor(source.method))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(sourceMethodColor(source.method).opacity(0.12), in: .capsule)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.bottom, 6)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .background(Theme.codeBg.opacity(0.5), in: .rect(cornerRadius: 8))
+    }
+
+    private func sourceMethodColor(_ method: ContextSource.RetrievalMethod) -> Color {
+        switch method {
+        case .semanticSearch: return .purple
+        case .routeHint: return .cyan
+        case .fallbackSample: return .orange
         }
     }
 

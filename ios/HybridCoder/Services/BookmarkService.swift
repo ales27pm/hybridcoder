@@ -1,9 +1,12 @@
 import Foundation
+import OSLog
 
 @Observable
 @MainActor
 final class BookmarkService {
-    private let bookmarksKey = "savedRepositoryBookmarks"
+    private let secureStoreKey = "savedRepositoryBookmarks"
+    private let secureStore = SecureStoreService(serviceName: "com.hybridcoder.repos")
+    private let logger = Logger(subsystem: "com.hybridcoder.app", category: "BookmarkService")
     var repositories: [Repository] = []
 
     init() {
@@ -41,16 +44,15 @@ final class BookmarkService {
                 relativeTo: nil
             ) {
                 if let index = repositories.firstIndex(where: { $0.id == repository.id }) {
-                    var updatedRepo = repositories[index]
-                    updatedRepo = Repository(
-                        id: updatedRepo.id,
-                        name: updatedRepo.name,
+                    let existing = repositories[index]
+                    repositories[index] = Repository(
+                        id: existing.id,
+                        name: existing.name,
                         bookmarkData: updated,
-                        lastOpened: updatedRepo.lastOpened,
-                        fileCount: updatedRepo.fileCount,
-                        indexedCount: updatedRepo.indexedCount
+                        lastOpened: existing.lastOpened,
+                        fileCount: existing.fileCount,
+                        indexedCount: existing.indexedCount
                     )
-                    repositories[index] = updatedRepo
                     persistRepositories()
                 }
             }
@@ -71,13 +73,37 @@ final class BookmarkService {
     }
 
     private func loadRepositories() {
-        guard let data = UserDefaults.standard.data(forKey: bookmarksKey),
+        Task {
+            do {
+                if let decoded: [Repository] = try await secureStore.getObject(secureStoreKey, as: [Repository].self) {
+                    repositories = decoded
+                } else {
+                    migrateFromUserDefaults()
+                }
+            } catch {
+                logger.error("Failed to load repositories from Keychain: \(error.localizedDescription)")
+                migrateFromUserDefaults()
+            }
+        }
+    }
+
+    private func migrateFromUserDefaults() {
+        let legacyKey = "savedRepositoryBookmarks"
+        guard let data = UserDefaults.standard.data(forKey: legacyKey),
               let decoded = try? JSONDecoder().decode([Repository].self, from: data) else { return }
         repositories = decoded
+        persistRepositories()
+        UserDefaults.standard.removeObject(forKey: legacyKey)
+        logger.info("Migrated \(decoded.count) repositories from UserDefaults to Keychain")
     }
 
     private func persistRepositories() {
-        guard let data = try? JSONEncoder().encode(repositories) else { return }
-        UserDefaults.standard.set(data, forKey: bookmarksKey)
+        Task {
+            do {
+                try await secureStore.setObject(secureStoreKey, value: repositories)
+            } catch {
+                logger.error("Failed to persist repositories to Keychain: \(error.localizedDescription)")
+            }
+        }
     }
 }
