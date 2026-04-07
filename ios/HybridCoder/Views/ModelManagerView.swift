@@ -259,7 +259,7 @@ struct ModelManagerView: View {
                 qwenStatusBadge(installState: installState, loadState: loadState)
             }
 
-            Text("Qwen is hydrated by CoreMLPipelines on first warm-up. The Hugging Face token above is forwarded before model load so gated downloads can authenticate.")
+            Text("Qwen is downloaded by CoreMLPipelines into Application Support on first warm-up. The Hugging Face token above is forwarded before model load so gated downloads can authenticate.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
 
@@ -319,7 +319,7 @@ struct ModelManagerView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
 
-                Button("Reset State") {
+                Button("Delete") {
                     Task {
                         await orchestrator.resetCodeGenerationModelState()
                     }

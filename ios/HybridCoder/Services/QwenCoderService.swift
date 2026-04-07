@@ -1,11 +1,13 @@
 import Darwin
 import Foundation
 import CoreMLPipelines
+@preconcurrency import Hub
 
 extension TextGenerationPipeline: @unchecked @retroactive Sendable {}
 
 actor QwenCoderService {
     let modelName: String
+    private let hubDownloadBase: URL
     private let accessTokenProvider: () -> String?
 
     private(set) var isLoaded: Bool = false
@@ -21,9 +23,11 @@ actor QwenCoderService {
 
     init(
         modelName: String = "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit",
+        hubDownloadBase: URL = ModelRegistry.coreMLPipelinesDownloadRoot,
         accessTokenProvider: @escaping () -> String? = { nil }
     ) {
         self.modelName = modelName
+        self.hubDownloadBase = hubDownloadBase
         self.accessTokenProvider = accessTokenProvider
     }
 
@@ -140,8 +144,14 @@ actor QwenCoderService {
         loadProgress = max(loadProgress, 0.2)
         loadError = nil
 
+        let token = accessTokenProvider()?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hubAPI = HubApi(
+            downloadBase: hubDownloadBase,
+            hfToken: token?.isEmpty == false ? token : nil
+        )
+
         let task = Task {
-            try await TextGenerationPipeline(modelName: modelName, prewarm: false)
+            try await TextGenerationPipeline(modelName: modelName, prewarm: false, hubAPI: hubAPI)
         }
         loadingTask = task
 

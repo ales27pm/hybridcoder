@@ -238,7 +238,7 @@ final class AIOrchestrator {
         await modelDownload.refreshInstallState(modelID: modelRegistry.activeEmbeddingModelID)
 
         let codeGenerationModelID = modelRegistry.activeCodeGenerationModelID
-        let qwenInstalled = modelRegistry.isCodeGenerationModelMarkedInstalled(modelID: codeGenerationModelID)
+        let qwenInstalled = modelRegistry.isCodeGenerationModelInstalled(modelID: codeGenerationModelID)
         modelRegistry.setInstallState(for: codeGenerationModelID, qwenInstalled ? .installed : .notInstalled)
     }
 
@@ -251,6 +251,7 @@ final class AIOrchestrator {
         }
         return QwenCoderService(
             modelName: modelID,
+            hubDownloadBase: ModelRegistry.coreMLPipelinesDownloadRoot,
             accessTokenProvider: tokenProvider
         )
     }
@@ -275,7 +276,7 @@ final class AIOrchestrator {
         codeGenerationLifecycleToken &+= 1
         let token = codeGenerationLifecycleToken
         let activeModelID = modelRegistry.activeCodeGenerationModelID
-        let wasInstalled = modelRegistry.isCodeGenerationModelMarkedInstalled(modelID: activeModelID)
+        let wasInstalled = modelRegistry.isCodeGenerationModelInstalled(modelID: activeModelID)
 
         modelRegistry.setInstallState(for: activeModelID, .downloading(progress: 0.05))
         modelRegistry.setLoadState(for: activeModelID, .loading)
@@ -297,10 +298,18 @@ final class AIOrchestrator {
             }
             guard codeGenerationLifecycleToken == token else { return }
 
-            modelRegistry.markCodeGenerationModelInstalled(modelID: activeModelID)
-            modelRegistry.setInstallState(for: activeModelID, .installed)
-            modelRegistry.setLoadState(for: activeModelID, .loaded)
-            warmUpError = nil
+            if modelRegistry.areCodeGenerationModelFilesInstalled(modelID: activeModelID) {
+                modelRegistry.markCodeGenerationModelInstalled(modelID: activeModelID)
+                modelRegistry.setInstallState(for: activeModelID, .installed)
+                modelRegistry.setLoadState(for: activeModelID, .loaded)
+                warmUpError = nil
+            } else {
+                let message = "CoreMLPipelines finished warm-up, but expected Qwen snapshot files were not found in Application Support."
+                modelRegistry.setInstallState(for: activeModelID, .notInstalled)
+                modelRegistry.setLoadState(for: activeModelID, .failed(message))
+                warmUpError = message
+                throw OrchestratorError.codeGenerationModelUnavailable(message)
+            }
         } catch {
             guard codeGenerationLifecycleToken == token else { return }
             modelRegistry.setInstallState(for: activeModelID, wasInstalled ? .installed : .notInstalled)
@@ -326,7 +335,7 @@ final class AIOrchestrator {
     func resetCodeGenerationModelState() async {
         await unloadCodeGenerationModel()
         let activeModelID = modelRegistry.activeCodeGenerationModelID
-        modelRegistry.clearCodeGenerationInstallMarker(modelID: activeModelID)
+        modelRegistry.deleteCodeGenerationModelAssets(modelID: activeModelID)
         modelRegistry.setInstallState(for: activeModelID, .notInstalled)
         modelRegistry.setLoadState(for: activeModelID, .unloaded)
         warmUpError = nil
@@ -1264,9 +1273,14 @@ final class AIOrchestrator {
 
         do {
             try await coder.warmUp()
-            modelRegistry.markCodeGenerationModelInstalled(modelID: activeModelID)
-            modelRegistry.setInstallState(for: activeModelID, .installed)
-            return coder
+            if modelRegistry.areCodeGenerationModelFilesInstalled(modelID: activeModelID) {
+                modelRegistry.markCodeGenerationModelInstalled(modelID: activeModelID)
+                modelRegistry.setInstallState(for: activeModelID, .installed)
+                return coder
+            }
+            let message = "CoreMLPipelines finished warm-up, but expected Qwen snapshot files were not found in Application Support."
+            modelRegistry.setInstallState(for: activeModelID, .notInstalled)
+            throw OrchestratorError.codeGenerationModelUnavailable(message)
         } catch {
             throw OrchestratorError.codeGenerationModelUnavailable(error.localizedDescription)
         }

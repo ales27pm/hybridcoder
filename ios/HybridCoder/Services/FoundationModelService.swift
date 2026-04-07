@@ -397,7 +397,7 @@ final class FoundationModelService {
         operation: @escaping () async throws -> T
     ) async throws -> T {
         do {
-            return try try await operation()
+            return try await operation()
         } catch let error as LanguageModelSession.GenerationError where Self.isContextWindowError(error) {
             logger.warning("contextWindowExceeded — resetting session and retrying")
             resetSession()

@@ -66,6 +66,7 @@ final class ModelRegistry {
     private let embeddingID = "microsoft/codebert-base"
     private let generationID = "apple/foundation-language-model"
     private let codeGenerationID = "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit"
+    private let qwenCompiledModelFolder = "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc"
 
     init() {
         let embeddingFiles: [ModelFile] = [
@@ -78,11 +79,14 @@ final class ModelRegistry {
         ]
 
         let qwenFiles: [ModelFile] = [
+            ModelFile(remotePath: "\(qwenCompiledModelFolder)/analytics/coremldata.bin", localPath: "\(qwenCompiledModelFolder)/analytics/coremldata.bin"),
+            ModelFile(remotePath: "\(qwenCompiledModelFolder)/coremldata.bin", localPath: "\(qwenCompiledModelFolder)/coremldata.bin"),
+            ModelFile(remotePath: "\(qwenCompiledModelFolder)/metadata.json", localPath: "\(qwenCompiledModelFolder)/metadata.json"),
+            ModelFile(remotePath: "\(qwenCompiledModelFolder)/model.mil", localPath: "\(qwenCompiledModelFolder)/model.mil"),
+            ModelFile(remotePath: "\(qwenCompiledModelFolder)/weights/weight.bin", localPath: "\(qwenCompiledModelFolder)/weights/weight.bin"),
             ModelFile(remotePath: "config.json", localPath: "config.json"),
             ModelFile(remotePath: "tokenizer.json", localPath: "tokenizer.json"),
-            ModelFile(remotePath: "tokenizer_config.json", localPath: "tokenizer_config.json"),
-            ModelFile(remotePath: "special_tokens_map.json", localPath: "special_tokens_map.json"),
-            ModelFile(remotePath: "generation_config.json", localPath: "generation_config.json")
+            ModelFile(remotePath: "tokenizer_config.json", localPath: "tokenizer_config.json")
         ]
 
         let initialEntries: [String: Entry] = [
@@ -185,8 +189,10 @@ final class ModelRegistry {
         switch model.capability {
         case .embedding:
             return model.installState == .installed && model.loadState == .loaded
-        case .orchestration, .codeGeneration:
+        case .orchestration:
             return model.loadState == .loaded
+        case .codeGeneration:
+            return model.installState == .installed && model.loadState == .loaded
         }
     }
 
@@ -209,6 +215,14 @@ final class ModelRegistry {
         BundledEmbeddingAssets.modelsRootURL
     }
 
+    nonisolated static var coreMLPipelinesDownloadRoot: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return appSupport
+            .appendingPathComponent("HybridCoder", isDirectory: true)
+            .appendingPathComponent("CoreMLPipelines", isDirectory: true)
+    }
+
     func downloadedModelDirectory(for modelID: String) -> URL {
         Self.downloadedModelsRoot.appendingPathComponent(modelFolderName(for: modelID))
     }
@@ -226,11 +240,39 @@ final class ModelRegistry {
     }
 
     func codeGenerationInstallMarkerURL(for modelID: String) -> URL {
+        codeGenerationSnapshotDirectory(for: modelID).appendingPathComponent(".hybridcoder-install-state.json")
+    }
+
+    func legacyCodeGenerationInstallMarkerURL(for modelID: String) -> URL {
         downloadedModelDirectory(for: modelID).appendingPathComponent(".install-state.json")
     }
 
+    func codeGenerationSnapshotDirectory(for modelID: String) -> URL {
+        Self.coreMLPipelinesDownloadRoot
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent(modelID, isDirectory: true)
+    }
+
+    func isCodeGenerationModelInstalled(modelID: String) -> Bool {
+        areCodeGenerationModelFilesInstalled(modelID: modelID)
+    }
+
     func isCodeGenerationModelMarkedInstalled(modelID: String) -> Bool {
-        FileManager.default.fileExists(atPath: codeGenerationInstallMarkerURL(for: modelID).path(percentEncoded: false))
+        FileManager.default.fileExists(atPath: codeGenerationInstallMarkerURL(for: modelID).path(percentEncoded: false)) ||
+            FileManager.default.fileExists(atPath: legacyCodeGenerationInstallMarkerURL(for: modelID).path(percentEncoded: false))
+    }
+
+    func areCodeGenerationModelFilesInstalled(modelID: String) -> Bool {
+        guard let entry = entries[modelID], entry.runtime == .coreMLPipelines, entry.files.isEmpty == false else {
+            return false
+        }
+
+        let snapshotDirectory = codeGenerationSnapshotDirectory(for: modelID)
+        return entry.files.allSatisfy { file in
+            FileManager.default.fileExists(
+                atPath: snapshotDirectory.appendingPathComponent(file.localPath).path(percentEncoded: false)
+            )
+        }
     }
 
     func markCodeGenerationModelInstalled(modelID: String) {
@@ -251,8 +293,21 @@ final class ModelRegistry {
 
     func clearCodeGenerationInstallMarker(modelID: String) {
         let markerURL = codeGenerationInstallMarkerURL(for: modelID)
-        guard FileManager.default.fileExists(atPath: markerURL.path(percentEncoded: false)) else { return }
-        try? FileManager.default.removeItem(at: markerURL)
+        if FileManager.default.fileExists(atPath: markerURL.path(percentEncoded: false)) {
+            try? FileManager.default.removeItem(at: markerURL)
+        }
+
+        let legacyMarkerURL = legacyCodeGenerationInstallMarkerURL(for: modelID)
+        if FileManager.default.fileExists(atPath: legacyMarkerURL.path(percentEncoded: false)) {
+            try? FileManager.default.removeItem(at: legacyMarkerURL)
+        }
+    }
+
+    func deleteCodeGenerationModelAssets(modelID: String) {
+        clearCodeGenerationInstallMarker(modelID: modelID)
+        try? FileManager.default.removeItem(at: codeGenerationSnapshotDirectory(for: modelID))
+        try? FileManager.default.removeItem(at: downloadedModelDirectory(for: modelID))
+        try? FileManager.default.removeItem(at: downloadedTokenizerDirectory(for: modelID))
     }
 
     private func mutate(modelID: String, _ update: (inout Entry) -> Void) {

@@ -64,7 +64,7 @@ nonisolated struct ArtifactValidationResult: Sendable {
 
 nonisolated enum ModelArtifactFactory {
     static func codeBERTArtifact(remoteBaseURL: String) -> ModelArtifact {
-        ModelArtifact(
+        return ModelArtifact(
             id: "microsoft/codebert-base",
             displayName: "CodeBERT (rsvalerio/codebert-base-coreml)",
             packageRootPath: "model.mlpackage",
@@ -83,7 +83,7 @@ nonisolated enum ModelArtifactFactory {
     }
 
     static func foundationModelArtifact() -> ModelArtifact {
-        ModelArtifact(
+        return ModelArtifact(
             id: "apple/foundation-language-model",
             displayName: "Apple Foundation Models",
             packageRootPath: "",
@@ -95,13 +95,24 @@ nonisolated enum ModelArtifactFactory {
     }
 
     static func qwenCoderArtifact() -> ModelArtifact {
-        ModelArtifact(
+        let compiledModelFolder = "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc"
+
+        return ModelArtifact(
             id: "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit",
             displayName: "Qwen2.5-Coder 1.5B Instruct (4-bit)",
-            packageRootPath: "",
+            packageRootPath: compiledModelFolder,
             tokenizerRootPath: "",
-            remoteBaseURL: nil,
-            requiredFiles: [],
+            remoteBaseURL: "https://huggingface.co/finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit/resolve/main",
+            requiredFiles: [
+                .init(remotePath: "\(compiledModelFolder)/analytics/coremldata.bin", localPath: "\(compiledModelFolder)/analytics/coremldata.bin", kind: .mlmodelc),
+                .init(remotePath: "\(compiledModelFolder)/coremldata.bin", localPath: "\(compiledModelFolder)/coremldata.bin", kind: .mlmodelc),
+                .init(remotePath: "\(compiledModelFolder)/metadata.json", localPath: "\(compiledModelFolder)/metadata.json", kind: .mlmodelc, isValidatable: true),
+                .init(remotePath: "\(compiledModelFolder)/model.mil", localPath: "\(compiledModelFolder)/model.mil", kind: .mlmodelc),
+                .init(remotePath: "\(compiledModelFolder)/weights/weight.bin", localPath: "\(compiledModelFolder)/weights/weight.bin", kind: .mlmodelc),
+                .init(remotePath: "config.json", localPath: "config.json", kind: .tokenizer, isValidatable: true),
+                .init(remotePath: "tokenizer.json", localPath: "tokenizer.json", kind: .tokenizer, isValidatable: true),
+                .init(remotePath: "tokenizer_config.json", localPath: "tokenizer_config.json", kind: .tokenizer, isValidatable: true),
+            ],
             supportsLocalCompilation: false
         )
     }

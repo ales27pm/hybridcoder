@@ -55,6 +55,12 @@ final class ModelDownloadService {
     }
 
     func refreshInstallState(modelID: String) async {
+        if registry.entry(for: modelID)?.runtime == .coreMLPipelines {
+            let isReady = registry.isCodeGenerationModelInstalled(modelID: modelID)
+            registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
+            return
+        }
+
         let isReady = await Self.validateDownloadedAssets(modelID: modelID, registry: registry)
         registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
     }
@@ -70,6 +76,13 @@ final class ModelDownloadService {
         let modelID = modelID ?? activeEmbeddingModelID
         guard !isDownloading else { return }
         guard let entry = registry.entry(for: modelID) else { return }
+        guard entry.runtime != .coreMLPipelines else {
+            downloadError = "Code-generation models are downloaded by CoreMLPipelines during warm-up."
+            shouldSuggestTokenInput = false
+            let isReady = registry.isCodeGenerationModelInstalled(modelID: modelID)
+            registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
+            return
+        }
 
         isDownloading = true
         downloadProgress = 0
@@ -203,6 +216,15 @@ final class ModelDownloadService {
 
     func deleteDownloadedModels(modelID: String? = nil) {
         let modelID = modelID ?? activeEmbeddingModelID
+        if registry.entry(for: modelID)?.runtime == .coreMLPipelines {
+            registry.deleteCodeGenerationModelAssets(modelID: modelID)
+            registry.setInstallState(for: modelID, .notInstalled)
+            registry.setLoadState(for: modelID, .unloaded)
+            downloadProgress = 0
+            downloadError = nil
+            return
+        }
+
         let fm = FileManager.default
         let modelDir = registry.downloadedModelDirectory(for: modelID)
         let tokenizerDir = registry.downloadedTokenizerDirectory(for: modelID)
@@ -295,6 +317,13 @@ final class ModelDownloadService {
             throw DownloadError.fileCorrupt("Missing model registry entry for \(modelID)")
         }
 
+        if entry.runtime == .coreMLPipelines {
+            guard registry.isCodeGenerationModelInstalled(modelID: modelID) else {
+                throw DownloadError.fileCorrupt("Expected CoreMLPipelines snapshot files")
+            }
+            return
+        }
+
         let modelDir = registry.downloadedModelDirectory(for: modelID)
         let packageModel = modelDir.appendingPathComponent("model.mlpackage")
         let compiledModel = modelDir.appendingPathComponent("model.mlmodelc")
@@ -351,6 +380,13 @@ final class ModelDownloadService {
 
     private static func validateDownloadedAssetsPostCompileOrThrow(modelID: String, registry: ModelRegistry) async throws {
         let fm = FileManager.default
+        if registry.entry(for: modelID)?.runtime == .coreMLPipelines {
+            guard registry.isCodeGenerationModelInstalled(modelID: modelID) else {
+                throw DownloadError.fileCorrupt("Expected CoreMLPipelines snapshot files")
+            }
+            return
+        }
+
         let modelDir = registry.downloadedModelDirectory(for: modelID)
         let compiledModel = modelDir.appendingPathComponent("model.mlmodelc")
 
