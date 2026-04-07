@@ -66,6 +66,8 @@ nonisolated enum PromptBuilder: Sendable {
             Rules:
             - searchText must be an exact verbatim substring already present in the target file, including whitespace and newlines.
             - replaceText must be the literal replacement content for that exact region.
+            - NEVER produce an operation where searchText and replaceText are identical — that is a no-op.
+            - To CREATE a new file, set searchText to empty and replaceText to the full file content.
             - Produce the minimum number of operations needed.
             - Never combine unrelated edits into one operation.
             - If the provided context is insufficient to produce a safe exact-match patch, stop instead of guessing.

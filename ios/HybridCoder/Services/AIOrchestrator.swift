@@ -1276,6 +1276,7 @@ final class AIOrchestrator {
             let searchText = String(content[searchRange.upperBound..<replaceRange.lowerBound])
             let replaceText = String(content[replaceRange.upperBound..<endRange.lowerBound])
 
+            if !searchText.isEmpty && searchText == replaceText { continue }
             operations.append(PatchOperation(
                 filePath: fileLine,
                 searchText: searchText,

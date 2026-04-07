@@ -151,8 +151,29 @@ private struct OperationCard: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                diffBlock(prefix: "−", text: operation.searchText, color: .red)
-                diffBlock(prefix: "+", text: operation.replaceText, color: Theme.accent)
+                if operation.searchText.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.badge.plus")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.accent)
+                        Text("New file")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(Theme.accent)
+                    }
+                    diffBlock(prefix: "+", text: operation.replaceText, color: Theme.accent)
+                } else if operation.searchText == operation.replaceText {
+                    HStack(spacing: 6) {
+                        Image(systemName: "equal.circle")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                        Text("No change (identical content)")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.orange)
+                    }
+                } else {
+                    diffBlock(prefix: "−", text: operation.searchText, color: .red)
+                    diffBlock(prefix: "+", text: operation.replaceText, color: Theme.accent)
+                }
             }
 
             if operation.status == .pending {

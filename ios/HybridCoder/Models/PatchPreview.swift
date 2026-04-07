@@ -27,8 +27,12 @@ struct PatchPreview: Identifiable {
     }
 
     static func generate(for operation: PatchOperation, fileContent: String, contextLines: Int = 4) -> PatchPreview {
-        guard !operation.searchText.isEmpty else {
-            return invalid(operation: operation, error: "Search text is empty")
+        if operation.searchText == operation.replaceText {
+            return invalid(operation: operation, error: "Search and replace text are identical \u{2014} no change needed")
+        }
+
+        if operation.searchText.isEmpty {
+            return fileCreationPreview(for: operation)
         }
 
         let occurrences = countOccurrences(of: operation.searchText, in: fileContent)
@@ -88,6 +92,23 @@ struct PatchPreview: Identifiable {
             beforeSnippet: ContextSnippet(lines: beforeLines, highlightRange: beforeHighlight),
             afterSnippet: ContextSnippet(lines: afterLines, highlightRange: afterHighlight),
             matchLine: matchLine,
+            isValid: true,
+            validationError: nil
+        )
+    }
+
+    private static func fileCreationPreview(for operation: PatchOperation) -> PatchPreview {
+        let newLines = operation.replaceText.components(separatedBy: "\n")
+        let afterLines = newLines.enumerated().map { index, line in
+            NumberedLine(number: index + 1, text: line, kind: .added)
+        }
+
+        return PatchPreview(
+            id: operation.id,
+            operation: operation,
+            beforeSnippet: ContextSnippet(lines: [], highlightRange: 0..<0),
+            afterSnippet: ContextSnippet(lines: afterLines, highlightRange: 0..<afterLines.count),
+            matchLine: 0,
             isValid: true,
             validationError: nil
         )

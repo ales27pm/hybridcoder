@@ -156,6 +156,8 @@ final class FoundationModelService {
             \(promptEnvelope.system)
             Each operation's searchText MUST be an exact verbatim substring found in the file — including all whitespace, indentation, and newlines.
             The replaceText is the new text that will replace it. DO NOT paraphrase or approximate the search text.
+            NEVER produce an operation where searchText equals replaceText — that is a no-op and will be rejected.
+            To CREATE a new file, set searchText to an empty string and replaceText to the full file content.
             """
         }
 
@@ -170,8 +172,9 @@ final class FoundationModelService {
         )
 
         let plan = response.content
-        let operations = plan.operations.map { op in
-            PatchOperation(
+        let operations = plan.operations.compactMap { op -> PatchOperation? in
+            if !op.searchText.isEmpty && op.searchText == op.replaceText { return nil }
+            return PatchOperation(
                 filePath: op.filePath,
                 searchText: op.searchText,
                 replaceText: op.replaceText,

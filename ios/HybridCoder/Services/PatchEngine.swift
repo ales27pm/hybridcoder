@@ -42,6 +42,7 @@ actor PatchEngine {
         case multipleMatches(String, Int)
         case writeFailed(String, String)
         case pathOutsideRepo(String)
+        case noOpIdenticalContent(String)
     }
 
     func apply(_ plan: PatchPlan, repoRoot: URL) async -> PatchResult {
@@ -113,6 +114,19 @@ actor PatchEngine {
         var failures: [OperationFailure] = []
 
         for operation in plan.operations where operation.status == .pending {
+            if operation.searchText == operation.replaceText {
+                failures.append(OperationFailure(
+                    operationID: operation.id,
+                    filePath: operation.filePath,
+                    reason: Self.failureReason(for: .noOpIdenticalContent(operation.filePath))
+                ))
+                continue
+            }
+
+            if operation.searchText.isEmpty {
+                continue
+            }
+
             let fileURL: URL
             do {
                 fileURL = try Self.safeResolvedFileURL(for: operation.filePath, repoRoot: repoRoot)
@@ -189,10 +203,20 @@ actor PatchEngine {
                 if !canonicalPathKey.hasPrefix("invalid:") && resolvedCanonicalKey != canonicalPathKey {
                     throw PatchError.pathOutsideRepo(operation.filePath)
                 }
-                let content = if let cachedContent {
-                    cachedContent
+                if operation.searchText == operation.replaceText {
+                    statusesByOperationID[operation.id] = .applied
+                    continue
+                }
+
+                let isNewFile = operation.searchText.isEmpty
+
+                let content: String
+                if isNewFile {
+                    content = ""
+                } else if let cachedContent {
+                    content = cachedContent
                 } else {
-                    try await resolveFileContent(
+                    content = try await resolveFileContent(
                         at: resolvedFileURL,
                         displayPath: operation.filePath,
                         repoAccess: repoAccess
@@ -200,7 +224,11 @@ actor PatchEngine {
                 }
 
                 let updated: String
-                if let operationTransformer {
+                if isNewFile {
+                    let dir = resolvedFileURL.deletingLastPathComponent()
+                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    updated = operation.replaceText
+                } else if let operationTransformer {
                     updated = try await operationTransformer(operation, content)
                 } else {
                     updated = try applyOperation(operation, to: content)
@@ -305,10 +333,16 @@ actor PatchEngine {
             return "Write failed for \(path): \(detail)"
         case .pathOutsideRepo(let path):
             return "Path escapes repository root: \(path)"
+        case .noOpIdenticalContent(let path):
+            return "Search and replace text are identical in \(path) — no change needed"
         }
     }
 
     private static func applyOperation(_ operation: PatchOperation, to content: String) throws -> String {
+        if operation.searchText == operation.replaceText {
+            throw PatchError.noOpIdenticalContent(operation.filePath)
+        }
+
         let matchCount = countOccurrences(of: operation.searchText, in: content)
 
         guard matchCount > 0 else {
