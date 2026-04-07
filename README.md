@@ -1,34 +1,21 @@
 # HybridCoder
 
-HybridCoder is an on-device AI coding assistant for iOS.
+HybridCoder is an on-device iOS coding studio that is being refocused into a React Native and Expo builder.
 
-## Chosen Architecture Path
+## Current state
 
-This repository is now standardized on **FoundationModels + CoreML (iOS 26+)**.
+- SwiftUI app shell
+- local workspace and project state
+- Foundation Models-based orchestration
+- Core ML semantic retrieval
+- patch planning and editing flows
+- imported repository and prototype handling
 
-- **Generation/routing/planning:** Apple Foundation Models (`FoundationModels` framework).
-- **Semantic search embeddings:** downloaded CoreML embedding model.
-- **No MLX runtime:** MLX package and product links are removed from the Xcode project.
+## Main gap
 
-## Platform Baseline
+The current codebase is not yet a finished Expo builder. The largest missing pieces are:
 
-- Minimum deployment target: **iOS 26.0** for all app and test targets.
-- Apple Intelligence availability is required for model-backed assistant responses.
-
-## Supported OS / Model Matrix
-
-| Runtime capability | Supported OS | Provider | Fallback |
-| --- | --- | --- | --- |
-| Route classification | iOS 26.0+ | Apple Foundation Models | None |
-| Assistant generation (explain/code/patch planning) | iOS 26.0+ | Apple Foundation Models | None |
-| Semantic embeddings / search index | iOS 26.0+ | CoreML CodeBERT | None (user must download embedding model) |
-
-HybridCoder is **Foundation Models first and only** for generation/routing. If Apple Intelligence is unavailable at runtime, requests fail with a deterministic "no model available" error instead of falling back to alternate providers.
-
-## Why this path
-
-- Single Apple-native stack for inference + orchestration.
-- Reduced dependency surface (no third-party LLM runtime integration in project wiring).
-- Simpler boot flow and status model for users.
-
-See `docs/architecture.md` for implementation details.
+- a real React Native preview path
+- stronger Expo template scaffolds
+- tighter React Native-specific prompt policy
+- a cleaner builder-first project workflow
