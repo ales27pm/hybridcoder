@@ -10,15 +10,20 @@ HybridCoder now uses a split strategy:
 - Qwen via CoreMLPipelines handles code generation and repository-grounded explanations.
 - `PromptContextBudget` currently sets:
   - `foundationContextCap = 2000`
-  - `qwenContextCap = 32000`
-  - `maximumConversationContextBudget = 400`
-  - `qwenMaximumConversationContextBudget = 2000`
+  - `qwenContextCap = 32_000`
+  - `downstreamContextCap = 2000`
+  - `minimumCodeContextBudget = 1100`
+  - `maximumPolicyContextBudget = 350`
+  - `maximumConversationContextBudget = 550`
+  - `qwenMinimumCodeContextBudget = 26_000`
+  - `qwenMaximumPolicyContextBudget = 2_000`
+  - `qwenMaximumConversationContextBudget = 2400`
 - `ChatViewModel` currently compacts memory aggressively:
-  - `maxConversationTokens = 1400`
-  - `compactionThreshold = 600`
-  - `preservedRecentTurnCount = 4`
+  - `maxConversationTokens = 2400`
+  - `compactionThreshold = 1200`
+  - `preservedRecentTurnCount = 6`
 
-This is a good safety-first baseline, but it still leaves a lot of effective context capacity unused during coding sessions.
+This is a better working baseline than the previous safety-first settings, but there is still room to improve how retained memory, prompt packing, and retrieval interact.
 
 ## Consolidated strategy
 
@@ -37,17 +42,27 @@ The best practical path is not a single bigger number. It is a layered system:
 
 Raise chat memory thresholds so HybridCoder stops compacting too early.
 
+`ChatViewModel.maxConversationTokens` controls how much conversation history the app retains before compaction. `PromptContextBudget.maximumConversationContextBudget` and `PromptContextBudget.qwenMaximumConversationContextBudget` in `ios/HybridCoder/Services/AIOrchestrator.swift` control how much of that retained history is actually allowed into each prompt. Those values need to move together or the extra retained memory never reaches the model.
+
 Recommended first-pass values:
 
-- `ChatViewModel.maxConversationTokens`: `1400 -> 2200` or `2400`
-- `ChatViewModel.compactionThreshold`: `600 -> 1000` or `1200`
+- `ChatViewModel.maxConversationTokens`: `1400 -> 2400`
+- `ChatViewModel.compactionThreshold`: `600 -> 1200`
 - `ChatViewModel.preservedRecentTurnCount`: `4 -> 6`
+- `PromptContextBudget.maximumConversationContextBudget`: `400 -> 550`
+- `PromptContextBudget.qwenMaximumConversationContextBudget`: `2000 -> 2400`
+
+Notes:
+
+- `550` is the practical Foundation ceiling under the current `foundationContextCap`, `minimumCodeContextBudget`, and `maximumPolicyContextBudget` values.
+- Qwen can absorb the full `2400` retained-chat target without starving code context.
+- Larger Foundation conversation slices should wait for Phase 3 token-aware repacking rather than squeezing code budget further with character-based clipping.
 
 Why:
 
-- Current compaction starts before the chat has consumed most of the practical budget.
-- The assistant loses working memory too early during debugging and multi-step edits.
-- This is the safest immediate quality improvement.
+- Current compaction no longer starts as early as before, so multi-step debugging sessions keep more working memory alive.
+- The prompt budget now matches the retained-memory intent instead of truncating it back down at dispatch time.
+- This is still a relatively safe change because it stays inside the existing downstream caps.
 
 ### Phase 2 — Add pinned task memory
 
@@ -123,9 +138,9 @@ HybridCoder already routes repository-grounded explanations to Qwen. Continue th
 Extend the provider policy for:
 
 - long debugging questions
-- questions mentioning multiple files/symbols
+- questions mentioning multiple files or multiple symbols
 - architecture walkthroughs crossing subsystem boundaries
-- explanation requests with many context sources
+- explanation requests that include several logs, stack traces, or referenced context sources
 
 Potential future extension:
 
@@ -134,7 +149,7 @@ Potential future extension:
 Why:
 
 - Foundation remains the right tool for short structured reasoning.
-- Qwen remains the right tool for large code-context work.
+- Qwen excels at large code-context work.
 - This preserves stability while raising effective usable context.
 
 ### Phase 6 — Add serving/runtime performance features
@@ -185,6 +200,7 @@ Apply:
 - token-aware prompt packing
 - route-specific prompt assembly priorities
 - better retrieval scoring and neighbour expansion
+- stronger `preferredExplanationProvider` heuristics for multi-file, multi-symbol, architecture, and multi-source debugging prompts
 - optional Qwen patch-planning path for large code contexts
 
 ### `ios/HybridCoder/Services/PromptBuilder.swift`
@@ -197,11 +213,11 @@ Update prompt construction to:
 
 ## What not to do first
 
-Do not start by trying to force Foundation Models to carry much larger repo context.
+Avoid starting by trying to force Foundation Models to carry much larger repo context.
 
-Do not start with model-level RoPE-extension experiments inside app orchestration code.
+Refrain from model-level RoPE-extension experiments inside app orchestration code.
 
-Do not assume the advertised long-context length of any model is enough on its own.
+Do not assume the advertised long-context length of any model is sufficient on its own.
 
 Raw context length helps, but retrieval quality, memory shape, and packing discipline matter more for a coding assistant.
 
@@ -210,7 +226,8 @@ Raw context length helps, but retrieval quality, memory shape, and packing disci
 The next concrete code change should be:
 
 1. tune `ChatViewModel` thresholds upward
-2. add pinned task memory
-3. replace character-budget packing with token-budget packing
+2. tune `PromptContextBudget` conversation slices to match that retained-memory strategy
+3. add pinned task memory
+4. replace character-budget packing with token-budget packing
 
 That sequence gives the best immediate improvement with the lowest architectural risk.
