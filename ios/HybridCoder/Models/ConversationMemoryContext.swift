@@ -54,7 +54,7 @@ nonisolated struct PinnedTaskMemory: Sendable, Equatable {
         return parts.joined(separator: " ")
     }
 
-    fileprivate func renderForPrompt(maxCharacters: Int) -> String {
+    func renderForPrompt(maxCharacters: Int) -> String {
         guard maxCharacters > 0, !isEmpty else { return "" }
 
         var sections: [String] = []
