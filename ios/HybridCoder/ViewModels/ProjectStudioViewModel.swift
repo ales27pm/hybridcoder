@@ -7,9 +7,9 @@ final class ProjectStudioViewModel {
     let bookmarkService: BookmarkService
     let sandboxViewModel: SandboxViewModel
 
-    init(bookmarkService: BookmarkService = BookmarkService(), sandboxViewModel: SandboxViewModel = SandboxViewModel()) {
-        self.bookmarkService = bookmarkService
-        self.sandboxViewModel = sandboxViewModel
+    init(bookmarkService: BookmarkService? = nil, sandboxViewModel: SandboxViewModel? = nil) {
+        self.bookmarkService = bookmarkService ?? BookmarkService()
+        self.sandboxViewModel = sandboxViewModel ?? SandboxViewModel()
     }
 
     func loadProjects() async {
