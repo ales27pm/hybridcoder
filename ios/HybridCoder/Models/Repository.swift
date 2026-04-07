@@ -1,6 +1,6 @@
 import Foundation
 
-struct Repository: Identifiable, Codable {
+nonisolated struct Repository: Identifiable, Codable, Sendable {
     let id: UUID
     let name: String
     let bookmarkData: Data

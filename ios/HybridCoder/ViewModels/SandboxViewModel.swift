@@ -16,29 +16,24 @@ final class SandboxViewModel {
 
     private let storageKey = "sandbox_projects"
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "SandboxViewModel")
-    private let storage: AsyncStorageService?
+    private let secureStore = SecureStoreService(serviceName: "com.hybridcoder.projects")
     let stateMemory = PrototypeStateMemory()
 
-    init() {
-        do {
-            self.storage = try AsyncStorageService(name: "sandbox_storage.sqlite")
-        } catch {
-            self.storage = nil
-            logger.error("Failed to init sandbox storage: \(error.localizedDescription)")
-        }
-    }
+    init() {}
 
     func loadProjects() async {
-        guard let storage else { return }
         isLoading = true
         defer { isLoading = false }
 
         do {
-            if let loaded: [SandboxProject] = try await storage.getObject(storageKey, as: [SandboxProject].self) {
+            if let loaded: [SandboxProject] = try await secureStore.getObject(storageKey, as: [SandboxProject].self) {
                 projects = loaded.sorted { $0.lastOpenedAt > $1.lastOpenedAt }
+            } else {
+                await migrateFromSQLite()
             }
         } catch {
-            logger.error("Failed to load sandbox projects: \(error.localizedDescription)")
+            logger.error("Failed to load sandbox projects from Keychain: \(error.localizedDescription)")
+            await migrateFromSQLite()
         }
     }
 
@@ -248,11 +243,24 @@ final class SandboxViewModel {
     }
 
     private func saveProjects() async {
-        guard let storage else { return }
         do {
-            try await storage.setObject(storageKey, value: projects)
+            try await secureStore.setObject(storageKey, value: projects)
         } catch {
-            logger.error("Failed to save sandbox projects: \(error.localizedDescription)")
+            logger.error("Failed to save sandbox projects to Keychain: \(error.localizedDescription)")
+        }
+    }
+
+    private func migrateFromSQLite() async {
+        do {
+            let legacyStorage = try AsyncStorageService(name: "sandbox_storage.sqlite")
+            if let loaded: [SandboxProject] = try await legacyStorage.getObject(storageKey, as: [SandboxProject].self) {
+                projects = loaded.sorted { $0.lastOpenedAt > $1.lastOpenedAt }
+                await saveProjects()
+                try await legacyStorage.removeItem(storageKey)
+                logger.info("Migrated \(loaded.count) sandbox projects from SQLite to Keychain")
+            }
+        } catch {
+            logger.error("SQLite migration failed: \(error.localizedDescription)")
         }
     }
 
