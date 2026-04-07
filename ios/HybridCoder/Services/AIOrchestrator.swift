@@ -2,10 +2,10 @@ import Foundation
 import OSLog
 
 enum PromptContextBudget {
-    static let downstreamContextCap = 2500
-    static let minimumCodeContextBudget = 1600
-    static let maximumPolicyContextBudget = 700
-    static let maximumConversationContextBudget = 1000
+    static let downstreamContextCap = 4000
+    static let minimumCodeContextBudget = 2400
+    static let maximumPolicyContextBudget = 900
+    static let maximumConversationContextBudget = 1200
 }
 
 nonisolated struct RouteResolution: Sendable, Equatable {
@@ -55,6 +55,7 @@ final class AIOrchestrator {
     private(set) var contextPolicySnapshot: ContextPolicySnapshot = .init(files: [])
     private(set) var templateDiagnostics: [DiscoveryDiagnostic] = []
     private(set) var policyWorkingDirectory: URL?
+    private(set) var sessionManager: LanguageModelSessionManager?
 
     private(set) var repoRoot: URL?
     private(set) var repoFiles: [RepoFile] = []
@@ -82,7 +83,8 @@ final class AIOrchestrator {
 
     init(
         promptTemplateService: PromptTemplateService = PromptTemplateService(),
-        globalPolicyDirectory: URL? = HybridCoderResourceLocator.globalPoliciesDirectory()
+        globalPolicyDirectory: URL? = HybridCoderResourceLocator.globalPoliciesDirectory(),
+        sessionManager: LanguageModelSessionManager? = nil
     ) {
         let registry = ModelRegistry()
         self.modelRegistry = registry
@@ -91,9 +93,61 @@ final class AIOrchestrator {
         self.contextPolicyLoader = ContextPolicyLoader()
         self.promptTemplateService = promptTemplateService
         self.globalPolicyDirectory = globalPolicyDirectory
+        self.sessionManager = sessionManager
         Task { [weak self] in
             await self?.refreshRegistryInstallState()
         }
+    }
+
+    func configureSessionManager(_ manager: LanguageModelSessionManager) {
+        self.sessionManager = manager
+        configureFoundationModelTools()
+    }
+
+    private func configureFoundationModelTools() {
+        guard let fm = foundationModel as? FoundationModelService else { return }
+
+        let toolProviders = buildToolProviders()
+        fm.configure(toolProviders: toolProviders, sessionManager: sessionManager)
+    }
+
+    private func buildToolProviders() -> ToolProviders {
+        let repoAccessRef = repoAccess
+        let repoFilesSnapshot = repoFiles
+        let searchIndexRef = searchIndex
+        let activeWorkspace = activeWorkspaceSource
+        let activePrototype = activePrototypeProject
+
+        let readFile: @Sendable (String) async -> String? = { path in
+            let matched = AIOrchestrator.matchRelevantFiles([path], within: repoFilesSnapshot, limit: 1)
+            guard let file = matched.first else { return nil }
+
+            if activeWorkspace == .prototype,
+               let project = activePrototype,
+               let protoFile = project.files.first(where: { $0.name == file.relativePath }) {
+                return protoFile.content
+            }
+            return await repoAccessRef.readUTF8(at: file.absoluteURL)
+        }
+
+        let searchCode: @Sendable (String, Int) async -> [(filePath: String, startLine: Int, endLine: Int, content: String, score: Float)] = { query, topK in
+            guard let index = searchIndexRef else { return [] }
+            guard let hits = try? await index.search(query: query, topK: topK) else { return [] }
+            return hits.map { ($0.filePath, $0.chunk.startLine, $0.chunk.endLine, $0.chunk.content, $0.score) }
+        }
+
+        let listFiles: @Sendable (String?) async -> [String] = { filter in
+            if let filter {
+                let lowered = filter.lowercased()
+                if lowered.hasPrefix(".") {
+                    return repoFilesSnapshot.filter { $0.fileExtension == String(lowered.dropFirst()) }.map(\.relativePath)
+                }
+                return repoFilesSnapshot.filter { $0.relativePath.lowercased().contains(lowered) }.map(\.relativePath)
+            }
+            return repoFilesSnapshot.map(\.relativePath)
+        }
+
+        return ToolProviders(readFile: readFile, searchCode: searchCode, listFiles: listFiles)
     }
 
     var foundationModelStatus: String {
@@ -148,6 +202,8 @@ final class AIOrchestrator {
         if foundationModel == nil {
             let fm = FoundationModelService(registry: modelRegistry, modelID: modelRegistry.activeGenerationModelID)
             fm.refreshStatus()
+            let toolProviders = buildToolProviders()
+            fm.configure(toolProviders: toolProviders, sessionManager: sessionManager)
             foundationModel = fm
         }
 
@@ -287,6 +343,7 @@ final class AIOrchestrator {
         await refreshTemplateDiagnostics(repoRoot: url)
         await refreshContextPolicies(repoRoot: url)
 
+        invalidateFoundationModelSessions()
         await rebuildIndex()
     }
 
@@ -337,6 +394,7 @@ final class AIOrchestrator {
         contextPolicySnapshot = .init(files: [])
         templateDiagnostics = []
         policyWorkingDirectory = nil
+        invalidateFoundationModelSessions()
         await promptTemplateService.clearCache()
         guard workspaceStateGeneration == expectedGeneration,
               activeWorkspaceSource == .repository,
@@ -354,6 +412,7 @@ final class AIOrchestrator {
         contextPolicySnapshot = .init(files: [])
         templateDiagnostics = []
         policyWorkingDirectory = nil
+        invalidateFoundationModelSessions()
         await promptTemplateService.clearCache()
         await rebuildPrototypeIndex()
     }
@@ -383,6 +442,14 @@ final class AIOrchestrator {
     }
 
 
+
+    func invalidateFoundationModelSessions() {
+        if let fm = foundationModel as? FoundationModelService {
+            fm.invalidateSessions()
+            let toolProviders = buildToolProviders()
+            fm.configure(toolProviders: toolProviders, sessionManager: sessionManager)
+        }
+    }
 
     func setPolicyWorkingContext(_ url: URL?) {
         guard let url else {
@@ -852,7 +919,7 @@ final class AIOrchestrator {
         var codeContextParts: [String] = []
         var includedPaths: Set<String> = []
 
-        let hintedFiles = Self.matchRelevantFiles(relevantFiles, within: repoFiles)
+        let hintedFiles = Self.matchRelevantFiles(relevantFiles, within: repoFiles, limit: 4)
         for file in hintedFiles {
             guard let content = await workspaceFileContent(for: file) else { continue }
             let header = "--- \(file.relativePath) ---"
@@ -860,7 +927,7 @@ final class AIOrchestrator {
             includedPaths.insert(file.relativePath.lowercased())
         }
 
-        if let hits = try? await searchCode(query: retrievalQuery, topK: 3) {
+        if let hits = try? await searchCode(query: retrievalQuery, topK: 5) {
             for hit in hits {
                 guard !includedPaths.contains(hit.filePath.lowercased()) else { continue }
                 let header = "--- \(hit.filePath) L\(hit.chunk.startLine)-\(hit.chunk.endLine) ---"

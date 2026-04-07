@@ -123,7 +123,8 @@ final class AppViewModel {
     }
 
     init() {
-        let orchestrator = AIOrchestrator()
+        let sessionMgr = LanguageModelSessionManager()
+        let orchestrator = AIOrchestrator(sessionManager: sessionMgr)
         let bookmark = BookmarkService()
         let chat = ChatViewModel(orchestrator: orchestrator)
 
@@ -132,7 +133,7 @@ final class AppViewModel {
         self.chatViewModel = chat
         self.sandboxViewModel = SandboxViewModel()
         self.privacyService = PrivacyPolicyService()
-        self.sessionManager = LanguageModelSessionManager()
+        self.sessionManager = sessionMgr
         self.repoWorkspaceBootstrapper = RepoWorkspaceBootstrapper()
         self.showOnboarding = !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
 
