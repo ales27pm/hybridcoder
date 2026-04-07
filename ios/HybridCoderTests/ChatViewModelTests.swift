@@ -21,6 +21,17 @@ struct ChatViewModelTests {
         #expect(renderedEstimate > plainEstimate)
     }
 
+    @Test func pinnedMemoryEstimationCharacterBudgetTracksPromptBudgets() {
+        let expected = ConversationMemoryContext.preferredPinnedTaskMemoryBudget(
+            forPromptLimit: max(
+                PromptContextBudget.maximumConversationContextBudget,
+                PromptContextBudget.qwenMaximumConversationContextBudget
+            )
+        )
+
+        #expect(ChatViewModel.pinnedMemoryEstimationCharacterBudget() == expected)
+    }
+
     @Test func mergeRecentUniquePrioritizesIncomingFilesWhenCapacityIsReached() {
         let existing = [
             "A.swift", "B.swift", "C.swift", "D.swift",

@@ -9,7 +9,7 @@ final class ChatViewModel {
     private let preservedRecentTurnCount = 6
     private let maxFileOperationSummaries = 8
     private let maxFallbackSummaryCharacters = 900
-    private static let pinnedMemoryEstimationCharacterBudget = 4_096
+    private static let recentContextItemsLimit = ConversationMemoryLimits.pinnedContextItems
 
     private(set) var messages: [ChatMessage] = []
     var inputText: String = ""
@@ -363,11 +363,11 @@ final class ChatViewModel {
     }
 
     private func mergeActiveFiles(_ files: [String]) {
-        activeFiles = Self.mergeRecentUnique(existing: activeFiles, incoming: files, limit: 8)
+        activeFiles = Self.mergeRecentUnique(existing: activeFiles, incoming: files, limit: Self.recentContextItemsLimit)
     }
 
     private func mergeActiveSymbols(_ symbols: [String]) {
-        activeSymbols = Self.mergeRecentUnique(existing: activeSymbols, incoming: symbols, limit: 8)
+        activeSymbols = Self.mergeRecentUnique(existing: activeSymbols, incoming: symbols, limit: Self.recentContextItemsLimit)
     }
 
     nonisolated private static func describePendingPatchPlan(_ plan: PatchPlan?) -> String? {
@@ -406,16 +406,24 @@ final class ChatViewModel {
             token.hasSuffix("Model")
         }
 
-        return uniqueOrdered(filteredBackticks + identifiers, limit: 8)
+        return uniqueOrdered(filteredBackticks + identifiers, limit: Self.recentContextItemsLimit)
     }
 
     nonisolated static func estimatedTokenCount(for text: String) -> Int {
         max(1, text.count / 4)
     }
 
+    nonisolated static func pinnedMemoryEstimationCharacterBudget() -> Int {
+        let conversationPromptBudget = max(
+            PromptContextBudget.maximumConversationContextBudget,
+            PromptContextBudget.qwenMaximumConversationContextBudget
+        )
+        return ConversationMemoryContext.preferredPinnedTaskMemoryBudget(forPromptLimit: conversationPromptBudget)
+    }
+
     nonisolated static func estimatedPinnedMemoryTokens(for pinnedTaskMemory: PinnedTaskMemory?) -> Int {
         guard let pinnedTaskMemory else { return 0 }
-        let rendered = pinnedTaskMemory.renderForPrompt(maxCharacters: pinnedMemoryEstimationCharacterBudget)
+        let rendered = pinnedTaskMemory.renderForPrompt(maxCharacters: pinnedMemoryEstimationCharacterBudget())
         guard !rendered.isEmpty else { return 0 }
         return estimatedTokenCount(for: rendered)
     }

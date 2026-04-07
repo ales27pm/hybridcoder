@@ -1,5 +1,9 @@
 import Foundation
 
+nonisolated enum ConversationMemoryLimits {
+    static let pinnedContextItems = 8
+}
+
 nonisolated struct ConversationMemoryTurn: Sendable, Equatable {
     let role: ChatMessage.Role
     let content: String
@@ -94,7 +98,10 @@ nonisolated struct PinnedTaskMemory: Sendable, Equatable {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    nonisolated private static func uniqueOrdered(_ items: [String], limit: Int = 8) -> [String] {
+    nonisolated private static func uniqueOrdered(
+        _ items: [String],
+        limit: Int = ConversationMemoryLimits.pinnedContextItems
+    ) -> [String] {
         var results: [String] = []
         var seen: Set<String> = []
 
@@ -117,6 +124,9 @@ nonisolated struct PinnedTaskMemory: Sendable, Equatable {
 }
 
 nonisolated struct ConversationMemoryContext: Sendable, Equatable {
+    private static let wrapperPrefix = "<conversation_memory>\n"
+    private static let wrapperSuffix = "\n</conversation_memory>"
+
     let pinnedTaskMemory: PinnedTaskMemory?
     let compactionSummary: String?
     let recentTurns: [ConversationMemoryTurn]
@@ -136,12 +146,10 @@ nonisolated struct ConversationMemoryContext: Sendable, Equatable {
 
     func renderForPrompt(maxCharacters: Int) -> String {
         guard maxCharacters > 0 else { return "" }
-        let prefix = "<conversation_memory>\n"
-        let suffix = "\n</conversation_memory>"
-        let wrapperOverhead = prefix.count + suffix.count
+        let wrapperOverhead = Self.wrapperPrefix.count + Self.wrapperSuffix.count
         guard maxCharacters > wrapperOverhead else { return "" }
 
-        let maxBodyCharacters = max(0, maxCharacters - wrapperOverhead)
+        let maxBodyCharacters = Self.maxBodyCharacterBudget(forPromptLimit: maxCharacters)
         var renderedSections: [String] = []
         var remaining = maxBodyCharacters
 
@@ -161,7 +169,7 @@ nonisolated struct ConversationMemoryContext: Sendable, Equatable {
         }
 
         if let pinnedTaskMemory {
-            let preferredBudget = min(remaining, max(220, maxBodyCharacters / 3))
+            let preferredBudget = Self.preferredPinnedTaskMemoryBudget(forPromptLimit: maxCharacters)
             appendSection(pinnedTaskMemory.renderForPrompt(maxCharacters: preferredBudget))
         }
 
@@ -200,7 +208,18 @@ nonisolated struct ConversationMemoryContext: Sendable, Equatable {
         let body = renderedSections.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return "" }
 
-        return "\(prefix)\(body)\(suffix)"
+        return "\(Self.wrapperPrefix)\(body)\(Self.wrapperSuffix)"
+    }
+
+    nonisolated static func maxBodyCharacterBudget(forPromptLimit maxCharacters: Int) -> Int {
+        let wrapperOverhead = wrapperPrefix.count + wrapperSuffix.count
+        return max(0, maxCharacters - wrapperOverhead)
+    }
+
+    nonisolated static func preferredPinnedTaskMemoryBudget(forPromptLimit maxCharacters: Int) -> Int {
+        let maxBodyCharacters = maxBodyCharacterBudget(forPromptLimit: maxCharacters)
+        guard maxBodyCharacters > 0 else { return 0 }
+        return min(maxBodyCharacters, max(220, maxBodyCharacters / 3))
     }
 
     nonisolated fileprivate static func escapeForPrompt(_ raw: String) -> String {
