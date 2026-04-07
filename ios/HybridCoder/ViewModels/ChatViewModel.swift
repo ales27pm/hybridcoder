@@ -9,6 +9,7 @@ final class ChatViewModel {
     private let preservedRecentTurnCount = 6
     private let maxFileOperationSummaries = 8
     private let maxFallbackSummaryCharacters = 900
+    private static let recentContextItemsLimit = ConversationMemoryLimits.pinnedContextItems
 
     private(set) var messages: [ChatMessage] = []
     var inputText: String = ""
@@ -273,7 +274,7 @@ final class ChatViewModel {
     }
 
     private func estimatedTokens(for text: String) -> Int {
-        max(1, text.count / 4)
+        Self.estimatedTokenCount(for: text)
     }
 
     private func buildMemoryContext(excludingMostRecentUserTurn: Bool = false) -> ConversationMemoryContext {
@@ -305,7 +306,7 @@ final class ChatViewModel {
         let turnCount = conversationTurns.reduce(0) { $0 + estimatedTokens(for: $1.content) }
         let opCount = fileOperationSummaries.reduce(0) { $0 + estimatedTokens(for: $1) }
         let summaryCount = estimatedTokens(for: memorySummary ?? "")
-        let pinnedCount = estimatedTokens(for: buildPinnedTaskMemory()?.plainTextSummary ?? "")
+        let pinnedCount = Self.estimatedPinnedMemoryTokens(for: buildPinnedTaskMemory())
         estimatedConversationTokens = min(maxConversationTokens, turnCount + opCount + summaryCount + pinnedCount)
     }
 
@@ -362,11 +363,11 @@ final class ChatViewModel {
     }
 
     private func mergeActiveFiles(_ files: [String]) {
-        activeFiles = Self.uniqueOrdered(activeFiles + files, limit: 8)
+        activeFiles = Self.mergeRecentUnique(existing: activeFiles, incoming: files, limit: Self.recentContextItemsLimit)
     }
 
     private func mergeActiveSymbols(_ symbols: [String]) {
-        activeSymbols = Self.uniqueOrdered(activeSymbols + symbols, limit: 8)
+        activeSymbols = Self.mergeRecentUnique(existing: activeSymbols, incoming: symbols, limit: Self.recentContextItemsLimit)
     }
 
     nonisolated private static func describePendingPatchPlan(_ plan: PatchPlan?) -> String? {
@@ -405,7 +406,30 @@ final class ChatViewModel {
             token.hasSuffix("Model")
         }
 
-        return uniqueOrdered(filteredBackticks + identifiers, limit: 8)
+        return uniqueOrdered(filteredBackticks + identifiers, limit: Self.recentContextItemsLimit)
+    }
+
+    nonisolated static func estimatedTokenCount(for text: String) -> Int {
+        max(1, text.count / 4)
+    }
+
+    nonisolated static func pinnedMemoryEstimationCharacterBudget() -> Int {
+        let conversationPromptBudget = max(
+            PromptContextBudget.maximumConversationContextBudget,
+            PromptContextBudget.qwenMaximumConversationContextBudget
+        )
+        return ConversationMemoryContext.preferredPinnedTaskMemoryBudget(forPromptLimit: conversationPromptBudget)
+    }
+
+    nonisolated static func estimatedPinnedMemoryTokens(for pinnedTaskMemory: PinnedTaskMemory?) -> Int {
+        guard let pinnedTaskMemory else { return 0 }
+        let rendered = pinnedTaskMemory.renderForPrompt(maxCharacters: pinnedMemoryEstimationCharacterBudget())
+        guard !rendered.isEmpty else { return 0 }
+        return estimatedTokenCount(for: rendered)
+    }
+
+    nonisolated static func mergeRecentUnique(existing: [String], incoming: [String], limit: Int) -> [String] {
+        uniqueOrdered(incoming + existing, limit: limit)
     }
 
     nonisolated private static func regexMatches(pattern: String, in text: String) -> [String] {
