@@ -105,10 +105,11 @@ final class AIOrchestrator {
     }
 
     private func configureFoundationModelTools() {
-        guard let fm = foundationModel as? FoundationModelService else { return }
-
-        let toolProviders = buildToolProviders()
-        fm.configure(toolProviders: toolProviders, sessionManager: sessionManager)
+        if #available(iOS 26.0, *) {
+            guard let fm = foundationModel as? FoundationModelService else { return }
+            let toolProviders = buildToolProviders()
+            fm.configure(toolProviders: toolProviders, sessionManager: sessionManager)
+        }
     }
 
     private func buildToolProviders() -> ToolProviders {
@@ -151,15 +152,19 @@ final class AIOrchestrator {
     }
 
     var foundationModelStatus: String {
-        if let fm = foundationModel as? FoundationModelService {
-            return fm.statusText
+        if #available(iOS 26.0, *) {
+            if let fm = foundationModel as? FoundationModelService {
+                return fm.statusText
+            }
         }
-        return "Unavailable"
+        return "Requires iOS 26"
     }
 
     var isFoundationModelAvailable: Bool {
-        if let fm = foundationModel as? FoundationModelService {
-            return fm.isAvailable
+        if #available(iOS 26.0, *) {
+            if let fm = foundationModel as? FoundationModelService {
+                return fm.isAvailable
+            }
         }
         return false
     }
@@ -200,11 +205,13 @@ final class AIOrchestrator {
         }
 
         if foundationModel == nil {
-            let fm = FoundationModelService(registry: modelRegistry, modelID: modelRegistry.activeGenerationModelID)
-            fm.refreshStatus()
-            let toolProviders = buildToolProviders()
-            fm.configure(toolProviders: toolProviders, sessionManager: sessionManager)
-            foundationModel = fm
+            if #available(iOS 26.0, *) {
+                let fm = FoundationModelService(registry: modelRegistry, modelID: modelRegistry.activeGenerationModelID)
+                fm.refreshStatus()
+                let toolProviders = buildToolProviders()
+                fm.configure(toolProviders: toolProviders, sessionManager: sessionManager)
+                foundationModel = fm
+            }
         }
 
         if qwenCoderService == nil {
@@ -444,10 +451,12 @@ final class AIOrchestrator {
 
 
     func invalidateFoundationModelSessions() {
-        if let fm = foundationModel as? FoundationModelService {
-            fm.invalidateSessions()
-            let toolProviders = buildToolProviders()
-            fm.configure(toolProviders: toolProviders, sessionManager: sessionManager)
+        if #available(iOS 26.0, *) {
+            if let fm = foundationModel as? FoundationModelService {
+                fm.invalidateSessions()
+                let toolProviders = buildToolProviders()
+                fm.configure(toolProviders: toolProviders, sessionManager: sessionManager)
+            }
         }
     }
 
@@ -849,6 +858,9 @@ final class AIOrchestrator {
             return result.text
 
         case .explanation, .patchPlanning, .search:
+            guard #available(iOS 26.0, *) else {
+                throw OrchestratorError.noModelAvailable
+            }
             let fm = try requireFoundationModel()
             var fullText = ""
             let stream = fm.streamAnswer(query: query, context: context, route: route)
@@ -895,6 +907,9 @@ final class AIOrchestrator {
     }
 
     private func resolveRoute(for query: String) async throws -> RouteResolution {
+        guard #available(iOS 26.0, *) else {
+            throw OrchestratorError.noModelAvailable
+        }
         let fm = try requireFoundationModel()
         let fileNames = repoFiles.prefix(60).map(\.relativePath)
         let decision = try await fm.classifyRoute(query: query, fileList: fileNames)
@@ -1156,6 +1171,7 @@ final class AIOrchestrator {
     ) async -> String? {
         guard !turnsToCompact.isEmpty || !(priorSummary ?? "").isEmpty else { return priorSummary }
 
+        guard #available(iOS 26.0, *) else { return nil }
         let fm: FoundationModelService
         do {
             fm = try requireFoundationModel()
@@ -1177,6 +1193,9 @@ final class AIOrchestrator {
     }
 
     private func generateExplanation(query: String, context: String) async throws -> String {
+        guard #available(iOS 26.0, *) else {
+            throw OrchestratorError.noModelAvailable
+        }
         let fm = try requireFoundationModel()
         return try await fm.generateAnswer(query: query, context: context, route: .explanation)
     }
@@ -1187,10 +1206,14 @@ final class AIOrchestrator {
     }
 
     private func generatePatchPlan(query: String, context: String) async throws -> PatchPlan {
+        guard #available(iOS 26.0, *) else {
+            throw OrchestratorError.noModelAvailable
+        }
         let fm = try requireFoundationModel()
         return try await fm.generatePatchPlan(query: query, codeContext: context)
     }
 
+    @available(iOS 26.0, *)
     private func requireFoundationModel() throws -> FoundationModelService {
         guard let fm = foundationModel as? FoundationModelService else {
             throw OrchestratorError.foundationModelNotInitialized
