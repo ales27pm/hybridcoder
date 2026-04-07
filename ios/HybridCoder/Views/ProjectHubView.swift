@@ -98,7 +98,7 @@ struct ProjectHubView: View {
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.white)
 
-                            Text("\(project.files.count) file\(project.files.count == 1 ? "" : "s") · Prototype")
+                            Text("\(project.files.count) file\(project.files.count == 1 ? "" : "s") · Project")
                                 .font(.caption2)
                                 .foregroundStyle(Theme.dimText)
                         }
@@ -135,7 +135,7 @@ struct ProjectHubView: View {
                 ActionCard(
                     icon: "plus.rectangle.on.folder",
                     label: "New Project",
-                    description: "Sandbox prototype"
+                    description: "RN/Expo app"
                 ) {
                     viewModel.prepareNewPrototypeProject()
                     dismiss()
@@ -234,7 +234,7 @@ struct ProjectHubView: View {
     private var recentSandboxProjects: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("PROTOTYPES")
+                Text("PROJECTS")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(Theme.dimText)
 
@@ -249,8 +249,8 @@ struct ProjectHubView: View {
 
             if viewModel.sandboxViewModel.projects.isEmpty {
                 emptyCard(
-                    icon: "hammer",
-                    message: "No sandbox projects yet.\nCreate one from New Project."
+                    icon: "apps.iphone",
+                    message: "No projects yet.\nCreate one from New Project."
                 )
             } else {
                 ForEach(viewModel.sandboxViewModel.projects.prefix(5)) { project in

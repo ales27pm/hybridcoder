@@ -50,7 +50,7 @@ struct SidebarMenuView: View {
                     .font(.system(.headline, design: .monospaced))
                     .foregroundStyle(.white)
 
-                Text("Local AI Assistant")
+                Text("RN/Expo Studio")
                     .font(.caption2)
                     .foregroundStyle(Theme.dimText)
             }
@@ -179,7 +179,7 @@ struct SidebarMenuView: View {
 
             menuItem(
                 icon: "hammer",
-                label: "Sandbox",
+                label: "Builder",
                 section: .sandbox,
                 badge: 0
             )

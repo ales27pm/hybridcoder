@@ -191,7 +191,7 @@ struct ContentView: View {
 
         case .sandbox:
             Menu {
-                Button("New Prototype", systemImage: "plus.rectangle.on.folder") {
+                Button("New Project", systemImage: "plus.rectangle.on.folder") {
                     viewModel.prepareNewPrototypeProject()
                 }
                 Button("All Projects", systemImage: "square.grid.2x2") {
@@ -262,7 +262,7 @@ struct ContentView: View {
         if case .some(.repository) = viewModel.activeSandboxWorkspace {
             RepositorySandboxView(viewModel: viewModel)
         } else if let project = viewModel.sandboxViewModel.activeProject {
-            SandboxEditorView(
+            BuilderWorkspaceView(
                 viewModel: viewModel.sandboxViewModel,
                 project: project
             )
