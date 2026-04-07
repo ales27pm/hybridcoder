@@ -63,8 +63,8 @@ struct WorkflowDiagnosticsTests {
     }
 
     @Test func promptContextBudgetConversationSlicesMatchRetainedMemoryStrategy() {
-        #expect(PromptContextBudget.maximumConversationContextBudget == 550)
-        #expect(PromptContextBudget.qwenMaximumConversationContextBudget == 2400)
+        #expect(PromptContextBudget.maximumConversationContextBudget == 400)
+        #expect(PromptContextBudget.qwenMaximumConversationContextBudget == 2000)
     }
 
     @Test func promptContextBudgetPreservesCodeSectionWhenPolicyAndMemoryAreLarge() throws {
