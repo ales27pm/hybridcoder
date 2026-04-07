@@ -228,7 +228,7 @@ struct ProjectHubView: View {
             } else {
                 ForEach(projectStudioViewModel.bookmarkService.repositories.sorted(by: { $0.lastOpened > $1.lastOpened }).prefix(5)) { repo in
                     RepoRow(repo: repo, isActive: workspaceViewModel.activeRepositoryURL?.lastPathComponent == repo.name) {
-                        projectStudioViewModel.openRepository(repo, workspace: workspaceViewModel, container: containerViewModel)
+                        projectStudioViewModel.openRepository(repo, workspace: workspaceViewModel)
                         containerViewModel.selectedSection = .chat
                         dismiss()
                     }

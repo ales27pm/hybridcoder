@@ -106,7 +106,12 @@ final class AppViewModel {
 
         self.studioContainer = StudioContainerViewModel()
         self.projectStudio = projectStudio
-        self.workspaceSession = WorkspaceSessionViewModel(orchestrator: orchestrator, chatViewModel: chat)
+        self.workspaceSession = WorkspaceSessionViewModel(
+            orchestrator: orchestrator,
+            bookmarkService: projectStudio.bookmarkService,
+            studioContainer: self.studioContainer,
+            sandboxViewModel: projectStudio.sandboxViewModel
+        )
 
         self.orchestrator = orchestrator
         self.bookmarkService = projectStudio.bookmarkService
@@ -150,11 +155,11 @@ final class AppViewModel {
     }
 
     func openRepository(_ repository: Repository) {
-        projectStudio.openRepository(repository, workspace: workspaceSession, container: studioContainer)
+        projectStudio.openRepository(repository, workspace: workspaceSession)
     }
 
     func importFolder(url: URL) {
-        workspaceSession.importFolder(url: url, bookmarkService: bookmarkService, studioContainer: studioContainer, sandboxViewModel: sandboxViewModel)
+        workspaceSession.importFolder(url: url)
     }
 
     func selectFile(_ node: FileNode) {

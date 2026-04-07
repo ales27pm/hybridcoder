@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 @Observable
 @MainActor
@@ -15,8 +16,8 @@ final class ProjectStudioViewModel {
         await sandboxViewModel.loadProjects()
     }
 
-    func openRepository(_ repository: Repository, workspace: WorkspaceSessionViewModel, container: StudioContainerViewModel) {
-        workspace.openRepository(repository, bookmarkService: bookmarkService, studioContainer: container, sandboxViewModel: sandboxViewModel)
+    func openRepository(_ repository: Repository, workspace: WorkspaceSessionViewModel) {
+        workspace.openRepository(repository)
     }
 
     func closeRepository(workspace: WorkspaceSessionViewModel, container: StudioContainerViewModel) {

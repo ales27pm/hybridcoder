@@ -60,7 +60,7 @@ struct RecentProjectPickerSheet: View {
 
             ForEach(projectStudioViewModel.bookmarkService.repositories.sorted(by: { $0.lastOpened > $1.lastOpened })) { repo in
                 Button {
-                    projectStudioViewModel.openRepository(repo, workspace: workspaceViewModel, container: containerViewModel)
+                    projectStudioViewModel.openRepository(repo, workspace: workspaceViewModel)
                     containerViewModel.selectedSection = .chat
                     dismiss()
                 } label: {

@@ -50,12 +50,25 @@ final class WorkspaceSessionViewModel {
     var repositoryWorkspaceKind: RepositoryWorkspaceKind = .unknown
 
     let orchestrator: AIOrchestrator
-    let chatViewModel: ChatViewModel
     let repoWorkspaceBootstrapper: RepoWorkspaceBootstrapper
+    private let bookmarkService: BookmarkService
+    private let studioContainer: StudioContainerViewModel
+    private let sandboxViewModel: SandboxViewModel
 
-    init(orchestrator: AIOrchestrator, chatViewModel: ChatViewModel, repoWorkspaceBootstrapper: RepoWorkspaceBootstrapper = RepoWorkspaceBootstrapper()) {
+    private var repositoryLoadTask: Task<Void, Never>?
+    private var repositorySessionID: UUID = UUID()
+
+    init(
+        orchestrator: AIOrchestrator,
+        bookmarkService: BookmarkService,
+        studioContainer: StudioContainerViewModel,
+        sandboxViewModel: SandboxViewModel,
+        repoWorkspaceBootstrapper: RepoWorkspaceBootstrapper = RepoWorkspaceBootstrapper()
+    ) {
         self.orchestrator = orchestrator
-        self.chatViewModel = chatViewModel
+        self.bookmarkService = bookmarkService
+        self.studioContainer = studioContainer
+        self.sandboxViewModel = sandboxViewModel
         self.repoWorkspaceBootstrapper = repoWorkspaceBootstrapper
     }
 
@@ -84,7 +97,7 @@ final class WorkspaceSessionViewModel {
         }
     }
 
-    func openRepository(_ repository: Repository, bookmarkService: BookmarkService, studioContainer: StudioContainerViewModel, sandboxViewModel: SandboxViewModel) {
+    func openRepository(_ repository: Repository) {
         guard let url = bookmarkService.resolveBookmark(repository) else {
             studioContainer.importError = "Could not resolve bookmark for \(repository.name). Try re-importing."
             return
@@ -94,37 +107,56 @@ final class WorkspaceSessionViewModel {
             return
         }
 
-        studioContainer.importError = nil
+        cancelRepositoryLoad(stopActiveResource: true)
+        studioContainer.clearWorkspacePresentationState()
+
         activeRepositoryURL = url
         selectedFile = nil
-        studioContainer.selectedSection = .chat
+        fileTree = nil
+        repositoryWorkspaceKind = .unknown
         orchestrator.setPolicyWorkingContext(url)
 
-        Task {
-            _ = await repoWorkspaceBootstrapper.bootstrapIfNeeded(repoRoot: url, repoAccess: orchestrator.repoAccess)
-            fileTree = await orchestrator.repoAccess.buildFileTree(at: url)
-            await inspectRepositoryWorkspace(at: url)
+        let sessionID = UUID()
+        repositorySessionID = sessionID
 
-            try? await orchestrator.importRepo(url: url)
+        repositoryLoadTask = Task { [weak self] in
+            guard let self else { return }
 
-            let stats = orchestrator.indexStats
-            let updated = Repository(
-                id: repository.id,
-                name: repository.name,
-                bookmarkData: repository.bookmarkData,
-                lastOpened: Date(),
-                fileCount: orchestrator.repoFiles.count,
-                indexedCount: stats?.indexedFiles ?? 0
-            )
-            bookmarkService.updateRepository(updated)
+            do {
+                _ = await repoWorkspaceBootstrapper.bootstrapIfNeeded(repoRoot: url, repoAccess: orchestrator.repoAccess)
+                guard isActiveSession(id: sessionID, url: url) else { return }
 
-            if sandboxViewModel.activeProject != nil {
-                sandboxViewModel.closeProject()
+                let builtTree = await orchestrator.repoAccess.buildFileTree(at: url)
+                guard isActiveSession(id: sessionID, url: url) else { return }
+                fileTree = builtTree
+
+                let workspaceKind = await inspectRepositoryWorkspace(at: url)
+                guard isActiveSession(id: sessionID, url: url) else { return }
+                repositoryWorkspaceKind = workspaceKind
+
+                try await orchestrator.importRepo(url: url)
+                guard isActiveSession(id: sessionID, url: url) else { return }
+
+                let stats = orchestrator.indexStats
+                let updated = Repository(
+                    id: repository.id,
+                    name: repository.name,
+                    bookmarkData: repository.bookmarkData,
+                    lastOpened: Date(),
+                    fileCount: orchestrator.repoFiles.count,
+                    indexedCount: stats?.indexedFiles ?? 0
+                )
+                bookmarkService.updateRepository(updated)
+            } catch {
+                guard isActiveSession(id: sessionID, url: url) else { return }
+                studioContainer.importError = "Failed to import \(repository.name): \(error.localizedDescription)"
+                fileTree = nil
+                repositoryWorkspaceKind = .unknown
             }
         }
     }
 
-    func importFolder(url: URL, bookmarkService: BookmarkService, studioContainer: StudioContainerViewModel, sandboxViewModel: SandboxViewModel) {
+    func importFolder(url: URL) {
         guard url.startAccessingSecurityScopedResource() else {
             studioContainer.importError = "Could not access the selected folder."
             return
@@ -134,7 +166,7 @@ final class WorkspaceSessionViewModel {
         do {
             let repo = try bookmarkService.saveBookmark(for: url)
             studioContainer.importError = nil
-            openRepository(repo, bookmarkService: bookmarkService, studioContainer: studioContainer, sandboxViewModel: sandboxViewModel)
+            openRepository(repo)
         } catch {
             studioContainer.importError = "Failed to save bookmark: \(error.localizedDescription)"
         }
@@ -157,14 +189,16 @@ final class WorkspaceSessionViewModel {
     }
 
     func navigateToFileByPath(_ relativePath: String, studioContainer: StudioContainerViewModel) {
-        guard let tree = fileTree else { return }
-        if let node = findNodeByRelativePath(relativePath, in: tree) {
+        guard let tree = fileTree, let repoRoot = activeRepositoryURL else { return }
+        if let node = findNodeByRelativePath(relativePath, in: tree, repoRoot: repoRoot) {
             selectFile(node, studioContainer: studioContainer)
         }
     }
 
     func closeRepository(studioContainer: StudioContainerViewModel, sandboxViewModel: SandboxViewModel) {
         let prototypeToRestore = sandboxViewModel.activeProject
+
+        cancelRepositoryLoad(stopActiveResource: true)
 
         Task {
             await orchestrator.closeRepo()
@@ -175,15 +209,11 @@ final class WorkspaceSessionViewModel {
             }
         }
 
-        if let url = activeRepositoryURL {
-            url.stopAccessingSecurityScopedResource()
-        }
         activeRepositoryURL = nil
         fileTree = nil
         selectedFile = nil
-        studioContainer.selectedSection = .chat
         repositoryWorkspaceKind = .unknown
-        studioContainer.importError = nil
+        studioContainer.clearWorkspacePresentationState()
     }
 
     func reindexRepository() {
@@ -200,22 +230,61 @@ final class WorkspaceSessionViewModel {
         }
     }
 
-    private func findNodeByRelativePath(_ path: String, in node: FileNode) -> FileNode? {
-        if !node.isDirectory && node.name == (path as NSString).lastPathComponent {
+    private func cancelRepositoryLoad(stopActiveResource: Bool) {
+        repositoryLoadTask?.cancel()
+        repositoryLoadTask = nil
+        repositorySessionID = UUID()
+
+        if stopActiveResource, let currentURL = activeRepositoryURL {
+            currentURL.stopAccessingSecurityScopedResource()
+        }
+    }
+
+    private func isActiveSession(id: UUID, url: URL) -> Bool {
+        id == repositorySessionID && activeRepositoryURL == url && !(repositoryLoadTask?.isCancelled ?? false)
+    }
+
+    private func findNodeByRelativePath(_ path: String, in node: FileNode, repoRoot: URL) -> FileNode? {
+        let normalizedTarget = normalizeRelativePath(path)
+
+        if !node.isDirectory,
+           let relativePath = relativePath(for: node.url, from: repoRoot),
+           normalizeRelativePath(relativePath) == normalizedTarget {
             return node
         }
-        if !node.isDirectory && node.url.lastPathComponent == (path as NSString).lastPathComponent {
-            return node
-        }
+
         for child in node.children {
-            if let found = findNodeByRelativePath(path, in: child) {
+            if let found = findNodeByRelativePath(normalizedTarget, in: child, repoRoot: repoRoot) {
                 return found
             }
         }
         return nil
     }
 
-    private func inspectRepositoryWorkspace(at url: URL) async {
+    private func relativePath(for fileURL: URL, from rootURL: URL) -> String? {
+        let rootPath = rootURL.standardizedFileURL.path
+        let filePath = fileURL.standardizedFileURL.path
+        guard filePath.hasPrefix(rootPath) else { return nil }
+
+        var relative = String(filePath.dropFirst(rootPath.count))
+        if relative.hasPrefix("/") {
+            relative.removeFirst()
+        }
+        return relative
+    }
+
+    private func normalizeRelativePath(_ path: String) -> String {
+        var normalized = path.replacingOccurrences(of: "\\", with: "/")
+        while normalized.hasPrefix("./") {
+            normalized.removeFirst(2)
+        }
+        while normalized.hasPrefix("/") {
+            normalized.removeFirst()
+        }
+        return NSString(string: normalized).standardizingPath.replacingOccurrences(of: "\\", with: "/")
+    }
+
+    private func inspectRepositoryWorkspace(at url: URL) async -> RepositoryWorkspaceKind {
         let packageURL = url.appendingPathComponent("package.json")
         let appJSONURL = url.appendingPathComponent("app.json")
         let appConfigJSURL = url.appendingPathComponent("app.config.js")
@@ -249,7 +318,7 @@ final class WorkspaceSessionViewModel {
             fileManager.fileExists(atPath: url.appendingPathComponent($0).path(percentEncoded: false))
         }
 
-        repositoryWorkspaceKind = (hasExpoDependency || hasExpoConfig)
+        return (hasExpoDependency || hasExpoConfig)
             ? .expo(packageName: packageName, entryFile: entryFile)
             : .generic
     }
