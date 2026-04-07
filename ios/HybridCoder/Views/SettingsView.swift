@@ -96,6 +96,43 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.accent)
             }
 
+            if let stats = orchestrator.indexStats, !stats.languageBreakdown.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Language Breakdown")
+                        .font(.subheadline)
+
+                    let sorted = stats.languageBreakdown.sorted { $0.value > $1.value }
+                    ForEach(sorted, id: \.key) { language, count in
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(languageColor(language))
+                                .frame(width: 8, height: 8)
+
+                            Text(language)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.8))
+
+                            Spacer()
+
+                            Text("\(count)")
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(Theme.accent)
+                        }
+                    }
+                }
+            }
+
+            if let stats = orchestrator.indexStats, let lastIndexed = stats.lastIndexedAt {
+                HStack {
+                    Text("Last Indexed")
+                        .font(.subheadline)
+                    Spacer()
+                    Text(lastIndexed.formatted(.relative(presentation: .named)))
+                        .font(.caption)
+                        .foregroundStyle(Theme.dimText)
+                }
+            }
+
             Button("Close Repository") {
                 onCloseRepository()
                 dismiss()
@@ -103,6 +140,20 @@ struct SettingsView: View {
             .foregroundStyle(.red)
         } header: {
             Text("Index")
+        }
+    }
+
+    private func languageColor(_ language: String) -> Color {
+        switch language.lowercased() {
+        case "javascript": return .yellow
+        case "typescript": return .blue
+        case "swift": return .orange
+        case "python": return .cyan
+        case "json": return .orange.opacity(0.7)
+        case "css": return .purple
+        case "html": return .red.opacity(0.7)
+        case "markdown": return .gray
+        default: return Theme.accent
         }
     }
 

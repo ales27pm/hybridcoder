@@ -2,6 +2,9 @@ import SwiftUI
 
 struct MessageBubble: View {
     let message: ChatMessage
+    var searchHits: [SearchHit] = []
+    var onTapPatchPlan: ((UUID) -> Void)? = nil
+    var onTapSearchHit: ((SearchHit) -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -25,8 +28,12 @@ struct MessageBubble: View {
                     }
                 }
 
-                if message.patchPlanID != nil {
-                    patchSummaryStrip
+                if !searchHits.isEmpty {
+                    searchHitsSection
+                }
+
+                if let planID = message.patchPlanID {
+                    patchSummaryStrip(planID: planID)
                 }
 
                 HStack(spacing: 6) {
@@ -116,14 +123,62 @@ struct MessageBubble: View {
         )
     }
 
-    private var patchSummaryStrip: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "doc.badge.gearshape")
-                .font(.caption2)
-            Text("Patch proposed — review in Patches tab")
-                .font(.caption2)
+    private var searchHitsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(searchHits.prefix(5)) { hit in
+                Button {
+                    onTapSearchHit?(hit)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.purple)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(hit.filePath)
+                                .font(.system(.caption2, design: .monospaced).weight(.medium))
+                                .foregroundStyle(.white.opacity(0.85))
+                                .lineLimit(1)
+
+                            Text("L\(hit.chunk.startLine)–\(hit.chunk.endLine) · \(hit.relevancePercent)% match")
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(Theme.dimText)
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Theme.dimText)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(.purple.opacity(0.06), in: .rect(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .foregroundStyle(Theme.accent.opacity(0.7))
+    }
+
+    private func patchSummaryStrip(planID: UUID) -> some View {
+        Button {
+            onTapPatchPlan?(planID)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "doc.badge.gearshape")
+                    .font(.caption2)
+                Text("Patch proposed — tap to review")
+                    .font(.caption2)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9))
+            }
+            .foregroundStyle(Theme.accent.opacity(0.7))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Theme.accent.opacity(0.06), in: .rect(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
     }
 
     private func routeBadge(_ route: String) -> some View {

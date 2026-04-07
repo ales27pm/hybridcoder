@@ -6,6 +6,8 @@ struct ChatView: View {
     let hasActiveWorkspace: Bool
     var onOpenProjectHub: () -> Void = {}
     var onReindex: () -> Void = {}
+    var onNavigateToPatches: () -> Void = {}
+    var onNavigateToFile: ((String) -> Void)? = nil
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -23,6 +25,8 @@ struct ChatView: View {
             if let plan = viewModel.activePatchPlan {
                 patchPlanBanner(plan)
             }
+
+            executionTraceBar
 
             inputBar
         }
@@ -122,8 +126,17 @@ struct ChatView: View {
             ScrollView {
                 LazyVStack(spacing: 16) {
                     ForEach(viewModel.messages) { message in
-                        MessageBubble(message: message)
-                            .id(message.id)
+                        MessageBubble(
+                            message: message,
+                            searchHits: message.searchHits,
+                            onTapPatchPlan: { _ in
+                                onNavigateToPatches()
+                            },
+                            onTapSearchHit: { hit in
+                                onNavigateToFile?(hit.filePath)
+                            }
+                        )
+                        .id(message.id)
                     }
 
                     if viewModel.isStreaming {
@@ -292,6 +305,65 @@ struct ChatView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(Theme.cardBg)
+        }
+    }
+
+    @ViewBuilder
+    private var executionTraceBar: some View {
+        if let route = orchestrator.lastResolvedRoute, !orchestrator.lastExecutionProviders.isEmpty, !viewModel.isStreaming {
+            HStack(spacing: 6) {
+                ForEach(orchestrator.lastExecutionProviders, id: \.rawValue) { provider in
+                    HStack(spacing: 3) {
+                        Image(systemName: providerIcon(provider))
+                            .font(.system(size: 8))
+                        Text(providerLabel(provider))
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    }
+                    .foregroundStyle(providerColor(provider).opacity(0.7))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(providerColor(provider).opacity(0.08), in: .capsule)
+                }
+
+                Spacer()
+
+                Text(route.rawValue)
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Theme.dimText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Theme.cardBg)
+        }
+    }
+
+    private func providerIcon(_ provider: AIOrchestrator.ExecutionProvider) -> String {
+        switch provider {
+        case .routeClassifier: return "arrow.triangle.branch"
+        case .semanticSearch: return "magnifyingglass"
+        case .foundationModel: return "brain.head.profile"
+        case .qwenCodeGeneration: return "hammer"
+        case .patchEngine: return "doc.badge.gearshape"
+        }
+    }
+
+    private func providerLabel(_ provider: AIOrchestrator.ExecutionProvider) -> String {
+        switch provider {
+        case .routeClassifier: return "Route"
+        case .semanticSearch: return "Search"
+        case .foundationModel: return "FM"
+        case .qwenCodeGeneration: return "Qwen"
+        case .patchEngine: return "Patch"
+        }
+    }
+
+    private func providerColor(_ provider: AIOrchestrator.ExecutionProvider) -> Color {
+        switch provider {
+        case .routeClassifier: return .cyan
+        case .semanticSearch: return .purple
+        case .foundationModel: return Theme.accent
+        case .qwenCodeGeneration: return .orange
+        case .patchEngine: return .yellow
         }
     }
 

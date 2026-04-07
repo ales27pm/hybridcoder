@@ -140,6 +140,13 @@ final class AppViewModel {
             self?.refreshFileTree()
         }
 
+        chat.onConversationSnippet = { [weak self] role, content in
+            guard let self else { return }
+            Task {
+                await self.sandboxViewModel.appendConversationSnippet(role: role, content: content)
+            }
+        }
+
         sandboxViewModel.onActiveProjectChanged = { [weak self] project in
             guard let self else { return }
             self.sandboxWorkspaceTransitionGeneration &+= 1
@@ -270,6 +277,28 @@ final class AppViewModel {
         }
     }
 
+    func navigateToFileByPath(_ relativePath: String) {
+        guard let tree = fileTree else { return }
+        if let node = findNodeByRelativePath(relativePath, in: tree) {
+            selectFile(node)
+        }
+    }
+
+    private func findNodeByRelativePath(_ path: String, in node: FileNode) -> FileNode? {
+        if !node.isDirectory && node.name == (path as NSString).lastPathComponent {
+            return node
+        }
+        if !node.isDirectory && node.url.lastPathComponent == (path as NSString).lastPathComponent {
+            return node
+        }
+        for child in node.children {
+            if let found = findNodeByRelativePath(path, in: child) {
+                return found
+            }
+        }
+        return nil
+    }
+
     func importStateMemoryToRepoFolder() async -> Bool {
         guard let project = sandboxViewModel.activeProject,
               let repoURL = activeRepositoryURL else { return false }
@@ -305,6 +334,7 @@ final class AppViewModel {
     func initialize() {
         Task {
             await orchestrator.warmUp()
+            await privacyService.purgeExpiredData()
         }
 
         if let lastRepo = bookmarkService.repositories.sorted(by: { $0.lastOpened > $1.lastOpened }).first {

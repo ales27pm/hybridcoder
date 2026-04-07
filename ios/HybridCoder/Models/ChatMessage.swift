@@ -8,6 +8,7 @@ nonisolated struct ChatMessage: Identifiable, Sendable {
     var codeBlocks: [CodeBlock]
     var patchPlanID: UUID?
     var routeKind: String?
+    var searchHits: [SearchHit]
 
     nonisolated enum Role: String, Sendable {
         case user
@@ -22,7 +23,8 @@ nonisolated struct ChatMessage: Identifiable, Sendable {
         timestamp: Date = Date(),
         codeBlocks: [CodeBlock] = [],
         patchPlanID: UUID? = nil,
-        routeKind: String? = nil
+        routeKind: String? = nil,
+        searchHits: [SearchHit] = []
     ) {
         self.id = id
         self.role = role
@@ -31,5 +33,6 @@ nonisolated struct ChatMessage: Identifiable, Sendable {
         self.codeBlocks = codeBlocks
         self.patchPlanID = patchPlanID
         self.routeKind = routeKind
+        self.searchHits = searchHits
     }
 }

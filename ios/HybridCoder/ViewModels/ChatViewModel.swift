@@ -25,6 +25,7 @@ final class ChatViewModel {
     private var fileOperationSummaries: [String] = []
 
     var onPatchApplied: (() -> Void)?
+    var onConversationSnippet: ((String, String) -> Void)?
 
     var activePatchPlan: PatchPlan? {
         patchPlans.first { $0.pendingCount > 0 }
@@ -67,6 +68,7 @@ final class ChatViewModel {
         let userMessage = ChatMessage(role: .user, content: trimmed)
         messages.append(userMessage)
         conversationTurns.append(.init(role: .user, content: trimmed))
+        onConversationSnippet?("user", trimmed)
         inputText = ""
         isStreaming = true
         streamingText = ""
@@ -96,9 +98,11 @@ final class ChatViewModel {
                 content: response.text,
                 codeBlocks: response.codeBlocks,
                 patchPlanID: planID,
-                routeKind: response.routeUsed.rawValue
+                routeKind: response.routeUsed.rawValue,
+                searchHits: response.searchHits
             ))
             conversationTurns.append(.init(role: .assistant, content: response.text))
+            onConversationSnippet?("assistant", response.text)
             await compactConversationMemoryIfNeeded()
         } catch {
             streamingText = ""

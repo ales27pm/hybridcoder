@@ -81,8 +81,37 @@ struct SandboxEditorView: View {
             RenameProjectSheet(viewModel: viewModel, project: project)
         }
         .onAppear {
-            if selectedFileID == nil {
+            if let restored = viewModel.restoredState {
+                if let restoredFileID = restored.activeFileID,
+                   project.files.contains(where: { $0.id == restoredFileID }) {
+                    selectedFileID = restoredFileID
+                } else {
+                    selectedFileID = project.files.first?.id
+                }
+                if let restoredTab = restored.lastOpenedTab,
+                   let tab = EditorTab(rawValue: restoredTab) {
+                    selectedTab = tab
+                }
+            } else if selectedFileID == nil {
                 selectedFileID = project.files.first?.id
+            }
+        }
+        .onChange(of: selectedFileID) { _, newValue in
+            Task {
+                await viewModel.saveActiveEditorState(
+                    fileID: newValue,
+                    cursorPosition: nil,
+                    tab: selectedTab.rawValue
+                )
+            }
+        }
+        .onChange(of: selectedTab) { _, newValue in
+            Task {
+                await viewModel.saveActiveEditorState(
+                    fileID: selectedFileID,
+                    cursorPosition: nil,
+                    tab: newValue.rawValue
+                )
             }
         }
     }

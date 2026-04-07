@@ -218,7 +218,15 @@ struct ContentView: View {
                 orchestrator: viewModel.orchestrator,
                 hasActiveWorkspace: viewModel.hasActiveWorkspace,
                 onOpenProjectHub: { viewModel.showProjectHub = true },
-                onReindex: { viewModel.reindexRepository() }
+                onReindex: { viewModel.reindexRepository() },
+                onNavigateToPatches: {
+                    withAnimation(.snappy(duration: 0.25)) {
+                        viewModel.selectedSection = .patches
+                    }
+                },
+                onNavigateToFile: { filePath in
+                    viewModel.navigateToFileByPath(filePath)
+                }
             )
             .navigationTitle("Chat")
             .navigationBarTitleDisplayMode(.inline)
