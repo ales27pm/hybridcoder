@@ -12,7 +12,7 @@ nonisolated enum PromptBuilder: Sendable {
             request: query,
             contextLabel: "repository_files",
             context: fileList.joined(separator: "\n"),
-            contextLimit: 4000,
+            contextLimit: 2400,
             extraSections: [
                 wrappedSection(
                     label: "routing_contract",
@@ -50,7 +50,7 @@ nonisolated enum PromptBuilder: Sendable {
                 request: query,
                 contextLabel: "repository_context",
                 context: repoContext,
-                contextLimit: 5000,
+                contextLimit: 2800,
                 extraSections: [
                     wrappedSection(label: "handler_route", body: route.rawValue)
                 ]
@@ -77,7 +77,7 @@ nonisolated enum PromptBuilder: Sendable {
                 request: query,
                 contextLabel: "repository_context",
                 context: repoContext,
-                contextLimit: 5000,
+                contextLimit: 2800,
                 extraSections: [
                     wrappedSection(
                         label: "patch_format",
@@ -114,7 +114,7 @@ nonisolated enum PromptBuilder: Sendable {
                 request: query,
                 contextLabel: "repository_context",
                 context: repoContext,
-                contextLimit: 5000,
+                contextLimit: 2800,
                 extraSections: [
                     wrappedSection(label: "handler_route", body: Route.codeGeneration.rawValue)
                 ]

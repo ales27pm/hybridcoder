@@ -2,10 +2,10 @@ import Foundation
 import OSLog
 
 enum PromptContextBudget {
-    static let downstreamContextCap = 4000
-    static let minimumCodeContextBudget = 2400
-    static let maximumPolicyContextBudget = 900
-    static let maximumConversationContextBudget = 1200
+    static let downstreamContextCap = 2800
+    static let minimumCodeContextBudget = 1600
+    static let maximumPolicyContextBudget = 500
+    static let maximumConversationContextBudget = 700
 }
 
 nonisolated struct RouteResolution: Sendable, Equatable {

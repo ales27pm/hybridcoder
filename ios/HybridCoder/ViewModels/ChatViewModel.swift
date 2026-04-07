@@ -4,11 +4,11 @@ import SwiftUI
 @Observable
 final class ChatViewModel {
     private let orchestrator: AIOrchestrator
-    private let maxConversationTokens = 2200
-    private let compactionThreshold = 1600
-    private let preservedRecentTurnCount = 6
-    private let maxFileOperationSummaries = 12
-    private let maxFallbackSummaryCharacters = 1200
+    private let maxConversationTokens = 1400
+    private let compactionThreshold = 900
+    private let preservedRecentTurnCount = 4
+    private let maxFileOperationSummaries = 8
+    private let maxFallbackSummaryCharacters = 600
 
     private(set) var messages: [ChatMessage] = []
     var inputText: String = ""

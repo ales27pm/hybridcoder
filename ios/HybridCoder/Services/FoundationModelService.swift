@@ -65,9 +65,9 @@ final class FoundationModelService {
     private let patchSessionID = "fm-patch-planning"
     private let compactionSessionID = "fm-compaction"
 
-    private let maxRouteClassifierTurns = 20
-    private let maxExplanationTurns = 12
-    private let maxPatchTurns = 8
+    private let maxRouteClassifierTurns = 8
+    private let maxExplanationTurns = 4
+    private let maxPatchTurns = 3
 
     init(registry: ModelRegistry, modelID: String) {
         self.registry = registry
@@ -132,25 +132,25 @@ final class FoundationModelService {
 
         let promptEnvelope = PromptBuilder.routeClassifierPrompt(
             query: query,
-            fileList: Array(fileList.prefix(60))
+            fileList: Array(fileList.prefix(40))
         )
 
-        let session = obtainRouteClassifierSession(systemPrompt: promptEnvelope.system)
-
-        let prompt = Prompt {
-            promptEnvelope.user
+        return try await withContextWindowRecovery(resetSession: { [self] in
+            routeClassifierSession = nil
+            routeClassifierTurnCount = 0
+            sessionManager?.removeSession(id: routeSessionID)
+        }) {
+            let session = self.obtainRouteClassifierSession(systemPrompt: promptEnvelope.system)
+            let prompt = Prompt { promptEnvelope.user }
+            let response = try await session.respond(
+                to: prompt,
+                generating: RouteDecision.self,
+                options: GenerationOptions(sampling: .greedy)
+            )
+            self.routeClassifierTurnCount += 1
+            self.recordTurn(sessionID: self.routeSessionID, estimatedTokens: self.estimateTokens(promptEnvelope.user) + self.estimateTokens(response.content.route))
+            return response.content
         }
-
-        let response = try await session.respond(
-            to: prompt,
-            generating: RouteDecision.self,
-            options: GenerationOptions(sampling: .greedy)
-        )
-
-        routeClassifierTurnCount += 1
-        recordTurn(sessionID: routeSessionID, estimatedTokens: estimateTokens(promptEnvelope.user) + estimateTokens(response.content.route))
-
-        return response.content
     }
 
     func generateAnswer(query: String, context: String, route: Route) async throws -> String {
@@ -159,13 +159,18 @@ final class FoundationModelService {
         defer { isGenerating = false }
 
         let promptEnvelope = PromptBuilder.foundationPrompt(route: route, query: query, repoContext: context)
-        let session = obtainToolSession(for: route, systemPrompt: promptEnvelope.system)
 
-        let response = try await session.respond(to: promptEnvelope.user)
-        explanationTurnCount += 1
-        recordTurn(sessionID: explanationSessionID, estimatedTokens: estimateTokens(promptEnvelope.user) + estimateTokens(response.content))
-
-        return response.content
+        return try await withContextWindowRecovery(resetSession: { [self] in
+            explanationSession = nil
+            explanationTurnCount = 0
+            sessionManager?.removeSession(id: explanationSessionID)
+        }) {
+            let session = self.obtainToolSession(for: route, systemPrompt: promptEnvelope.system)
+            let response = try await session.respond(to: promptEnvelope.user)
+            self.explanationTurnCount += 1
+            self.recordTurn(sessionID: self.explanationSessionID, estimatedTokens: self.estimateTokens(promptEnvelope.user) + self.estimateTokens(response.content))
+            return response.content
+        }
     }
 
     func streamAnswer(query: String, context: String, route: Route) -> AsyncThrowingStream<String, Error> {
@@ -178,24 +183,37 @@ final class FoundationModelService {
 
                 self.isGenerating = true
                 let promptEnvelope = PromptBuilder.foundationPrompt(route: route, query: query, repoContext: context)
-                let session = self.obtainToolSession(for: route, systemPrompt: promptEnvelope.system)
 
                 do {
-                    let stream = session.streamResponse(to: promptEnvelope.user)
-                    var lastContent = ""
-                    for try await partial in stream {
-                        lastContent = partial.content
-                        continuation.yield(partial.content)
-                    }
-                    self.explanationTurnCount += 1
-                    self.recordTurn(sessionID: self.explanationSessionID, estimatedTokens: self.estimateTokens(promptEnvelope.user) + self.estimateTokens(lastContent))
-                    continuation.finish()
+                    try await self.streamWithRecovery(promptEnvelope: promptEnvelope, route: route, continuation: continuation)
                 } catch {
                     continuation.finish(throwing: error)
                 }
 
                 self.isGenerating = false
             }
+        }
+    }
+
+    private func streamWithRecovery(promptEnvelope: PromptBuilder.PromptEnvelope, route: Route, continuation: AsyncThrowingStream<String, Error>.Continuation, isRetry: Bool = false) async throws {
+        let session = obtainToolSession(for: route, systemPrompt: promptEnvelope.system)
+
+        do {
+            let stream = session.streamResponse(to: promptEnvelope.user)
+            var lastContent = ""
+            for try await partial in stream {
+                lastContent = partial.content
+                continuation.yield(partial.content)
+            }
+            explanationTurnCount += 1
+            recordTurn(sessionID: explanationSessionID, estimatedTokens: estimateTokens(promptEnvelope.user) + estimateTokens(lastContent))
+            continuation.finish()
+        } catch let error as LanguageModelSession.GenerationError where Self.isContextWindowError(error) && !isRetry {
+            logger.warning("stream.contextWindowExceeded — resetting explanation session and retrying")
+            explanationSession = nil
+            explanationTurnCount = 0
+            sessionManager?.removeSession(id: explanationSessionID)
+            try await streamWithRecovery(promptEnvelope: promptEnvelope, route: route, continuation: continuation, isRetry: true)
         }
     }
 
@@ -213,33 +231,33 @@ final class FoundationModelService {
         To CREATE a new file, set searchText to an empty string and replaceText to the full file content.
         """
 
-        let session = obtainPatchSession(systemPrompt: extendedSystem)
-
-        let prompt = Prompt {
-            promptEnvelope.user
-        }
-
-        let response = try await session.respond(
-            to: prompt,
-            generating: GenerablePatchPlan.self,
-            options: GenerationOptions(sampling: .greedy)
-        )
-
-        patchTurnCount += 1
-        recordTurn(sessionID: patchSessionID, estimatedTokens: estimateTokens(promptEnvelope.user) + 200)
-
-        let plan = response.content
-        let operations = plan.operations.compactMap { op -> PatchOperation? in
-            if !op.searchText.isEmpty && op.searchText == op.replaceText { return nil }
-            return PatchOperation(
-                filePath: op.filePath,
-                searchText: op.searchText,
-                replaceText: op.replaceText,
-                description: op.description
+        return try await withContextWindowRecovery(resetSession: { [self] in
+            patchSession = nil
+            patchTurnCount = 0
+            sessionManager?.removeSession(id: patchSessionID)
+        }) {
+            let session = self.obtainPatchSession(systemPrompt: extendedSystem)
+            let prompt = Prompt { promptEnvelope.user }
+            let response = try await session.respond(
+                to: prompt,
+                generating: GenerablePatchPlan.self,
+                options: GenerationOptions(sampling: .greedy)
             )
-        }
+            self.patchTurnCount += 1
+            self.recordTurn(sessionID: self.patchSessionID, estimatedTokens: self.estimateTokens(promptEnvelope.user) + 200)
 
-        return PatchPlan(summary: plan.summary, operations: operations)
+            let plan = response.content
+            let operations = plan.operations.compactMap { op -> PatchOperation? in
+                if !op.searchText.isEmpty && op.searchText == op.replaceText { return nil }
+                return PatchOperation(
+                    filePath: op.filePath,
+                    searchText: op.searchText,
+                    replaceText: op.replaceText,
+                    description: op.description
+                )
+            }
+            return PatchPlan(summary: plan.summary, operations: operations)
+        }
     }
 
     func summarizeConversationMemory(
@@ -261,9 +279,9 @@ final class FoundationModelService {
             sessionManager?.registerSession(id: compactionSessionID, purpose: .conversationSummary)
         }
 
-        let clippedSummary = String(priorSummary.prefix(1_200))
-        let clippedOperations = String(fileOperationSummaries.prefix(1_200))
-        let clippedTurns = String(turns.prefix(4_000))
+        let clippedSummary = String(priorSummary.prefix(800))
+        let clippedOperations = String(fileOperationSummaries.prefix(600))
+        let clippedTurns = String(turns.prefix(2_000))
 
         let prompt = Prompt {
             """
@@ -367,6 +385,28 @@ final class FoundationModelService {
 
     private func estimateTokens(_ text: String) -> Int {
         max(1, text.count / 4)
+    }
+
+    private static func isContextWindowError(_ error: LanguageModelSession.GenerationError) -> Bool {
+        if case .exceededContextWindowSize = error { return true }
+        return false
+    }
+
+    private func withContextWindowRecovery<T>(
+        resetSession: @escaping () -> Void,
+        operation: @escaping () async throws -> T
+    ) async throws -> T {
+        do {
+            return try try await operation()
+        } catch let error as LanguageModelSession.GenerationError where Self.isContextWindowError(error) {
+            logger.warning("contextWindowExceeded — resetting session and retrying")
+            resetSession()
+            do {
+                return try await operation()
+            } catch let retryError as LanguageModelSession.GenerationError where Self.isContextWindowError(retryError) {
+                throw ServiceError.generationFailed("Context window exceeded. Try a shorter message or clear the chat.")
+            }
+        }
     }
 
     nonisolated enum ServiceError: Error, LocalizedError, Sendable {
