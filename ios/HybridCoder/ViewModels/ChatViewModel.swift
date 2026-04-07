@@ -129,9 +129,17 @@ final class ChatViewModel {
     }
 
     func previewOperation(_ operation: PatchOperation, in plan: PatchPlan) async -> PatchPreview? {
-        guard let repoURL = orchestrator.repoRoot else { return nil }
-        let fileURL = repoURL.appending(path: operation.filePath)
-        let content = await orchestrator.repoAccess.readUTF8(at: fileURL) ?? ""
+        let content: String
+        if orchestrator.activeWorkspaceSource == .prototype,
+           let project = orchestrator.activePrototypeProject,
+           let file = project.files.first(where: { $0.name == operation.filePath }) {
+            content = file.content
+        } else if let repoURL = orchestrator.repoRoot {
+            let fileURL = repoURL.appending(path: operation.filePath)
+            content = await orchestrator.repoAccess.readUTF8(at: fileURL) ?? ""
+        } else {
+            return nil
+        }
         return PatchPreview.generate(for: operation, fileContent: content)
     }
 

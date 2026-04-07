@@ -414,11 +414,16 @@ final class AIOrchestrator {
         activeWorkspaceSource = .prototype
         workspaceStateGeneration &+= 1
         prototypeRebuildRequestedGeneration &+= 1
-        repoRoot = nil
+        let protoRoot = Self.prototypeWorkspaceRoot(for: project)
+        Self.materializePrototypeFiles(project, to: protoRoot)
+        repoRoot = protoRoot
         repoFiles = Self.prototypeRepoFiles(for: project)
         contextPolicySnapshot = .init(files: [])
         templateDiagnostics = []
         policyWorkingDirectory = nil
+        if patchEngine == nil {
+            patchEngine = PatchEngine(repoAccess: repoAccess)
+        }
         invalidateFoundationModelSessions()
         await promptTemplateService.clearCache()
         await rebuildPrototypeIndex()
@@ -434,6 +439,7 @@ final class AIOrchestrator {
         let expectedGeneration = workspaceStateGeneration
 
         activePrototypeProject = nil
+        repoRoot = nil
         repoFiles = []
         indexStats = nil
         indexingProgress = nil
@@ -888,6 +894,10 @@ final class AIOrchestrator {
             throw OrchestratorError.repoNotLoaded
         }
 
+        if activeWorkspaceSource == .prototype, let project = activePrototypeProject {
+            Self.materializePrototypeFiles(project, to: root)
+        }
+
         isProcessing = true
         defer { isProcessing = false }
         recordExecutionTrace(route: .patchPlanning, executesPatch: true, includesRouteClassifier: false)
@@ -895,7 +905,11 @@ final class AIOrchestrator {
         let result = await engine.apply(plan, repoRoot: root)
 
         if !result.changedFiles.isEmpty {
-            await refreshRepositoryWorkspaceAfterChanges()
+            if activeWorkspaceSource == .prototype {
+                await syncPrototypeFilesFromDisk()
+            } else {
+                await refreshRepositoryWorkspaceAfterChanges()
+            }
         }
 
         return result
@@ -903,6 +917,9 @@ final class AIOrchestrator {
 
     func validatePatch(_ plan: PatchPlan) async -> [PatchEngine.OperationFailure] {
         guard let engine = patchEngine, let root = repoRoot else { return [] }
+        if activeWorkspaceSource == .prototype, let project = activePrototypeProject {
+            Self.materializePrototypeFiles(project, to: root)
+        }
         return await engine.validate(plan, repoRoot: root)
     }
 
@@ -1279,10 +1296,59 @@ final class AIOrchestrator {
         return await repoAccess.readUTF8(at: file.absoluteURL)
     }
 
-    nonisolated static func prototypeRepoFiles(for project: SandboxProject) -> [RepoFile] {
-        let baseURL = FileManager.default.temporaryDirectory
+    nonisolated static func prototypeWorkspaceRoot(for project: SandboxProject) -> URL {
+        FileManager.default.temporaryDirectory
             .appendingPathComponent("HybridCoderPrototypeWorkspace", isDirectory: true)
             .appendingPathComponent(project.id.uuidString, isDirectory: true)
+    }
+
+    nonisolated static func materializePrototypeFiles(_ project: SandboxProject, to root: URL) {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+        for file in project.files {
+            let fileURL = root.appendingPathComponent(file.name)
+            let dir = fileURL.deletingLastPathComponent()
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? file.content.write(to: fileURL, atomically: true, encoding: .utf8)
+        }
+    }
+
+    func syncPrototypeFilesFromDisk() async {
+        guard activeWorkspaceSource == .prototype,
+              var project = activePrototypeProject,
+              let root = repoRoot else { return }
+
+        var updatedFiles: [SandboxFile] = []
+        let fm = FileManager.default
+        let rootPath = root.path(percentEncoded: false)
+
+        if let enumerator = fm.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            while let itemURL = enumerator.nextObject() as? URL {
+                let isDir = (try? itemURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+                guard !isDir else { continue }
+                let fullPath = itemURL.path(percentEncoded: false)
+                let relativePath = String(fullPath.dropFirst(rootPath.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                guard !relativePath.isEmpty else { continue }
+                let content = (try? String(contentsOf: itemURL, encoding: .utf8)) ?? ""
+                if let existing = project.files.first(where: { $0.name == relativePath }) {
+                    updatedFiles.append(SandboxFile(id: existing.id, name: relativePath, content: content, language: existing.language))
+                } else {
+                    updatedFiles.append(SandboxFile(name: relativePath, content: content, language: RepoFile.detectLanguage(for: relativePath)))
+                }
+            }
+        }
+
+        project.files = updatedFiles
+        activePrototypeProject = project
+        repoFiles = Self.prototypeRepoFiles(for: project)
+    }
+
+    nonisolated static func prototypeRepoFiles(for project: SandboxProject) -> [RepoFile] {
+        let baseURL = prototypeWorkspaceRoot(for: project)
 
         return project.files
             .map { file in

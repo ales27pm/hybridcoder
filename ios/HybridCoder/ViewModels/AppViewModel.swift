@@ -138,7 +138,12 @@ final class AppViewModel {
         self.showOnboarding = !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
 
         chat.onPatchApplied = { [weak self] in
-            self?.refreshFileTree()
+            guard let self else { return }
+            if self.orchestrator.activeWorkspaceSource == .prototype {
+                self.syncPrototypeAfterPatch()
+            } else {
+                self.refreshFileTree()
+            }
         }
 
         chat.onConversationSnippet = { [weak self] role, content in
@@ -170,6 +175,15 @@ final class AppViewModel {
         guard let url = activeRepositoryURL else { return }
         Task {
             fileTree = await orchestrator.repoAccess.buildFileTree(at: url)
+        }
+    }
+
+    func syncPrototypeAfterPatch() {
+        Task {
+            await orchestrator.syncPrototypeFilesFromDisk()
+            if let updatedProject = orchestrator.activePrototypeProject {
+                await sandboxViewModel.replaceProjectFiles(updatedProject)
+            }
         }
     }
 

@@ -97,7 +97,7 @@ struct PatchListView: View {
     private func showPreview(for op: PatchOperation, in plan: PatchPlan) {
         Task {
             guard let preview = await chatViewModel.previewOperation(op, in: plan) else {
-                errorMessage = "No repository is open."
+                errorMessage = "No workspace is open. Import a folder or open a prototype first."
                 showError = true
                 return
             }

@@ -126,6 +126,15 @@ final class SandboxViewModel {
         await saveProjects()
     }
 
+    func replaceProjectFiles(_ updatedProject: SandboxProject) async {
+        guard let pIdx = projects.firstIndex(where: { $0.id == updatedProject.id }) else { return }
+        projects[pIdx].files = updatedProject.files
+        if activeProject?.id == updatedProject.id {
+            activeProject = projects[pIdx]
+        }
+        await saveProjects()
+    }
+
     func deleteFileFromProject(_ projectID: UUID, fileID: UUID) async {
         let previous = activeProject
         guard let pIdx = projects.firstIndex(where: { $0.id == projectID }) else { return }
