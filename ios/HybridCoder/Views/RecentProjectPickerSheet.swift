@@ -1,22 +1,24 @@
 import SwiftUI
 
 struct RecentProjectPickerSheet: View {
-    @Bindable var viewModel: AppViewModel
+    @Bindable var containerViewModel: StudioContainerViewModel
+    @Bindable var projectStudioViewModel: ProjectStudioViewModel
+    @Bindable var workspaceViewModel: WorkspaceSessionViewModel
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
-                    if !viewModel.bookmarkService.repositories.isEmpty {
+                    if !projectStudioViewModel.bookmarkService.repositories.isEmpty {
                         repoSection
                     }
 
-                    if !viewModel.sandboxViewModel.projects.isEmpty {
+                    if !projectStudioViewModel.sandboxViewModel.projects.isEmpty {
                         sandboxSection
                     }
 
-                    if viewModel.bookmarkService.repositories.isEmpty && viewModel.sandboxViewModel.projects.isEmpty {
+                    if projectStudioViewModel.bookmarkService.repositories.isEmpty && projectStudioViewModel.sandboxViewModel.projects.isEmpty {
                         emptyState
                     }
                 }
@@ -36,7 +38,7 @@ struct RecentProjectPickerSheet: View {
                 ToolbarItem(placement: .bottomBar) {
                     Button {
                         dismiss()
-                        viewModel.isImportingFolder = true
+                        containerViewModel.isImportingFolder = true
                     } label: {
                         Label("Import from Files", systemImage: "folder.badge.plus")
                             .font(.subheadline.weight(.medium))
@@ -56,10 +58,10 @@ struct RecentProjectPickerSheet: View {
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundStyle(Theme.dimText)
 
-            ForEach(viewModel.bookmarkService.repositories.sorted(by: { $0.lastOpened > $1.lastOpened })) { repo in
+            ForEach(projectStudioViewModel.bookmarkService.repositories.sorted(by: { $0.lastOpened > $1.lastOpened })) { repo in
                 Button {
-                    viewModel.openRepository(repo)
-                    viewModel.selectedSection = .chat
+                    projectStudioViewModel.openRepository(repo, workspace: workspaceViewModel)
+                    containerViewModel.selectedSection = .chat
                     dismiss()
                 } label: {
                     HStack(spacing: 12) {
@@ -99,9 +101,9 @@ struct RecentProjectPickerSheet: View {
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundStyle(Theme.dimText)
 
-            ForEach(viewModel.sandboxViewModel.projects) { project in
+            ForEach(projectStudioViewModel.sandboxViewModel.projects) { project in
                 Button {
-                    viewModel.openPrototypeProject(project)
+                    projectStudioViewModel.openPrototypeProject(project, workspace: workspaceViewModel, container: containerViewModel)
                     dismiss()
                 } label: {
                     HStack(spacing: 12) {
