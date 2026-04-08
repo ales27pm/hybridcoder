@@ -23,8 +23,16 @@ Implement the bytecoding runtime: introduce an agent layer that can turn user in
 - intent decomposition
 - execution planning
 - first-class file actions
-- iterative apply/validate/retry loops
+- iterative apply, validate, and retry loops
 - transition from chat request to real workspace progress
 
 ## Phase 7
 Delete obsolete files and finish the documentation and code alignment.
+
+## Anti-drift note
+
+At every phase, `docs/architecture.md` should remain the canonical source for:
+
+- what is already implemented
+- what is still missing
+- what the product is supposed to become

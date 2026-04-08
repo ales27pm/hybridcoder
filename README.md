@@ -6,6 +6,7 @@ HybridCoder is an on-device iOS coding studio that is being refocused into a Rea
 
 - SwiftUI host app
 - local workspace and project state
+- chat-driven local coding workflow
 - Foundation Models orchestration
 - Core ML semantic retrieval
 - Qwen-based code generation
@@ -24,7 +25,7 @@ The repository already contains a real local LLM coding core:
 
 ## What is still missing
 
-The repository does **not** yet have a finished bytecoding runtime.
+The repository does not yet have a finished bytecoding runtime.
 
 That means there is still no fully implemented agent layer that can autonomously:
 
@@ -33,7 +34,7 @@ That means there is still no fully implemented agent layer that can autonomously
 - create, modify, rename, and delete files as first-class actions
 - iterate until the requested feature or app milestone is actually brought to life
 
-## Documentation
+## Source of truth
 
 Start with `docs/architecture.md`.
 
@@ -42,9 +43,10 @@ That file is the canonical source for:
 - the current implementation
 - the target builder architecture
 - the bytecoding / agent-runtime gap
-- how the rest of the docs fit together
+- the non-drift rules that should keep the product aligned
 
 Then use:
 
+- `docs/product-vision.md` for goals and non-goals
+- `docs/agent-runtime.md` for the bytecoding strategy
 - `docs/roadmap.md` for the phased refactor plan
-- `docs/agent-runtime.md` for the bytecoding strategy and agent-runtime target

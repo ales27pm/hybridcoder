@@ -1,6 +1,6 @@
 # Architecture
 
-This document is the canonical source for the split between the **current implementation** and the **target architecture**.
+This document is the canonical source for the split between the current implementation and the target architecture.
 
 ## Current implementation
 
@@ -27,9 +27,14 @@ This means the repo is already beyond placeholders for the LLM coding core.
 
 ## What is still missing
 
-The missing subsystem is the **agent runtime** — the bytecoding layer that can turn a user goal into a sequence of coding actions.
+The missing subsystem is the bytecoding runtime, also referred to in the docs as the agent runtime.
 
-Today, the repo does not yet implement a full autonomous loop for:
+In this repository, those two terms mean the same target subsystem:
+
+- bytecoding runtime emphasizes the product behavior: conversation that turns into real coding progress
+- agent runtime emphasizes the implementation shape: an execution layer that can plan and carry out workspace actions
+
+Today, the repo does not yet implement a full execution loop for:
 
 - planning multi-step coding work
 - selecting sub-tasks and execution order
@@ -58,13 +63,35 @@ The bytecoding layer should sit on top of the existing LLM core and provide:
 - iterative validation and retry loops
 - explicit transition from chat request to concrete workspace changes
 
+## Conversation-aligned commitments
+
+The docs and implementation should stay aligned to these commitments:
+
+- the product is a chat-first builder, not only a file browser
+- the primary stack is React Native and Expo
+- imported Expo repositories should become first-class projects
+- templates should evolve toward real multi-file project scaffolds
+- preview must be documented honestly and must not be overstated
+- the LLM coding core that already exists must not be described as placeholder-only
+- the missing bytecoding runtime must not be described as already implemented
+
+## Non-drift rules
+
+To avoid product drift, strategy and implementation should keep these rules visible:
+
+1. Default to React Native and Expo assumptions unless the user explicitly asks for something else.
+2. Do not let generic repository-assistant behavior become the product center again.
+3. Do not describe preview as solved until the runtime story is genuinely strong enough.
+4. Do not describe bytecoding or agent autonomy as solved until the execution loop actually exists.
+5. Prefer phased refactors that preserve the real LLM core already present in the repo.
+
 ## How these docs fit together
 
 - `docs/product-vision.md` — product goals, non-goals, and scope
 - `docs/project-structure.md` — target repository layout and migration boundaries
 - `docs/template-system.md` — template and scaffold strategy
 - `docs/preview-system.md` — preview constraints and staged preview plan
-- `docs/agent-runtime.md` — bytecoding strategy and agent-runtime scope
+- `docs/agent-runtime.md` — bytecoding strategy, agent-runtime scope, and execution model
 - `docs/roadmap.md` — phased refactor order
 
 Read this file first, then use the linked docs to go deeper into each subsystem.
