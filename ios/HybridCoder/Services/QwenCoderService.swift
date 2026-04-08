@@ -196,6 +196,26 @@ actor QwenCoderService {
         }
     }
 
+    private static let maxInputTokens = 2048
+
+    private static func truncateMessages(_ messages: [[String: String]], maxEstimatedTokens: Int) -> [[String: String]] {
+        let totalChars = messages.reduce(0) { $0 + ($1["content"]?.count ?? 0) }
+        let estimatedTokens = Int(ceil(Double(totalChars) / 3.5))
+        guard estimatedTokens > maxEstimatedTokens, messages.count >= 2 else { return messages }
+
+        var result = messages
+        let systemChars = result[0]["content"]?.count ?? 0
+        let overheadTokens = Int(ceil(Double(systemChars) / 3.5)) + 20
+        let userBudgetTokens = max(maxEstimatedTokens - overheadTokens, 200)
+        let userBudgetChars = Int(Double(userBudgetTokens) * 3.5)
+
+        if let userContent = result.last?["content"], userContent.count > userBudgetChars {
+            let lastIndex = result.count - 1
+            result[lastIndex]["content"] = String(userContent.prefix(userBudgetChars))
+        }
+        return result
+    }
+
     private func generateInternal(
         messages: [[String: String]],
         maxTokens: Int,
@@ -208,6 +228,7 @@ actor QwenCoderService {
         let pipeline = try await loadPipelineIfNeeded()
         isGenerating = true
 
+        let truncatedMessages = Self.truncateMessages(messages, maxEstimatedTokens: Self.maxInputTokens)
         let startedAt = Date()
         var fullText = ""
 
@@ -220,7 +241,7 @@ actor QwenCoderService {
         }
 
         do {
-            let stream = pipeline.generate(messages: messages, maxNewTokens: maxTokens)
+            let stream = pipeline.generate(messages: truncatedMessages, maxNewTokens: maxTokens)
             for try await chunk in stream {
                 try Task.checkCancellation()
                 fullText += chunk
