@@ -24,7 +24,7 @@ struct RepositorySandboxView: View {
             }
         }
         .background(Theme.surfaceBg)
-        .navigationTitle(workspaceViewModel.activeSandboxWorkspace(prototype: projectStudioViewModel.sandboxViewModel.activeProject)?.title ?? "Sandbox")
+        .navigationTitle(workspaceViewModel.activeSandboxWorkspace(prototype: projectStudioViewModel.sandboxViewModel.activeStudioProject)?.title ?? "Sandbox")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             ensureSelectedFile()
@@ -73,7 +73,7 @@ struct RepositorySandboxView: View {
                 }
             }
 
-            if let project = projectStudioViewModel.sandboxViewModel.activeProject {
+            if let project = projectStudioViewModel.sandboxViewModel.activeStudioProject {
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.triangle.branch")
                         .font(.caption2)

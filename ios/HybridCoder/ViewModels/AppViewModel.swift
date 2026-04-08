@@ -70,18 +70,18 @@ final class AppViewModel {
     }
 
     var hasActiveWorkspace: Bool {
-        orchestrator.isRepoLoaded || sandboxViewModel.activeProject != nil
+        orchestrator.isRepoLoaded || sandboxViewModel.activeStudioProject != nil
     }
 
     var activeSandboxWorkspace: WorkspaceSessionViewModel.SandboxWorkspace? {
-        workspaceSession.activeSandboxWorkspace(prototype: sandboxViewModel.activeProject)
+        workspaceSession.activeSandboxWorkspace(prototype: sandboxViewModel.activeStudioProject)
     }
 
     var activeWorkspaceLabel: String {
         if let url = activeRepositoryURL {
             return url.lastPathComponent
         }
-        if let prototype = sandboxViewModel.activeProject {
+        if let prototype = sandboxViewModel.activeStudioProject {
             return "\(prototype.name) (Prototype)"
         }
         return "No Workspace"
@@ -151,11 +151,11 @@ final class AppViewModel {
             Task { @MainActor in
                 guard transitionGeneration == self.sandboxWorkspaceTransitionGeneration else { return }
                 if let project {
-                    guard self.sandboxViewModel.activeProject?.id == project.id else { return }
+                    guard self.sandboxViewModel.activeStudioProject?.id == project.id else { return }
                     guard self.activeRepositoryURL == nil else { return }
                     await self.orchestrator.openPrototypeWorkspace(project)
                 } else {
-                    guard self.sandboxViewModel.activeProject == nil, self.activeRepositoryURL == nil else { return }
+                    guard self.sandboxViewModel.activeStudioProject == nil, self.activeRepositoryURL == nil else { return }
                     await self.orchestrator.closePrototypeWorkspace()
                 }
             }
@@ -186,6 +186,10 @@ final class AppViewModel {
         projectStudio.openPrototypeProject(project, workspace: workspaceSession, container: studioContainer)
     }
 
+    func openStudioProject(_ project: StudioProject) {
+        projectStudio.openStudioProject(project, workspace: workspaceSession, container: studioContainer)
+    }
+
     func selectSandboxRepositoryFile(_ node: FileNode) {
         workspaceSession.selectSandboxRepositoryFile(node)
     }
@@ -195,13 +199,13 @@ final class AppViewModel {
     }
 
     func importStateMemoryToRepoFolder() async -> Bool {
-        guard let project = sandboxViewModel.activeProject,
+        guard let project = sandboxViewModel.activeStudioProject,
               let repoURL = activeRepositoryURL else { return false }
         return await sandboxViewModel.importStateToProjectFolder(project.id, destinationRoot: repoURL)
     }
 
     func exportStateMemoryFromRepoFolder() async {
-        guard let project = sandboxViewModel.activeProject,
+        guard let project = sandboxViewModel.activeStudioProject,
               let repoURL = activeRepositoryURL else { return }
         await sandboxViewModel.exportStateFromProjectFolder(project.id, sourceRoot: repoURL)
     }
