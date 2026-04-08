@@ -41,11 +41,17 @@ nonisolated enum AgentActionStatus: String, Sendable {
     case skipped
 }
 
+nonisolated enum AgentExecutionMode: String, Sendable {
+    case patchApproval
+    case goalDriven
+}
+
 nonisolated struct AgentExecutionPlan: Sendable {
     let goal: String
     let workspace: AgentWorkspaceContext
     let actions: [AgentPlannedAction]
     let fallbackPatchPlan: PatchPlan?
+    let executionMode: AgentExecutionMode
 }
 
 nonisolated struct AgentPlannedAction: Identifiable, Sendable {

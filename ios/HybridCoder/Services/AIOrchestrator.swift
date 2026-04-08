@@ -1216,7 +1216,8 @@ final class AIOrchestrator {
             executionPlan = IntentPlanner.planActions(
                 goal: safeGoal,
                 workspace: workspace,
-                patchPlan: patchPlan
+                patchPlan: patchPlan,
+                executionMode: .goalDriven
             )
         }
 
@@ -1250,7 +1251,8 @@ final class AIOrchestrator {
         let executionPlan = IntentPlanner.planActions(
             goal: goal,
             workspace: workspace,
-            patchPlan: plan
+            patchPlan: plan,
+            executionMode: .patchApproval
         )
 
         let report = try await executeAgentRuntimePlan(

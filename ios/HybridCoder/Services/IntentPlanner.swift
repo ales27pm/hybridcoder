@@ -4,7 +4,8 @@ nonisolated enum IntentPlanner {
     static func planActions(
         goal: String,
         workspace: AgentWorkspaceContext,
-        patchPlan: PatchPlan? = nil
+        patchPlan: PatchPlan? = nil,
+        executionMode: AgentExecutionMode = .goalDriven
     ) -> AgentExecutionPlan {
         let normalizedGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         let safeGoal = normalizedGoal.isEmpty ? (patchPlan?.summary ?? workspace.displayName) : normalizedGoal
@@ -14,7 +15,9 @@ nonisolated enum IntentPlanner {
             actions.append(contentsOf: planPatchBackedActions(goal: safeGoal, patchPlan: patchPlan))
         }
 
-        actions.append(contentsOf: planGoalBackedActions(goal: safeGoal))
+        if executionMode == .goalDriven {
+            actions.append(contentsOf: planGoalBackedActions(goal: safeGoal))
+        }
 
         if actions.isEmpty {
             actions.append(contentsOf: exploratoryActions(goal: safeGoal, workspace: workspace))
@@ -38,7 +41,8 @@ nonisolated enum IntentPlanner {
             goal: safeGoal,
             workspace: workspace,
             actions: actions,
-            fallbackPatchPlan: patchPlan
+            fallbackPatchPlan: patchPlan,
+            executionMode: executionMode
         )
     }
 

@@ -31,8 +31,9 @@ nonisolated struct AgentRuntimeReport: Sendable {
     var chatSummary: String {
         var lines: [String] = []
         let changedFiles = patchResult.changedFiles
-        let writeActions = executedActions.filter {
-            switch $0.action {
+        let succeededWriteActions = executedActions.filter { result in
+            guard result.status == .succeeded else { return false }
+            switch result.action {
             case .createFile, .updateFile, .renameFile, .deleteFile:
                 return true
             case .inspectFile, .validateWorkspace:
@@ -41,7 +42,7 @@ nonisolated struct AgentRuntimeReport: Sendable {
         }
 
         if didMakeMeaningfulWorkspaceProgress {
-            lines.append("Agent runtime completed \(writeActions.count) workspace action\(writeActions.count == 1 ? "" : "s") and made meaningful progress.")
+            lines.append("Agent runtime completed \(succeededWriteActions.count) workspace action\(succeededWriteActions.count == 1 ? "" : "s") and made meaningful progress.")
         } else if let firstBlocked = blockedActions.first {
             lines.append("Agent runtime blocked on \(firstBlocked.action.summary.lowercased()).")
         } else {
