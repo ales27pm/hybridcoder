@@ -7,6 +7,9 @@ struct OnboardingView: View {
     @State private var phase: SetupPhase = .welcome
     @State private var embeddingComplete: Bool = false
     @State private var embeddingError: String?
+    @State private var qwenComplete: Bool = false
+    @State private var qwenError: String?
+    @State private var qwenProgress: Double = 0
     @State private var animateIn: Bool = false
 
     private enum SetupPhase {
@@ -101,19 +104,19 @@ struct OnboardingView: View {
                 modelRow(
                     icon: "brain.head.profile",
                     name: "Apple Foundation Models",
-                    detail: "Code generation, explanations, and patch planning"
+                    detail: "Routing, explanations, and patch planning (built-in)"
                 )
 
                 modelRow(
                     icon: "waveform.badge.magnifyingglass",
-                    name: orchestrator.modelRegistry.entry(for: orchestrator.modelRegistry.activeEmbeddingModelID)?.displayName ?? orchestrator.modelRegistry.activeEmbeddingModelID,
-                    detail: "Semantic search · CoreML · \(orchestrator.modelRegistry.activeEmbeddingModelID)"
+                    name: orchestrator.modelRegistry.entry(for: orchestrator.modelRegistry.activeEmbeddingModelID)?.displayName ?? "CodeBERT",
+                    detail: "Semantic code search · CoreML embedding model"
                 )
 
                 modelRow(
-                    icon: "iphone",
-                    name: "Platform Requirement",
-                    detail: "Requires iOS 26+ for Apple Intelligence"
+                    icon: "hammer",
+                    name: orchestrator.modelRegistry.entry(for: orchestrator.modelRegistry.activeCodeGenerationModelID)?.displayName ?? "Qwen Coder",
+                    detail: "On-device code generation · CoreMLPipelines"
                 )
             }
             .padding(16)
@@ -180,13 +183,21 @@ struct OnboardingView: View {
             VStack(spacing: 16) {
                 downloadCard(
                     icon: "waveform.badge.magnifyingglass",
-                    name: orchestrator.modelRegistry.entry(for: orchestrator.modelRegistry.activeEmbeddingModelID)?.displayName ?? orchestrator.modelRegistry.activeEmbeddingModelID,
+                    name: orchestrator.modelRegistry.entry(for: orchestrator.modelRegistry.activeEmbeddingModelID)?.displayName ?? "CodeBERT",
                     progress: orchestrator.modelDownload.downloadProgress,
                     isActive: orchestrator.modelDownload.isDownloading,
                     isDone: embeddingComplete,
                     error: embeddingError
                 )
 
+                downloadCard(
+                    icon: "hammer",
+                    name: orchestrator.modelRegistry.entry(for: orchestrator.modelRegistry.activeCodeGenerationModelID)?.displayName ?? "Qwen Coder",
+                    progress: qwenProgress,
+                    isActive: !qwenComplete && qwenError == nil && embeddingComplete,
+                    isDone: qwenComplete,
+                    error: qwenError
+                )
             }
 
             Text("This may take a few minutes depending\non your connection and device.")
@@ -272,7 +283,7 @@ struct OnboardingView: View {
                     .font(.system(size: 24, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
 
-                Text("All models are loaded.\nImport a repository to start coding.")
+                Text(modelSetupSummary)
                     .font(.subheadline)
                     .foregroundStyle(Theme.dimText)
                     .multilineTextAlignment(.center)
@@ -312,7 +323,7 @@ struct OnboardingView: View {
                     .font(.system(size: 24, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
 
-                Text("The embedding model couldn't be downloaded.\nYou can retry from the Models tab.")
+                Text("Models couldn't be downloaded.\nYou can retry from the Models tab.")
                     .font(.subheadline)
                     .foregroundStyle(Theme.dimText)
                     .multilineTextAlignment(.center)
@@ -346,6 +357,9 @@ struct OnboardingView: View {
     private func beginSetup() {
         embeddingError = nil
         embeddingComplete = false
+        qwenError = nil
+        qwenComplete = false
+        qwenProgress = 0
 
         withAnimation(.spring(duration: 0.5)) {
             phase = .downloading
@@ -358,19 +372,18 @@ struct OnboardingView: View {
 
     private func downloadAll() async {
         await downloadEmbedding()
+        await downloadQwen()
 
-        let anySuccess = embeddingComplete
-        let anyFailure = embeddingError != nil
+        let anySuccess = embeddingComplete || qwenComplete
+        let allFailed = !embeddingComplete && !qwenComplete
 
         try? await Task.sleep(for: .milliseconds(600))
 
         withAnimation(.spring(duration: 0.5)) {
-            if anySuccess && !anyFailure {
-                phase = .done
-            } else if anySuccess {
-                phase = .done
-            } else {
+            if allFailed {
                 phase = .failed
+            } else {
+                phase = .done
             }
         }
     }
@@ -383,6 +396,28 @@ struct OnboardingView: View {
         } else {
             embeddingError = orchestrator.modelDownload.downloadError ?? "Download failed"
         }
+    }
+
+    private func downloadQwen() async {
+        do {
+            try await orchestrator.warmUpCodeGenerationModel { progress in
+                self.qwenProgress = progress
+            }
+            withAnimation { qwenComplete = true }
+        } catch {
+            qwenError = error.localizedDescription
+        }
+    }
+
+    private var modelSetupSummary: String {
+        if embeddingComplete && qwenComplete {
+            return "All models are loaded.\nImport a repository to start coding."
+        } else if embeddingComplete {
+            return "CodeBERT is ready. Qwen can be set up later\nfrom the Models tab."
+        } else if qwenComplete {
+            return "Qwen is ready. CodeBERT can be set up later\nfrom the Models tab."
+        }
+        return "Import a repository to start coding."
     }
 
     private func completeOnboarding() {

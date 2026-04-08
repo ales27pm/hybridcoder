@@ -280,7 +280,7 @@ final class AIOrchestrator {
         return service
     }
 
-    func warmUpCodeGenerationModel() async throws {
+    func warmUpCodeGenerationModel(onProgress: ((@MainActor @Sendable (Double) -> Void))? = nil) async throws {
         guard !isCodeGenerationWarmUpInFlight else { return }
 
         isCodeGenerationWarmUpInFlight = true
@@ -305,6 +305,7 @@ final class AIOrchestrator {
                     guard let self else { return }
                     let bounded = min(max(progress, 0.05), 0.99)
                     self.modelRegistry.setInstallState(for: activeModelID, .downloading(progress: bounded))
+                    onProgress?(bounded)
                 }
             }
             guard codeGenerationLifecycleToken == token else { return }
