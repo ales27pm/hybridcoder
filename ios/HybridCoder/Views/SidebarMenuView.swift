@@ -372,7 +372,7 @@ struct SidebarMenuView: View {
                         .font(.subheadline)
                     Spacer()
 
-                    let hasActive = viewModel.activeRepositoryURL != nil || viewModel.sandboxViewModel.activeProject != nil
+                    let hasActive = viewModel.activeRepositoryURL != nil || viewModel.sandboxViewModel.activeStudioProject != nil
                     if hasActive {
                         Circle()
                             .fill(Theme.accent)

@@ -14,11 +14,11 @@ struct RecentProjectPickerSheet: View {
                         repoSection
                     }
 
-                    if !projectStudioViewModel.sandboxViewModel.projects.isEmpty {
+                    if !projectStudioViewModel.sandboxViewModel.studioProjects.isEmpty {
                         sandboxSection
                     }
 
-                    if projectStudioViewModel.bookmarkService.repositories.isEmpty && projectStudioViewModel.sandboxViewModel.projects.isEmpty {
+                    if projectStudioViewModel.bookmarkService.repositories.isEmpty && projectStudioViewModel.sandboxViewModel.studioProjects.isEmpty {
                         emptyState
                     }
                 }
@@ -101,13 +101,13 @@ struct RecentProjectPickerSheet: View {
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundStyle(Theme.dimText)
 
-            ForEach(projectStudioViewModel.sandboxViewModel.projects) { project in
+            ForEach(projectStudioViewModel.sandboxViewModel.studioProjects) { project in
                 Button {
-                    projectStudioViewModel.openPrototypeProject(project, workspace: workspaceViewModel, container: containerViewModel)
+                    projectStudioViewModel.openStudioProject(project, workspace: workspaceViewModel, container: containerViewModel)
                     dismiss()
                 } label: {
                     HStack(spacing: 12) {
-                        Image(systemName: project.templateType.iconName)
+                        Image(systemName: project.kind.iconName)
                             .font(.system(size: 15))
                             .foregroundStyle(Theme.accent)
                             .frame(width: 32, height: 32)
@@ -118,7 +118,7 @@ struct RecentProjectPickerSheet: View {
                                 .font(.subheadline.weight(.medium))
                                 .foregroundStyle(.white)
 
-                            Text("\(project.files.count) file\(project.files.count == 1 ? "" : "s") · \(project.templateType.rawValue)")
+                            Text("\(project.fileCount) file\(project.fileCount == 1 ? "" : "s") · Builder Project")
                                 .font(.caption2)
                                 .foregroundStyle(Theme.dimText)
                         }

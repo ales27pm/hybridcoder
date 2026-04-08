@@ -4,29 +4,31 @@ import OSLog
 @Observable
 @MainActor
 final class SandboxViewModel {
-    private(set) var projects: [SandboxProject] = []
-    private(set) var activeProject: SandboxProject?
+    private(set) var studioProjects: [StudioProject] = []
+    private(set) var activeStudioProject: StudioProject?
     private(set) var isLoading: Bool = false
     private(set) var errorMessage: String?
     private(set) var restoredState: PrototypeStateMemory.ProjectState?
     var onActiveProjectChanged: ((SandboxProject?) -> Void)?
     var showNewProjectSheet: Bool = false
     var showDeleteConfirmation: Bool = false
-    var projectToDelete: SandboxProject?
+    var projectToDelete: StudioProject?
 
-    private let storageKey = "sandbox_projects"
+    private let studioStorageKey = "studio_projects"
+    private let legacyStorageKey = "sandbox_projects"
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "SandboxViewModel")
     private let secureStore = SecureStoreService(serviceName: "com.hybridcoder.projects")
     let stateMemory = PrototypeStateMemory()
 
     init() {}
 
-    var studioProjects: [StudioProject] {
-        projects.map(\.asStudioProject)
+    // Compatibility-only views for legacy seams.
+    var projects: [SandboxProject] {
+        studioProjects.map(\.asLegacySandboxProject)
     }
 
-    var activeStudioProject: StudioProject? {
-        activeProject?.asStudioProject
+    var activeProject: SandboxProject? {
+        activeStudioProject?.asLegacySandboxProject()
     }
 
     func loadProjects() async {
@@ -34,66 +36,79 @@ final class SandboxViewModel {
         defer { isLoading = false }
 
         do {
-            if let loaded: [SandboxProject] = try await secureStore.getObject(storageKey, as: [SandboxProject].self) {
-                projects = loaded.sorted { $0.lastOpenedAt > $1.lastOpenedAt }
-            } else {
-                await migrateFromSQLite()
+            if let loadedStudio: [StudioProject] = try await secureStore.getObject(studioStorageKey, as: [StudioProject].self) {
+                studioProjects = loadedStudio.sorted { $0.lastOpenedAt > $1.lastOpenedAt }
+                return
             }
+
+            if let loadedLegacy: [SandboxProject] = try await secureStore.getObject(legacyStorageKey, as: [SandboxProject].self) {
+                studioProjects = loadedLegacy.map(\.asStudioProject).sorted { $0.lastOpenedAt > $1.lastOpenedAt }
+                await saveProjects()
+                return
+            }
+
+            await migrateFromSQLite()
         } catch {
-            logger.error("Failed to load sandbox projects from Keychain: \(error.localizedDescription)")
+            logger.error("Failed to load studio projects: \(error.localizedDescription)")
             await migrateFromSQLite()
         }
     }
 
     func createProject(name: String, template: SandboxProject.TemplateType) async {
-        let mainFile = SandboxFile(name: "App.js", content: template.defaultCode)
-        var project = SandboxProject(
-            name: name.isEmpty ? "Untitled" : name,
-            templateType: template,
-            files: [mainFile]
+        let fileName = "App.js"
+        let spec = NewProjectSpec(
+            name: name,
+            templateID: legacyTemplateID(for: template),
+            kind: .expoJS,
+            navigationPreset: template == .navigation ? .stack : .none,
+            source: .legacySandbox,
+            preferredEntryFile: fileName,
+            workspaceNotes: ["Created from legacy template flow."]
         )
-        project.lastOpenedAt = Date()
-        projects.insert(project, at: 0)
-        let previous = activeProject
-        activeProject = project
-        notifyActiveProjectChangedIfNeeded(previous: previous)
-        await saveProjects()
+        await createProject(from: spec)
     }
 
     func createProject(from spec: NewProjectSpec) async {
-        let project = SandboxProject(studioProject: TemplateScaffoldBuilder.buildProject(from: spec))
-        await insertAndOpenProject(project)
+        await insertAndOpenProject(TemplateScaffoldBuilder.buildProject(from: spec))
     }
 
     func createProject(from studioProject: StudioProject) async {
-        await insertAndOpenProject(SandboxProject(studioProject: studioProject))
+        await insertAndOpenProject(studioProject)
     }
 
     func createProjectFromTemplate(name: String, template: ProjectTemplate) async {
-        let files = template.files.map { SandboxFile(name: $0.name, content: $0.content, language: $0.language) }
-        var project = SandboxProject(
+        let studioFiles = template.files.map {
+            StudioProjectFile(path: $0.name, content: $0.content, language: $0.language)
+        }
+        let project = StudioProject(
             name: name.isEmpty ? template.name : name,
-            templateType: template.templateType,
-            files: files
+            metadata: StudioProjectMetadata(
+                kind: .expoJS,
+                source: .legacySandbox,
+                template: TemplateReference(id: template.id, name: template.name),
+                navigationPreset: template.templateType == .navigation ? .stack : .none,
+                dependencyProfile: RNDependencyProfile(),
+                previewState: .notValidated,
+                entryFile: studioFiles.first(where: \.isEntryCandidate)?.path,
+                workspaceNotes: ["Compatibility project created from legacy template catalog."]
+            ),
+            files: studioFiles
         )
-        project.lastOpenedAt = Date()
-        projects.insert(project, at: 0)
-        let previous = activeProject
-        activeProject = project
-        notifyActiveProjectChangedIfNeeded(previous: previous)
-        await saveProjects()
+        await insertAndOpenProject(project)
     }
 
-    func openProject(_ project: SandboxProject) {
-        let previous = activeProject
-        if let idx = projects.firstIndex(where: { $0.id == project.id }) {
-            projects[idx].lastOpenedAt = Date()
-            activeProject = projects[idx]
+    func openProject(_ project: StudioProject) {
+        let previous = activeStudioProject
+        if let idx = studioProjects.firstIndex(where: { $0.id == project.id }) {
+            studioProjects[idx].lastOpenedAt = Date()
+            let opened = studioProjects.remove(at: idx)
+            studioProjects.insert(opened, at: 0)
+            activeStudioProject = opened
         } else {
             var opened = project
             opened.lastOpenedAt = Date()
-            projects.insert(opened, at: 0)
-            activeProject = opened
+            studioProjects.insert(opened, at: 0)
+            activeStudioProject = opened
         }
 
         notifyActiveProjectChangedIfNeeded(previous: previous)
@@ -103,21 +118,25 @@ final class SandboxViewModel {
         }
     }
 
+    func openProject(_ legacyProject: SandboxProject) {
+        openProject(legacyProject.asStudioProject)
+    }
+
     func closeProject() {
-        if let project = activeProject {
+        if let project = activeStudioProject {
             Task { await persistCurrentState(for: project) }
         }
-        let previous = activeProject
-        activeProject = nil
+        let previous = activeStudioProject
+        activeStudioProject = nil
         restoredState = nil
         notifyActiveProjectChangedIfNeeded(previous: previous)
     }
 
-    func deleteProject(_ project: SandboxProject) async {
-        let previous = activeProject
-        projects.removeAll { $0.id == project.id }
-        if activeProject?.id == project.id {
-            activeProject = nil
+    func deleteProject(_ project: StudioProject) async {
+        let previous = activeStudioProject
+        studioProjects.removeAll { $0.id == project.id }
+        if activeStudioProject?.id == project.id {
+            activeStudioProject = nil
             restoredState = nil
         }
         notifyActiveProjectChangedIfNeeded(previous: previous)
@@ -125,74 +144,82 @@ final class SandboxViewModel {
         await stateMemory.deleteState(for: project.id)
     }
 
+    func deleteProject(_ legacyProject: SandboxProject) async {
+        await deleteProject(legacyProject.asStudioProject)
+    }
+
     func updateProjectFile(_ projectID: UUID, fileID: UUID, content: String) async {
-        let previous = activeProject
-        guard let pIdx = projects.firstIndex(where: { $0.id == projectID }),
-              let fIdx = projects[pIdx].files.firstIndex(where: { $0.id == fileID }) else { return }
-        projects[pIdx].files[fIdx].content = content
-        if activeProject?.id == projectID {
-            activeProject = projects[pIdx]
+        let previous = activeStudioProject
+        guard let pIdx = studioProjects.firstIndex(where: { $0.id == projectID }),
+              let fIdx = studioProjects[pIdx].files.firstIndex(where: { $0.id == fileID }) else { return }
+        studioProjects[pIdx].files[fIdx].content = content
+        if activeStudioProject?.id == projectID {
+            activeStudioProject = studioProjects[pIdx]
         }
         notifyActiveProjectChangedIfNeeded(previous: previous)
         await saveProjects()
     }
 
     func addFileToProject(_ projectID: UUID, name: String, content: String = "", language: String = "javascript") async {
-        let previous = activeProject
-        guard let pIdx = projects.firstIndex(where: { $0.id == projectID }) else { return }
-        let file = SandboxFile(name: name, content: content, language: language)
-        projects[pIdx].files.append(file)
-        if activeProject?.id == projectID {
-            activeProject = projects[pIdx]
+        let previous = activeStudioProject
+        guard let pIdx = studioProjects.firstIndex(where: { $0.id == projectID }) else { return }
+        let file = StudioProjectFile(path: name, content: content, language: language)
+        studioProjects[pIdx].files.append(file)
+        if activeStudioProject?.id == projectID {
+            activeStudioProject = studioProjects[pIdx]
         }
         notifyActiveProjectChangedIfNeeded(previous: previous)
         await saveProjects()
     }
 
-    func replaceProjectFiles(_ updatedProject: SandboxProject) async {
-        guard let pIdx = projects.firstIndex(where: { $0.id == updatedProject.id }) else { return }
-        projects[pIdx].files = updatedProject.files
-        if activeProject?.id == updatedProject.id {
-            activeProject = projects[pIdx]
+    func replaceProjectFiles(_ updatedProject: StudioProject) async {
+        guard let pIdx = studioProjects.firstIndex(where: { $0.id == updatedProject.id }) else { return }
+        studioProjects[pIdx].files = updatedProject.files
+        if activeStudioProject?.id == updatedProject.id {
+            activeStudioProject = studioProjects[pIdx]
         }
         await saveProjects()
     }
 
+    func replaceProjectFiles(_ updatedProject: SandboxProject) async {
+        await replaceProjectFiles(updatedProject.asStudioProject)
+    }
+
     func deleteFileFromProject(_ projectID: UUID, fileID: UUID) async {
-        let previous = activeProject
-        guard let pIdx = projects.firstIndex(where: { $0.id == projectID }) else { return }
-        projects[pIdx].files.removeAll { $0.id == fileID }
-        if activeProject?.id == projectID {
-            activeProject = projects[pIdx]
+        let previous = activeStudioProject
+        guard let pIdx = studioProjects.firstIndex(where: { $0.id == projectID }) else { return }
+        studioProjects[pIdx].files.removeAll { $0.id == fileID }
+        if activeStudioProject?.id == projectID {
+            activeStudioProject = studioProjects[pIdx]
         }
         notifyActiveProjectChangedIfNeeded(previous: previous)
         await saveProjects()
     }
 
     func renameProject(_ projectID: UUID, newName: String) async {
-        let previous = activeProject
-        guard let pIdx = projects.firstIndex(where: { $0.id == projectID }) else { return }
-        projects[pIdx].name = newName
-        if activeProject?.id == projectID {
-            activeProject = projects[pIdx]
+        let previous = activeStudioProject
+        guard let pIdx = studioProjects.firstIndex(where: { $0.id == projectID }) else { return }
+        studioProjects[pIdx].name = newName
+        if activeStudioProject?.id == projectID {
+            activeStudioProject = studioProjects[pIdx]
         }
         notifyActiveProjectChangedIfNeeded(previous: previous)
         await saveProjects()
     }
 
-    func duplicateProject(_ project: SandboxProject) async {
-        var duplicate = project.asStudioProject
+    func duplicateProject(_ project: StudioProject) async {
+        var duplicate = project
         duplicate.name = "\(project.name) Copy"
         duplicate.metadata.source = .duplicated
         duplicate.lastOpenedAt = Date()
-        var copy = SandboxProject(studioProject: duplicate)
-        copy.lastOpenedAt = Date()
-        projects.removeAll { $0.id == copy.id }
-        projects.insert(copy, at: 0)
-        await saveProjects()
+        await insertAndOpenProject(duplicate)
     }
 
-    func snackURL(for project: SandboxProject) -> URL {
+    func duplicateProject(_ legacyProject: SandboxProject) async {
+        await duplicateProject(legacyProject.asStudioProject)
+    }
+
+    func snackURL(for project: StudioProject) -> URL {
         var components = URLComponents(string: "https://snack.expo.dev")!
         var queryItems: [URLQueryItem] = [
             URLQueryItem(name: "platform", value: "ios"),
@@ -208,9 +235,17 @@ final class SandboxViewModel {
         return components.url ?? URL(string: "https://snack.expo.dev")!
     }
 
-    func expoGoDeepLink(for project: SandboxProject) -> URL? {
-        guard let snackID = project.snackID else { return nil }
+    func snackURL(for legacyProject: SandboxProject) -> URL {
+        snackURL(for: legacyProject.asStudioProject)
+    }
+
+    func expoGoDeepLink(for project: StudioProject) -> URL? {
+        guard let snackID = studioProjects.first(where: { $0.id == project.id })?.asLegacySandboxProject().snackID else { return nil }
         return URL(string: "exp://exp.host/@snack/\(snackID)")
+    }
+
+    func expoGoDeepLink(for legacyProject: SandboxProject) -> URL? {
+        expoGoDeepLink(for: legacyProject.asStudioProject)
     }
 
     func dismissError() {
@@ -218,7 +253,7 @@ final class SandboxViewModel {
     }
 
     func saveActiveEditorState(fileID: UUID?, cursorPosition: Int?, tab: String?) async {
-        guard let project = activeProject else { return }
+        guard let project = activeStudioProject else { return }
         var state = restoredState ?? PrototypeStateMemory.ProjectState(
             projectID: project.id,
             conversationSnippets: [],
@@ -233,7 +268,7 @@ final class SandboxViewModel {
     }
 
     func appendConversationSnippet(role: String, content: String) async {
-        guard let project = activeProject else { return }
+        guard let project = activeStudioProject else { return }
         var state = restoredState ?? PrototypeStateMemory.ProjectState(
             projectID: project.id,
             conversationSnippets: [],
@@ -259,13 +294,13 @@ final class SandboxViewModel {
 
     func exportStateFromProjectFolder(_ projectID: UUID, sourceRoot: URL) async {
         if let state = await stateMemory.exportStateFromProjectFolder(projectID: projectID, sourceRoot: sourceRoot) {
-            if activeProject?.id == projectID {
+            if activeStudioProject?.id == projectID {
                 restoredState = state
             }
         }
     }
 
-    private func persistCurrentState(for project: SandboxProject) async {
+    private func persistCurrentState(for project: StudioProject) async {
         var state = restoredState ?? PrototypeStateMemory.ProjectState(
             projectID: project.id,
             conversationSnippets: [],
@@ -277,20 +312,20 @@ final class SandboxViewModel {
 
     private func saveProjects() async {
         do {
-            try await secureStore.setObject(storageKey, value: projects)
+            try await secureStore.setObject(studioStorageKey, value: studioProjects)
         } catch {
-            logger.error("Failed to save sandbox projects to Keychain: \(error.localizedDescription)")
+            logger.error("Failed to save studio projects to Keychain: \(error.localizedDescription)")
         }
     }
 
     private func migrateFromSQLite() async {
         do {
             let legacyStorage = try AsyncStorageService(name: "sandbox_storage.sqlite")
-            if let loaded: [SandboxProject] = try await legacyStorage.getObject(storageKey, as: [SandboxProject].self) {
-                projects = loaded.sorted { $0.lastOpenedAt > $1.lastOpenedAt }
+            if let loaded: [SandboxProject] = try await legacyStorage.getObject(legacyStorageKey, as: [SandboxProject].self) {
+                studioProjects = loaded.map(\.asStudioProject).sorted { $0.lastOpenedAt > $1.lastOpenedAt }
                 await saveProjects()
-                try await legacyStorage.removeItem(storageKey)
-                logger.info("Migrated \(loaded.count) sandbox projects from SQLite to Keychain")
+                try await legacyStorage.removeItem(legacyStorageKey)
+                logger.info("Migrated \(loaded.count) sandbox projects from SQLite to StudioProject storage")
             }
         } catch {
             logger.error("SQLite migration failed: \(error.localizedDescription)")
@@ -298,25 +333,35 @@ final class SandboxViewModel {
     }
 
     private func notifyActiveProjectChanged() {
-        onActiveProjectChanged?(activeProject)
+        onActiveProjectChanged?(activeStudioProject?.asLegacySandboxProject())
     }
 
-    private func notifyActiveProjectChangedIfNeeded(previous: SandboxProject?) {
-        guard previous != activeProject else { return }
+    private func notifyActiveProjectChangedIfNeeded(previous: StudioProject?) {
+        guard previous != activeStudioProject else { return }
         notifyActiveProjectChanged()
     }
 
-    private func insertAndOpenProject(_ project: SandboxProject, shouldNotifyActiveProject: Bool = true) async {
+    private func insertAndOpenProject(_ project: StudioProject, shouldNotifyActiveProject: Bool = true) async {
         var updatedProject = project
         updatedProject.lastOpenedAt = Date()
-        projects.removeAll { $0.id == updatedProject.id }
-        projects.insert(updatedProject, at: 0)
+        studioProjects.removeAll { $0.id == updatedProject.id }
+        studioProjects.insert(updatedProject, at: 0)
 
-        let previous = activeProject
-        activeProject = updatedProject
+        let previous = activeStudioProject
+        activeStudioProject = updatedProject
         if shouldNotifyActiveProject {
             notifyActiveProjectChangedIfNeeded(previous: previous)
         }
         await saveProjects()
+    }
+
+    private func legacyTemplateID(for template: SandboxProject.TemplateType) -> String {
+        switch template {
+        case .blank: return "blank_expo_js"
+        case .helloWorld: return "blank_expo_js"
+        case .navigation: return "stack_starter"
+        case .todoApp: return "todo_app"
+        case .apiExample: return "api_example"
+        }
     }
 }
