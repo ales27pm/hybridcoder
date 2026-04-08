@@ -35,8 +35,8 @@ enum PreviewErrorClassifier {
         }
 
         return Readiness(
-            state: warningCount > 0 ? .validationFailed : .notValidated,
-            headline: warningCount > 0 ? "Preview In Fallback Mode" : "Preview Not Ready",
+            state: .diagnosticsOnly,
+            headline: "Diagnostics Only",
             detail: "Generic repositories stay in diagnostic fallback until Expo / React Native support is confirmed."
         )
     }

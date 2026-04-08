@@ -350,6 +350,177 @@ enum StackStarterFiles {
     """
 }
 
+enum ExpoRouterTabsFiles {
+    static let files: [TemplateFileBlueprint] = [
+        TemplateFileBlueprint(name: "app/_layout.tsx", content: layoutTsx),
+        TemplateFileBlueprint(name: "app/index.tsx", content: homeScreen),
+        TemplateFileBlueprint(name: "app/activity.tsx", content: activityScreen),
+        TemplateFileBlueprint(name: "app/settings.tsx", content: settingsScreen),
+        TemplateFileBlueprint(name: "src/components/ScreenShell.tsx", content: screenShell),
+        TemplateFileBlueprint(name: "app.json", content: BlankExpoTSFiles.files.first { $0.name == "app.json" }?.content ?? "{}", language: "json"),
+        TemplateFileBlueprint(name: "package.json", content: packageJson, language: "json"),
+        TemplateFileBlueprint(name: "tsconfig.json", content: BlankExpoTSFiles.files.first { $0.name == "tsconfig.json" }?.content ?? "{}", language: "json"),
+    ]
+
+    private static let layoutTsx = """
+    import { Tabs } from 'expo-router';
+    import { Ionicons } from '@expo/vector-icons';
+
+    export default function RootLayout() {
+      return (
+        <Tabs
+          screenOptions={{
+            headerStyle: { backgroundColor: '#0f0f23' },
+            headerTintColor: '#f7f8ff',
+            tabBarStyle: { backgroundColor: '#0f0f23', borderTopColor: '#1d2040' },
+            tabBarActiveTintColor: '#00d97e',
+            tabBarInactiveTintColor: '#7b82b0',
+          }}
+        >
+          <Tabs.Screen
+            name="index"
+            options={{
+              title: 'Home',
+              tabBarIcon: ({ color, size }) => <Ionicons name="home-outline" color={color} size={size} />,
+            }}
+          />
+          <Tabs.Screen
+            name="activity"
+            options={{
+              title: 'Activity',
+              tabBarIcon: ({ color, size }) => <Ionicons name="pulse-outline" color={color} size={size} />,
+            }}
+          />
+          <Tabs.Screen
+            name="settings"
+            options={{
+              title: 'Settings',
+              tabBarIcon: ({ color, size }) => <Ionicons name="settings-outline" color={color} size={size} />,
+            }}
+          />
+        </Tabs>
+      );
+    }
+    """
+
+    private static let screenShell = """
+    import React from 'react';
+    import { View, Text, StyleSheet } from 'react-native';
+
+    export function ScreenShell({
+      eyebrow,
+      title,
+      subtitle,
+    }: {
+      eyebrow: String;
+      title: String;
+      subtitle: String;
+    }) {
+      return (
+        <View style={styles.container}>
+          <Text style={styles.eyebrow}>{eyebrow}</Text>
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.subtitle}>{subtitle}</Text>
+        </View>
+      );
+    }
+
+    const styles = StyleSheet.create({
+      container: {
+        flex: 1,
+        justifyContent: 'center',
+        paddingHorizontal: 24,
+        backgroundColor: '#0f0f23',
+      },
+      eyebrow: {
+        color: '#7b82b0',
+        fontSize: 12,
+        fontWeight: '700',
+        textTransform: 'uppercase',
+        letterSpacing: 1.2,
+        marginBottom: 12,
+      },
+      title: {
+        color: '#f7f8ff',
+        fontSize: 34,
+        fontWeight: '800',
+        marginBottom: 12,
+      },
+      subtitle: {
+        color: '#a5abd8',
+        fontSize: 16,
+        lineHeight: 24,
+      },
+    });
+    """
+
+    private static let homeScreen = """
+    import { ScreenShell } from '../src/components/ScreenShell';
+
+    export default function HomeScreen() {
+      return (
+        <ScreenShell
+          eyebrow="Expo Router"
+          title="Builder-first tabs"
+          subtitle="Use this starter when you want file-based navigation and honest structural preview diagnostics."
+        />
+      );
+    }
+    """
+
+    private static let activityScreen = """
+    import { ScreenShell } from '../src/components/ScreenShell';
+
+    export default function ActivityScreen() {
+      return (
+        <ScreenShell
+          eyebrow="Activity"
+          title="Track product work"
+          subtitle="Route files live inside app/ so imported Expo Router workspaces stay legible to the builder and preview layers."
+        />
+      );
+    }
+    """
+
+    private static let settingsScreen = """
+    import { ScreenShell } from '../src/components/ScreenShell';
+
+    export default function SettingsScreen() {
+      return (
+        <ScreenShell
+          eyebrow="Settings"
+          title="Tune the starter"
+          subtitle="Swap screens, add nested routes, or connect live data while keeping Expo Router as the primary navigation path."
+        />
+      );
+    }
+    """
+
+    private static let packageJson = """
+    {
+      "name": "my-app",
+      "version": "1.0.0",
+      "main": "expo-router/entry",
+      "scripts": {
+        "start": "expo start",
+        "ios": "expo start --ios",
+        "android": "expo start --android"
+      },
+      "dependencies": {
+        "expo": "~52.0.0",
+        "expo-router": "~4.0.0",
+        "@expo/vector-icons": "^14.0.0",
+        "react": "18.3.1",
+        "react-native": "0.76.0"
+      },
+      "devDependencies": {
+        "@types/react": "~18.3.0",
+        "typescript": "~5.3.0"
+      }
+    }
+    """
+}
+
 enum AuthStarterFiles {
     static let files: [TemplateFileBlueprint] = [
         TemplateFileBlueprint(name: "App.tsx", content: appTsx),

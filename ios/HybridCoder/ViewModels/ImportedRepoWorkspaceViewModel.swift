@@ -7,7 +7,6 @@ final class ImportedRepoWorkspaceViewModel {
     let orchestrator: AIOrchestrator
     let previewCoordinator = PreviewCoordinator()
 
-    private(set) var studioProject: StudioProject?
     private(set) var diagnostics: [ProjectDiagnostic] = []
     private(set) var lastRefreshDate: Date?
 
@@ -17,6 +16,7 @@ final class ImportedRepoWorkspaceViewModel {
     }
 
     var repositoryURL: URL? { workspaceSession.activeRepositoryURL }
+    var studioProject: StudioProject? { workspaceSession.importedStudioProject }
 
     var isExpoWorkspace: Bool {
         if case .expo = workspaceSession.repositoryWorkspaceKind { return true }
@@ -58,19 +58,21 @@ final class ImportedRepoWorkspaceViewModel {
         return "\(project.kind.displayName) · \(navigation) · \(entry)"
     }
 
+    var previewSummary: String {
+        previewCoordinator.readiness.headline
+    }
+
+    var workspaceNotes: [String] {
+        studioProject?.metadata.workspaceNotes ?? []
+    }
+
     func refreshIfNeeded() async {
         guard isExpoWorkspace else { return }
         await refresh()
     }
 
     func refresh() async {
-        guard let root = repositoryURL else { return }
-
-        let importedProject = await ProjectValidationService.loadImportedProject(
-            at: root,
-            repoAccess: orchestrator.repoAccess
-        )
-        studioProject = importedProject
+        guard let importedProject = await workspaceSession.refreshImportedWorkspaceProject() else { return }
         await previewCoordinator.validate(project: importedProject)
         diagnostics = previewCoordinator.diagnostics
         lastRefreshDate = Date()

@@ -23,6 +23,7 @@ enum TemplateScaffoldBuilder {
     private static func buildProject(from template: TemplateManifest, spec: NewProjectSpec) -> StudioProject {
         let projectName = spec.effectiveName
         let slug = slugified(projectName)
+        let resolvedNavigationPreset = spec.navigationPreset == .none ? template.navigationPreset : spec.navigationPreset
         let files = template.files.map { blueprint in
             StudioProjectFile(
                 path: blueprint.name,
@@ -36,19 +37,23 @@ enum TemplateScaffoldBuilder {
             )
         }
 
-        let dependencyProfile = inferDependencyProfile(from: files, navigationPreset: template.navigationPreset)
+        let dependencyProfile = inferDependencyProfile(
+            from: files,
+            navigationPreset: resolvedNavigationPreset,
+            expectedDependencies: template.dependencyExpectations
+        )
         let metadata = StudioProjectMetadata(
             kind: spec.kind,
             source: spec.source,
             template: template.templateReference,
-            navigationPreset: spec.navigationPreset == .none ? template.navigationPreset : spec.navigationPreset,
+            navigationPreset: resolvedNavigationPreset,
             dependencyProfile: dependencyProfile,
             previewState: .notValidated,
             entryFile: spec.preferredEntryFile ?? files.first(where: \.isEntryCandidate)?.path,
             workspaceNotes: spec.workspaceNotes + [
                 "Scaffolded from \(template.name).",
                 "Primary stack: React Native / Expo."
-            ]
+            ] + template.workspaceNotes
         )
 
         return StudioProject(
@@ -84,14 +89,18 @@ enum TemplateScaffoldBuilder {
 
     private static func inferDependencyProfile(
         from files: [StudioProjectFile],
-        navigationPreset: NavigationPreset
+        navigationPreset: NavigationPreset,
+        expectedDependencies: [String]
     ) -> RNDependencyProfile {
         let combinedContent = files.map(\.content).joined(separator: "\n")
+        let expectedCustomDependencies = expectedDependencies.filter { dep in
+            !["expo", "react", "react-native", "typescript"].contains(where: { dep.hasPrefix($0) })
+        }
         return RNDependencyProfile(
             hasNavigation: navigationPreset != .none || combinedContent.contains("@react-navigation"),
             hasAsyncStorage: combinedContent.contains("AsyncStorage"),
             hasExpoRouter: files.contains { $0.path.hasPrefix("app/") } || combinedContent.contains("expo-router"),
-            customDependencies: []
+            customDependencies: expectedCustomDependencies
         )
     }
 

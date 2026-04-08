@@ -79,7 +79,7 @@ final class AppViewModel {
 
     var activeWorkspaceLabel: String {
         if let url = activeRepositoryURL {
-            return url.lastPathComponent
+            return workspaceSession.repositoryDisplayName.isEmpty ? url.lastPathComponent : workspaceSession.repositoryDisplayName
         }
         if let prototype = sandboxViewModel.activeStudioProject {
             return "\(prototype.name) (Prototype)"
@@ -96,7 +96,10 @@ final class AppViewModel {
     }
 
     var sandboxNavigationTitle: String {
-        activeSandboxWorkspace?.title ?? "Sandbox"
+        if activeRepositoryURL != nil {
+            return workspaceSession.repositoryDisplayName
+        }
+        return activeSandboxWorkspace?.title ?? "Sandbox"
     }
 
     init() {

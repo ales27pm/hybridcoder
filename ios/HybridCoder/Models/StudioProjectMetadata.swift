@@ -55,9 +55,30 @@ nonisolated struct TemplateReference: Codable, Sendable, Hashable {
 nonisolated enum ProjectPreviewState: String, Codable, Sendable, Hashable {
     case notValidated
     case validating
+    case diagnosticsOnly
     case structuralReady
     case validationFailed
     case runtimeReady
+
+    var displayName: String {
+        switch self {
+        case .notValidated: return "Not Validated"
+        case .validating: return "Validating"
+        case .diagnosticsOnly: return "Diagnostics Only"
+        case .structuralReady: return "Structural Preview Ready"
+        case .validationFailed: return "Validation Failed"
+        case .runtimeReady: return "Runtime Ready"
+        }
+    }
+
+    var isPreviewUsable: Bool {
+        switch self {
+        case .structuralReady, .runtimeReady:
+            return true
+        case .notValidated, .validating, .diagnosticsOnly, .validationFailed:
+            return false
+        }
+    }
 }
 
 nonisolated enum NavigationPreset: String, Codable, Sendable, CaseIterable, Hashable {
@@ -143,5 +164,13 @@ nonisolated struct ProjectDiagnostic: Identifiable, Sendable, Hashable {
         case error
         case warning
         case info
+
+        var displayName: String {
+            switch self {
+            case .error: return "Error"
+            case .warning: return "Warning"
+            case .info: return "Info"
+            }
+        }
     }
 }

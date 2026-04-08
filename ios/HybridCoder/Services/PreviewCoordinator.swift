@@ -4,6 +4,7 @@ import OSLog
 @Observable
 @MainActor
 final class PreviewCoordinator {
+    private(set) var report: PreviewCoordinationReport?
     private(set) var state: PreviewState = .idle
     private(set) var diagnostics: [ProjectDiagnostic] = []
     private(set) var structuralSnapshot: StructuralSnapshot?
@@ -20,6 +21,7 @@ final class PreviewCoordinator {
     enum PreviewState: Sendable {
         case idle
         case validating
+        case diagnosticFallback([ProjectDiagnostic])
         case structuralReady(StructuralSnapshot)
         case failed([ProjectDiagnostic])
     }
@@ -38,6 +40,7 @@ final class PreviewCoordinator {
     }
 
     func invalidate() {
+        report = nil
         state = .idle
         diagnostics = []
         structuralSnapshot = nil
@@ -67,18 +70,52 @@ final class PreviewCoordinator {
         let combinedDiagnostics = validation.diagnostics + previewDiagnostics
         diagnostics = combinedDiagnostics
         readiness = PreviewErrorClassifier.classify(project: validation.project, diagnostics: combinedDiagnostics)
+        let validatedProject = validation.project
+            .updatingPreviewState(readiness.state)
+            .appendingWorkspaceNotes([readiness.detail])
+        lastValidatedProject = validatedProject
 
         if readiness.isBlocked {
             state = .failed(combinedDiagnostics)
             logger.notice("Preview blocked for \(project.name, privacy: .public) with \(combinedDiagnostics.count) diagnostics")
+        } else if readiness.state == .diagnosticsOnly {
+            state = .diagnosticFallback(combinedDiagnostics)
+            logger.notice("Preview staying in diagnostics-only mode for \(project.name, privacy: .public)")
         } else {
-            let snapshot = StructuralPreviewEngine.buildSnapshot(from: validation.project)
+            let snapshot = StructuralPreviewEngine.buildSnapshot(from: validatedProject)
             structuralSnapshot = snapshot
             state = .structuralReady(snapshot)
             logger.notice("Preview structural snapshot ready for \(project.name, privacy: .public)")
         }
 
         lastValidationDate = Date()
+        report = PreviewCoordinationReport(
+            projectName: validatedProject.name,
+            readiness: readiness,
+            diagnostics: combinedDiagnostics,
+            workspaceNotes: validatedProject.metadata.workspaceNotes,
+            validatedAt: lastValidationDate ?? Date()
+        )
+    }
+}
+
+nonisolated struct PreviewCoordinationReport: Sendable {
+    let projectName: String
+    let readiness: PreviewErrorClassifier.Readiness
+    let diagnostics: [ProjectDiagnostic]
+    let workspaceNotes: [String]
+    let validatedAt: Date
+
+    var diagnosticSummary: String {
+        let errors = diagnostics.filter { $0.severity == .error }.count
+        let warnings = diagnostics.filter { $0.severity == .warning }.count
+        let infos = diagnostics.filter { $0.severity == .info }.count
+
+        var parts: [String] = []
+        if errors > 0 { parts.append("\(errors) error\(errors == 1 ? "" : "s")") }
+        if warnings > 0 { parts.append("\(warnings) warning\(warnings == 1 ? "" : "s")") }
+        if infos > 0 { parts.append("\(infos) info") }
+        return parts.isEmpty ? "No diagnostics" : parts.joined(separator: ", ")
     }
 }
 

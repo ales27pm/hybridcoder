@@ -47,16 +47,16 @@ struct ProjectHubView: View {
                         .foregroundStyle(Theme.accent)
                 }
 
-                if let url = workspaceViewModel.activeRepositoryURL {
+                if workspaceViewModel.activeRepositoryURL != nil {
                     HStack(spacing: 12) {
-                        Image(systemName: "folder.fill")
+                        Image(systemName: workspaceViewModel.importedStudioProject?.kind.iconName ?? "folder.fill")
                             .font(.title3)
                             .foregroundStyle(Theme.accent)
                             .frame(width: 40, height: 40)
                             .background(Theme.accent.opacity(0.12), in: .rect(cornerRadius: 10))
 
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(url.lastPathComponent)
+                            Text(workspaceViewModel.repositoryDisplayName)
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.white)
 
@@ -69,6 +69,13 @@ struct ProjectHubView: View {
                             Text(workspaceViewModel.repositoryWorkspaceBadgeText)
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(Theme.accent.opacity(0.8))
+
+                            if let project = workspaceViewModel.importedStudioProject {
+                                Text(project.builderSummary)
+                                    .font(.caption2)
+                                    .foregroundStyle(Theme.dimText)
+                                    .lineLimit(2)
+                            }
 
                             Text(workspaceViewModel.repositoryWorkspaceDetailText)
                                 .font(.caption2)

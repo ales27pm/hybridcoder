@@ -24,6 +24,27 @@ struct StudioProjectBuilderTests {
         #expect(project.files.contains { $0.path == "app.json" && $0.content.contains("\"name\": \"Focus Flow\"") })
     }
 
+    @Test func scaffoldBuilderCreatesManifestDrivenExpoRouterWorkspace() {
+        let spec = NewProjectSpec(
+            name: "Route Pilot",
+            templateID: TemplateCatalog.expoRouterTabsStarterID,
+            kind: .expoTS,
+            navigationPreset: .tabs,
+            source: .scaffold
+        )
+
+        let project = TemplateScaffoldBuilder.buildProject(from: spec)
+
+        #expect(project.kind == .expoTS)
+        #expect(project.navigationPreset == .tabs)
+        #expect(project.files.contains { $0.path == "app/_layout.tsx" })
+        #expect(project.files.contains { $0.path == "app/index.tsx" })
+        #expect(project.files.contains { $0.path == "src/components/ScreenShell.tsx" })
+        #expect(project.files.contains { $0.path == "package.json" && $0.content.contains("\"main\": \"expo-router/entry\"") })
+        #expect(project.dependencyProfile.hasExpoRouter)
+        #expect(project.metadata.workspaceNotes.contains { $0.contains("Expected dependencies: expo-router") })
+    }
+
     @Test func sandboxProjectBridgeKeepsLegacyCompatibilityExplicit() {
         let sandboxProject = SandboxProject(
             name: "Legacy Navigation",

@@ -44,7 +44,7 @@ struct RepositorySandboxView: View {
                     .background(Theme.accent.opacity(0.12), in: .rect(cornerRadius: 10))
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(workspaceViewModel.activeRepositoryURL?.lastPathComponent ?? "Repository")
+                    Text(workspaceViewModel.repositoryDisplayName)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
 
@@ -79,6 +79,17 @@ struct RepositorySandboxView: View {
                         .font(.caption2)
                         .foregroundStyle(Theme.accent.opacity(0.8))
                     Text("Prototype state memory remains linked to \(project.name).")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.dimText)
+                        .lineLimit(2)
+                }
+            } else if let importedProject = workspaceViewModel.importedStudioProject,
+                      let note = importedProject.metadata.workspaceNotes.last {
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.accent.opacity(0.8))
+                    Text(note)
                         .font(.caption2)
                         .foregroundStyle(Theme.dimText)
                         .lineLimit(2)

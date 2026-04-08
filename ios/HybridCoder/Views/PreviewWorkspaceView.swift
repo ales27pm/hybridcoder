@@ -12,6 +12,8 @@ struct PreviewWorkspaceView: View {
 
                 if let snapshot = coordinator.structuralSnapshot {
                     structuralPreview(snapshot)
+                } else if case .diagnosticFallback(let diagnostics) = coordinator.state {
+                    diagnosticFallbackView(diagnostics)
                 } else if case .failed(let diagnostics) = coordinator.state {
                     failedPreview(diagnostics)
                 } else if case .validating = coordinator.state {
@@ -137,6 +139,23 @@ struct PreviewWorkspaceView: View {
                 }
             }
 
+            if let report = coordinator.report, !report.workspaceNotes.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("NOTES")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Theme.dimText)
+
+                    ForEach(Array(report.workspaceNotes.suffix(3).enumerated()), id: \.offset) { item in
+                        Text(item.element)
+                            .font(.caption)
+                            .foregroundStyle(Theme.dimText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(Theme.cardBg, in: .rect(cornerRadius: 10))
+                    }
+                }
+            }
+
             VStack(alignment: .leading, spacing: 8) {
                 Text("PREVIEW")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
@@ -160,6 +179,20 @@ struct PreviewWorkspaceView: View {
                 .padding(.vertical, 24)
                 .background(Theme.cardBg, in: .rect(cornerRadius: 14))
             }
+        }
+    }
+
+    private func diagnosticFallbackView(_ diagnostics: [ProjectDiagnostic]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("DIAGNOSTICS-ONLY")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(Theme.dimText)
+
+            Text("This workspace is loaded into the builder model, but HybridCoder is only surfacing structural diagnostics until Expo / React Native support is confirmed.")
+                .font(.caption)
+                .foregroundStyle(Theme.dimText)
+
+            failedPreview(diagnostics)
         }
     }
 
@@ -231,6 +264,8 @@ struct PreviewWorkspaceView: View {
             return "eye"
         case .validating:
             return "clock"
+        case .diagnosticFallback:
+            return "stethoscope"
         case .structuralReady:
             return "checkmark.seal"
         case .failed:
@@ -240,6 +275,8 @@ struct PreviewWorkspaceView: View {
 
     private var statusColor: Color {
         switch coordinator.state {
+        case .diagnosticFallback:
+            return .yellow
         case .structuralReady:
             return .green
         case .failed:

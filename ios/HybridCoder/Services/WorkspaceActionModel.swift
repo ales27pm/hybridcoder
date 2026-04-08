@@ -72,7 +72,9 @@ nonisolated struct AgentExecutionStep: Identifiable, Sendable {
 nonisolated enum AgentWorkspaceAction: Sendable, Equatable {
     case decomposeIntent
     case inspectWorkspaceContext
+    case selectExecutionStrategy
     case validatePatchPlan(operationCount: Int)
+    case coordinateGuardedPatchExecution
     case applyPatchPlan(operationCount: Int)
     case validateReactNativeWorkspace
 }

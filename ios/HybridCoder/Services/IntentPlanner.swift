@@ -1,11 +1,13 @@
 import Foundation
 
-enum IntentPlanner {
+nonisolated enum IntentPlanner {
     static func planPatchExecution(
         goal: String,
         patchPlan: PatchPlan,
         workspace: AgentWorkspaceContext,
+        strategyStatus: AgentExecutionStep.Status = .planned,
         validationStatus: AgentExecutionStep.Status = .planned,
+        coordinationStatus: AgentExecutionStep.Status = .planned,
         applyStatus: AgentExecutionStep.Status = .planned,
         workspaceValidationStatus: AgentExecutionStep.Status = .planned
     ) -> AgentExecutionPlan {
@@ -30,10 +32,22 @@ enum IntentPlanner {
                     detail: workspace.displayName
                 ),
                 AgentExecutionStep(
+                    title: "Select guarded execution strategy",
+                    action: .selectExecutionStrategy,
+                    status: strategyStatus,
+                    detail: "Stay on guarded exact-match patch execution until broader file actions are implemented"
+                ),
+                AgentExecutionStep(
                     title: "Validate exact-match patch plan",
                     action: .validatePatchPlan(operationCount: operationCount),
                     status: validationStatus,
                     detail: "\(operationCount) pending operation\(operationCount == 1 ? "" : "s")"
+                ),
+                AgentExecutionStep(
+                    title: "Coordinate guarded patch execution",
+                    action: .coordinateGuardedPatchExecution,
+                    status: coordinationStatus,
+                    detail: "Sequence preflight validation, apply, and workspace diagnostics through the runtime coordinator"
                 ),
                 AgentExecutionStep(
                     title: "Apply guarded workspace edits",

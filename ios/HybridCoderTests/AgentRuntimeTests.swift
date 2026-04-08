@@ -36,7 +36,11 @@ struct AgentRuntimeTests {
         #expect(report.patchResult.changedFiles.isEmpty)
         #expect(report.patchResult.updatedPlan.operations.map(\.status) == [.failed])
         #expect(report.chatSummary.contains("blocked before writing"))
+        #expect(report.chatSummary.contains("Planner: Guarded exact-match patch strategy."))
+        #expect(report.chatSummary.contains("Coordinator: Preflight blocked before writes."))
         #expect(report.executionPlan.steps.contains { $0.action == .validatePatchPlan(operationCount: 1) && $0.status == .blocked })
+        #expect(report.executionPlan.steps.contains { $0.action == .selectExecutionStrategy && $0.status == .succeeded })
+        #expect(report.executionPlan.steps.contains { $0.action == .coordinateGuardedPatchExecution && $0.status == .blocked })
         #expect(report.executionPlan.steps.contains { $0.action == .applyPatchPlan(operationCount: 1) && $0.status == .skipped })
     }
 
@@ -76,6 +80,9 @@ struct AgentRuntimeTests {
         #expect(report.blockers.isEmpty)
         #expect(report.chatSummary.contains("Prototype Expo workspace"))
         #expect(report.chatSummary.contains("Validation: 1 info"))
+        #expect(report.chatSummary.contains("Coordinator: Validated, applied, and re-checked workspace."))
+        #expect(report.executionPlan.steps.contains { $0.action == .selectExecutionStrategy && $0.status == .succeeded })
+        #expect(report.executionPlan.steps.contains { $0.action == .coordinateGuardedPatchExecution && $0.status == .succeeded })
         #expect(report.executionPlan.steps.contains { $0.action == .validateReactNativeWorkspace && $0.status == .succeeded })
     }
 }

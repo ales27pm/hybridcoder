@@ -5,6 +5,7 @@ enum TemplateCatalog {
     static let blankExpoStarterID = "blank_expo_ts"
     static let tabsStarterID = "tabs_starter"
     static let stackStarterID = "stack_starter"
+    static let expoRouterTabsStarterID = "expo_router_tabs"
 
     static let all: [TemplateManifest] = starters + navigationTemplates + featureTemplates + fullApps
 
@@ -33,6 +34,13 @@ enum TemplateCatalog {
             accentColor: .gray,
             kind: .expoTS,
             navigationPreset: .none,
+            appCategory: .starter,
+            dependencyExpectations: ["expo", "react", "react-native", "typescript"],
+            themeBaseline: .graphite,
+            starterOptions: [
+                TemplateStarterOption(id: "typed-app-entry", title: "Typed app entry", detail: "Start from App.tsx with Expo TypeScript defaults."),
+                TemplateStarterOption(id: "package-scripts", title: "Expo scripts", detail: "Include start / ios / android Expo scripts.")
+            ],
             files: BlankExpoTSFiles.files
         ),
         TemplateManifest(
@@ -44,6 +52,12 @@ enum TemplateCatalog {
             accentColor: .gray,
             kind: .expoJS,
             navigationPreset: .none,
+            appCategory: .starter,
+            dependencyExpectations: ["expo", "react", "react-native"],
+            themeBaseline: .graphite,
+            starterOptions: [
+                TemplateStarterOption(id: "legacy-js-entry", title: "JS entry", detail: "Use App.js to preserve older compatibility flows.")
+            ],
             files: BlankExpoJSFiles.files
         ),
     ]
@@ -58,6 +72,13 @@ enum TemplateCatalog {
             accentColor: .purple,
             kind: .expoTS,
             navigationPreset: .tabs,
+            appCategory: .navigation,
+            dependencyExpectations: ["@react-navigation/native", "@react-navigation/bottom-tabs"],
+            themeBaseline: .midnight,
+            starterOptions: [
+                TemplateStarterOption(id: "tab-shell", title: "Bottom tabs", detail: "Three-screen tab shell with shared dark theme."),
+                TemplateStarterOption(id: "typed-screens", title: "Separate screens", detail: "Keep each screen in its own file.")
+            ],
             files: TabsStarterFiles.files
         ),
         TemplateManifest(
@@ -69,7 +90,32 @@ enum TemplateCatalog {
             accentColor: .blue,
             kind: .expoTS,
             navigationPreset: .stack,
+            appCategory: .navigation,
+            dependencyExpectations: ["@react-navigation/native", "@react-navigation/native-stack"],
+            themeBaseline: .midnight,
+            starterOptions: [
+                TemplateStarterOption(id: "stack-flow", title: "Stack flow", detail: "Multi-screen starter with a details route."),
+                TemplateStarterOption(id: "shared-screen-files", title: "Shared screen files", detail: "Keep screens in src/screens for chat-first editing.")
+            ],
             files: StackStarterFiles.files
+        ),
+        TemplateManifest(
+            id: expoRouterTabsStarterID,
+            name: "Expo Router Tabs",
+            subtitle: "File-based Expo Router scaffold with tab routes and shared screen shell",
+            category: .navigation,
+            iconName: "square.grid.3x1.folder.badge.plus",
+            accentColor: .indigo,
+            kind: .expoTS,
+            navigationPreset: .tabs,
+            appCategory: .navigation,
+            dependencyExpectations: ["expo-router", "@expo/vector-icons"],
+            themeBaseline: .midnight,
+            starterOptions: [
+                TemplateStarterOption(id: "file-based-routing", title: "File-based routing", detail: "Use app/ routes instead of manual navigator wiring."),
+                TemplateStarterOption(id: "shared-shell", title: "Shared screen shell", detail: "Keep visual structure in a reusable component.")
+            ],
+            files: ExpoRouterTabsFiles.files
         ),
     ]
 
@@ -83,6 +129,13 @@ enum TemplateCatalog {
             accentColor: .cyan,
             kind: .expoTS,
             navigationPreset: .none,
+            appCategory: .api,
+            dependencyExpectations: ["expo", "fetch"],
+            themeBaseline: .graphite,
+            starterOptions: [
+                TemplateStarterOption(id: "network-list", title: "API list", detail: "Starter fetches and renders remote content."),
+                TemplateStarterOption(id: "loading-state", title: "Loading state", detail: "Include loading and empty-state structure.")
+            ],
             files: APIClientFiles.files
         ),
         TemplateManifest(
@@ -94,6 +147,13 @@ enum TemplateCatalog {
             accentColor: .orange,
             kind: .expoTS,
             navigationPreset: .stack,
+            appCategory: .auth,
+            dependencyExpectations: ["@react-navigation/native", "@react-navigation/native-stack"],
+            themeBaseline: .midnight,
+            starterOptions: [
+                TemplateStarterOption(id: "mock-auth", title: "Mock auth state", detail: "Ship with a local auth context for iteration."),
+                TemplateStarterOption(id: "auth-screens", title: "Auth screens", detail: "Sign in, sign up, and home views in separate files.")
+            ],
             files: AuthStarterFiles.files
         ),
     ]
@@ -108,6 +168,13 @@ enum TemplateCatalog {
             accentColor: .green,
             kind: .expoTS,
             navigationPreset: .none,
+            appCategory: .productivity,
+            dependencyExpectations: ["expo", "react-native"],
+            themeBaseline: .aurora,
+            starterOptions: [
+                TemplateStarterOption(id: "task-crud", title: "Task CRUD", detail: "Add, update, and display task state across files."),
+                TemplateStarterOption(id: "persistent-friendly", title: "Persistence-ready shape", detail: "Structure the app for future AsyncStorage wiring.")
+            ],
             files: TodoAppFiles.files
         ),
         TemplateManifest(
@@ -119,6 +186,13 @@ enum TemplateCatalog {
             accentColor: .yellow,
             kind: .expoTS,
             navigationPreset: .tabs,
+            appCategory: .productivity,
+            dependencyExpectations: ["@react-navigation/native", "@react-navigation/bottom-tabs"],
+            themeBaseline: .aurora,
+            starterOptions: [
+                TemplateStarterOption(id: "notes-screen", title: "Notes screen", detail: "Dedicated notes workflow scaffold."),
+                TemplateStarterOption(id: "tasks-screen", title: "Tasks screen", detail: "Dedicated tasks workflow scaffold.")
+            ],
             files: NotesTasksFiles.files
         ),
         TemplateManifest(
@@ -130,6 +204,13 @@ enum TemplateCatalog {
             accentColor: .indigo,
             kind: .expoTS,
             navigationPreset: .tabs,
+            appCategory: .dashboard,
+            dependencyExpectations: ["@react-navigation/native", "@react-navigation/bottom-tabs"],
+            themeBaseline: .midnight,
+            starterOptions: [
+                TemplateStarterOption(id: "metric-cards", title: "Metric cards", detail: "Starter cards for KPIs and activity."),
+                TemplateStarterOption(id: "dashboard-tabs", title: "Dashboard tabs", detail: "Split overview and activity into separate screens.")
+            ],
             files: DashboardFiles.files
         ),
     ]

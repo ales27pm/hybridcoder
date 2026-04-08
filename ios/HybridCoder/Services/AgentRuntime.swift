@@ -1,5 +1,15 @@
 import Foundation
 
+nonisolated struct AgentPlannerLayerSummary: Sendable {
+    let strategy: String
+    let detail: String
+}
+
+nonisolated struct AgentCoordinatorLayerSummary: Sendable {
+    let phase: String
+    let detail: String
+}
+
 nonisolated struct AgentRuntimeReport: Sendable {
     let executionPlan: AgentExecutionPlan
     let patchResult: PatchEngine.PatchResult
@@ -7,6 +17,8 @@ nonisolated struct AgentRuntimeReport: Sendable {
     let workspaceDiagnostics: [ProjectDiagnostic]
     let didExecuteWorkspaceActions: Bool
     let blockers: [String]
+    let plannerSummary: AgentPlannerLayerSummary
+    let coordinatorSummary: AgentCoordinatorLayerSummary
 
     var chatSummary: String {
         let changedCount = patchResult.changedFiles.count
@@ -23,6 +35,8 @@ nonisolated struct AgentRuntimeReport: Sendable {
         }
 
         lines.append("Workspace focus: \(executionPlan.workspace.displayName).")
+        lines.append("Planner: \(plannerSummary.strategy).")
+        lines.append("Coordinator: \(coordinatorSummary.phase).")
 
         if changedCount > 0 {
             let changedFiles = patchResult.changedFiles.prefix(4).joined(separator: ", ")
@@ -62,7 +76,9 @@ nonisolated enum AgentRuntime {
             goal: goal,
             patchPlan: patchPlan,
             workspace: workspace,
+            strategyStatus: .succeeded,
             validationStatus: .blocked,
+            coordinationStatus: .blocked,
             applyStatus: .skipped,
             workspaceValidationStatus: workspaceDiagnostics.isEmpty ? .succeeded : .blocked
         )
@@ -96,7 +112,15 @@ nonisolated enum AgentRuntime {
             preflightFailures: preflightFailures,
             workspaceDiagnostics: workspaceDiagnostics,
             didExecuteWorkspaceActions: false,
-            blockers: preflightFailures.map { "\($0.filePath): \($0.reason)" }
+            blockers: preflightFailures.map { "\($0.filePath): \($0.reason)" },
+            plannerSummary: .init(
+                strategy: "Guarded exact-match patch strategy",
+                detail: "Planner stayed on the existing patch-plan lane for \(workspace.displayName.lowercased())."
+            ),
+            coordinatorSummary: .init(
+                phase: "Preflight blocked before writes",
+                detail: "Coordinator validated the patch plan, found blockers, and stopped before changing files."
+            )
         )
     }
 
@@ -111,7 +135,9 @@ nonisolated enum AgentRuntime {
             goal: goal,
             patchPlan: patchPlan,
             workspace: workspace,
+            strategyStatus: .succeeded,
             validationStatus: .succeeded,
+            coordinationStatus: .succeeded,
             applyStatus: patchResult.failures.isEmpty ? .succeeded : .blocked,
             workspaceValidationStatus: workspaceDiagnostics.contains { $0.severity == .error } ? .blocked : .succeeded
         )
@@ -122,7 +148,15 @@ nonisolated enum AgentRuntime {
             preflightFailures: [],
             workspaceDiagnostics: workspaceDiagnostics,
             didExecuteWorkspaceActions: !patchResult.changedFiles.isEmpty,
-            blockers: patchResult.failures.map { "\($0.filePath): \($0.reason)" }
+            blockers: patchResult.failures.map { "\($0.filePath): \($0.reason)" },
+            plannerSummary: .init(
+                strategy: "Guarded exact-match patch strategy",
+                detail: "Planner selected guarded patch execution instead of claiming broader file autonomy."
+            ),
+            coordinatorSummary: .init(
+                phase: "Validated, applied, and re-checked workspace",
+                detail: "Coordinator ran preflight validation, applied the patch plan, then collected workspace diagnostics."
+            )
         )
     }
 }

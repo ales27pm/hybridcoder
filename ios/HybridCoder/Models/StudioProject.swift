@@ -32,6 +32,33 @@ nonisolated struct StudioProject: Identifiable, Codable, Sendable, Hashable {
     var previewState: ProjectPreviewState { metadata.previewState }
     var entryFile: String? { metadata.entryFile ?? files.first(where: \.isEntryCandidate)?.path }
     var fileCount: Int { files.count }
+    var isImportedWorkspace: Bool { source == .imported }
+    var isPrototypeWorkspace: Bool { source == .scaffold || source == .duplicated || source == .legacySandbox }
+
+    var builderWorkspaceLabel: String {
+        switch source {
+        case .imported:
+            return kind == .importedExpo ? "Imported Expo Workspace" : "Imported Workspace"
+        case .scaffold:
+            return "Scaffolded Expo Project"
+        case .duplicated:
+            return "Duplicated Builder Project"
+        case .legacySandbox:
+            return "Compatibility Builder Project"
+        }
+    }
+
+    var builderSummary: String {
+        let entry = entryFile ?? "entry unresolved"
+        return "\(builderWorkspaceLabel) · \(kind.displayName) · \(navigationPreset.displayName) · \(entry)"
+    }
+
+    var previewGuidance: String {
+        if kind.isExpo {
+            return "HybridCoder preview remains structural and diagnostic. Run Expo against the same folder on your Mac for a live runtime."
+        }
+        return "This workspace stays in diagnostics-only preview fallback until Expo / React Native support is confirmed."
+    }
 
     func updatingPreviewState(_ previewState: ProjectPreviewState, notes: [String]? = nil) -> StudioProject {
         var copy = self
@@ -39,6 +66,17 @@ nonisolated struct StudioProject: Identifiable, Codable, Sendable, Hashable {
         if let notes {
             copy.metadata.workspaceNotes = notes
         }
+        return copy
+    }
+
+    func appendingWorkspaceNotes(_ notes: [String]) -> StudioProject {
+        guard !notes.isEmpty else { return self }
+        var copy = self
+        var merged = copy.metadata.workspaceNotes
+        for note in notes where !note.isEmpty && !merged.contains(note) {
+            merged.append(note)
+        }
+        copy.metadata.workspaceNotes = merged
         return copy
     }
 

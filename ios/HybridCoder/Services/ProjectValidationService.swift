@@ -98,6 +98,9 @@ enum ProjectValidationService {
                 detection.isExpo
                     ? "Imported Expo / React Native workspace."
                     : "Imported generic repository fallback.",
+                detection.hasExpoRouter
+                    ? "Expo Router structure detected in the imported workspace."
+                    : "Navigation is inferred from the imported workspace files and dependencies.",
                 "Preview remains structural and diagnostic unless a real Expo runtime is running outside the app."
             ]
         )

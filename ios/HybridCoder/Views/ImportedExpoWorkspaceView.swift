@@ -83,6 +83,19 @@ struct ImportedExpoWorkspaceView: View {
             HStack(spacing: 8) {
                 metadataChip(icon: "bubble.left.and.bubble.right", text: viewModel.chatContextSummary)
                 metadataChip(icon: "shippingbox", text: viewModel.dependencySummary)
+                metadataChip(icon: "eye", text: viewModel.previewSummary)
+            }
+
+            if let note = viewModel.workspaceNotes.last {
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.accent.opacity(0.8))
+                    Text(note)
+                        .font(.caption2)
+                        .foregroundStyle(Theme.dimText)
+                        .lineLimit(2)
+                }
             }
         }
         .padding(.horizontal, 16)

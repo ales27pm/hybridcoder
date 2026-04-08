@@ -42,12 +42,29 @@ final class WorkspaceSessionViewModel {
                 return packageSegment + entrySegment + "Edit this repo directly, then run expo start against the same folder on your Mac for live reload."
             }
         }
+
+        init(project: StudioProject?) {
+            guard let project else {
+                self = .unknown
+                return
+            }
+
+            switch project.kind {
+            case .importedExpo:
+                self = .expo(packageName: project.name, entryFile: project.entryFile)
+            case .importedGeneric:
+                self = .generic
+            case .expoTS, .expoJS:
+                self = .expo(packageName: project.name, entryFile: project.entryFile)
+            }
+        }
     }
 
     var selectedFile: FileNode?
     var activeRepositoryURL: URL?
     var fileTree: FileNode?
     var repositoryWorkspaceKind: RepositoryWorkspaceKind = .unknown
+    private(set) var importedStudioProject: StudioProject?
 
     let orchestrator: AIOrchestrator
     let repoWorkspaceBootstrapper: RepoWorkspaceBootstrapper
@@ -74,6 +91,9 @@ final class WorkspaceSessionViewModel {
 
     var repositoryWorkspaceBadgeText: String { repositoryWorkspaceKind.badgeText }
     var repositoryWorkspaceDetailText: String { repositoryWorkspaceKind.detailText }
+    var repositoryDisplayName: String {
+        importedStudioProject?.name ?? activeRepositoryURL?.lastPathComponent ?? "Repository"
+    }
 
     func activeSandboxWorkspace(prototype: StudioProject?) -> SandboxWorkspace? {
         if let url = activeRepositoryURL { return .repository(url) }
@@ -113,6 +133,7 @@ final class WorkspaceSessionViewModel {
         activeRepositoryURL = url
         selectedFile = nil
         fileTree = nil
+        importedStudioProject = nil
         repositoryWorkspaceKind = .unknown
         orchestrator.setPolicyWorkingContext(url)
 
@@ -130,9 +151,9 @@ final class WorkspaceSessionViewModel {
                 guard isActiveSession(id: sessionID, url: url) else { return }
                 fileTree = builtTree
 
-                let workspaceKind = await inspectRepositoryWorkspace(at: url)
+                let importedProject = await refreshImportedWorkspaceProject(at: url)
                 guard isActiveSession(id: sessionID, url: url) else { return }
-                repositoryWorkspaceKind = workspaceKind
+                repositoryWorkspaceKind = .init(project: importedProject)
 
                 try await orchestrator.importRepo(url: url)
                 guard isActiveSession(id: sessionID, url: url) else { return }
@@ -151,6 +172,7 @@ final class WorkspaceSessionViewModel {
                 guard isActiveSession(id: sessionID, url: url) else { return }
                 studioContainer.importError = "Failed to import \(repository.name): \(error.localizedDescription)"
                 fileTree = nil
+                importedStudioProject = nil
                 repositoryWorkspaceKind = .unknown
             }
         }
@@ -212,6 +234,7 @@ final class WorkspaceSessionViewModel {
         activeRepositoryURL = nil
         fileTree = nil
         selectedFile = nil
+        importedStudioProject = nil
         repositoryWorkspaceKind = .unknown
         studioContainer.clearWorkspacePresentationState()
     }
@@ -227,7 +250,18 @@ final class WorkspaceSessionViewModel {
         refreshFileTree()
         Task {
             await orchestrator.refreshRepositoryWorkspaceAfterChanges()
+            _ = await refreshImportedWorkspaceProject()
         }
+    }
+
+    @discardableResult
+    func refreshImportedWorkspaceProject() async -> StudioProject? {
+        guard let root = activeRepositoryURL else {
+            importedStudioProject = nil
+            repositoryWorkspaceKind = .unknown
+            return nil
+        }
+        return await refreshImportedWorkspaceProject(at: root)
     }
 
     private func cancelRepositoryLoad(stopActiveResource: Bool) {
@@ -284,42 +318,10 @@ final class WorkspaceSessionViewModel {
         return NSString(string: normalized).standardizingPath.replacingOccurrences(of: "\\", with: "/")
     }
 
-    private func inspectRepositoryWorkspace(at url: URL) async -> RepositoryWorkspaceKind {
-        let packageURL = url.appendingPathComponent("package.json")
-        let appJSONURL = url.appendingPathComponent("app.json")
-        let appConfigJSURL = url.appendingPathComponent("app.config.js")
-        let appConfigTSURL = url.appendingPathComponent("app.config.ts")
-        let entryCandidates = ["App.tsx", "App.js", "index.ts", "index.tsx", "index.js"]
-        let fileManager = FileManager.default
-
-        var packageName: String?
-        var hasExpoDependency = false
-
-        if let packageData = await orchestrator.repoAccess.readData(at: packageURL),
-           let root = try? JSONSerialization.jsonObject(with: packageData) as? [String: Any] {
-            packageName = root["name"] as? String
-
-            let dependencyBlocks = [root["dependencies"], root["devDependencies"], root["peerDependencies"]]
-                .compactMap { $0 as? [String: Any] }
-
-            hasExpoDependency = dependencyBlocks.contains { $0.keys.contains("expo") }
-
-            if !hasExpoDependency,
-               let scripts = root["scripts"] as? [String: String] {
-                hasExpoDependency = scripts.values.contains { $0.localizedCaseInsensitiveContains("expo") }
-            }
-        }
-
-        let hasExpoConfig = [appJSONURL, appConfigJSURL, appConfigTSURL].contains {
-            fileManager.fileExists(atPath: $0.path(percentEncoded: false))
-        }
-
-        let entryFile = entryCandidates.first {
-            fileManager.fileExists(atPath: url.appendingPathComponent($0).path(percentEncoded: false))
-        }
-
-        return (hasExpoDependency || hasExpoConfig)
-            ? .expo(packageName: packageName, entryFile: entryFile)
-            : .generic
+    private func refreshImportedWorkspaceProject(at url: URL) async -> StudioProject {
+        let project = await ProjectValidationService.loadImportedProject(at: url, repoAccess: orchestrator.repoAccess)
+        importedStudioProject = project
+        repositoryWorkspaceKind = .init(project: project)
+        return project
     }
 }
