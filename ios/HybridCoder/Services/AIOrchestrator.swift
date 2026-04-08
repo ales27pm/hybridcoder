@@ -35,6 +35,7 @@ final class AIOrchestrator {
         case foundationModel
         case qwenCodeGeneration
         case qwenCodeAssistant
+        case agentRuntime
         case patchEngine
     }
 
@@ -743,6 +744,7 @@ final class AIOrchestrator {
     nonisolated static func expectedExecutionProviders(
         for route: Route,
         executesPatch: Bool = false,
+        usesAgentRuntime: Bool = false,
         includesRouteClassifier: Bool = true,
         explanationProvider: ExecutionProvider = .foundationModel
     ) -> [ExecutionProvider] {
@@ -753,9 +755,13 @@ final class AIOrchestrator {
         case .codeGeneration:
             providers = [.semanticSearch, .qwenCodeGeneration]
         case .patchPlanning:
-            providers = executesPatch
-                ? [.semanticSearch, .foundationModel, .patchEngine]
-                : [.semanticSearch, .foundationModel]
+            if executesPatch, usesAgentRuntime {
+                providers = [.semanticSearch, .foundationModel, .agentRuntime, .patchEngine]
+            } else if executesPatch {
+                providers = [.semanticSearch, .foundationModel, .patchEngine]
+            } else {
+                providers = [.semanticSearch, .foundationModel]
+            }
         case .search:
             providers = [.semanticSearch]
         }
@@ -1098,12 +1104,136 @@ final class AIOrchestrator {
         return result
     }
 
+    func executePatchPlanWithAgentRuntime(_ plan: PatchPlan, userGoal: String?) async throws -> AgentRuntimeReport {
+        guard let engine = patchEngine, let root = repoRoot else {
+            throw OrchestratorError.repoNotLoaded
+        }
+
+        if activeWorkspaceSource == .prototype, let project = activePrototypeProject {
+            Self.materializePrototypeFiles(project, to: root)
+        }
+
+        let trimmedGoal = userGoal?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let goal = trimmedGoal.isEmpty ? plan.summary : trimmedGoal
+        let workspace = await agentWorkspaceContext(repoRoot: root)
+        let preflightFailures = await engine.validate(plan, repoRoot: root)
+
+        if !preflightFailures.isEmpty {
+            recordExecutionTrace(route: .patchPlanning, executesPatch: true, usesAgentRuntime: true, includesRouteClassifier: false)
+            let diagnostics = await validateActiveWorkspaceForAgentRuntime(repoRoot: root)
+            return AgentRuntime.makeBlockedPatchReport(
+                goal: goal,
+                patchPlan: plan,
+                workspace: workspace,
+                preflightFailures: preflightFailures,
+                workspaceDiagnostics: diagnostics
+            )
+        }
+
+        let result = try await applyPatch(plan)
+        let diagnostics = await validateActiveWorkspaceForAgentRuntime(repoRoot: root)
+        recordExecutionTrace(route: .patchPlanning, executesPatch: true, usesAgentRuntime: true, includesRouteClassifier: false)
+
+        return AgentRuntime.makeAppliedPatchReport(
+            goal: goal,
+            patchPlan: plan,
+            workspace: workspace,
+            patchResult: result,
+            workspaceDiagnostics: diagnostics
+        )
+    }
+
     func validatePatch(_ plan: PatchPlan) async -> [PatchEngine.OperationFailure] {
         guard let engine = patchEngine, let root = repoRoot else { return [] }
         if activeWorkspaceSource == .prototype, let project = activePrototypeProject {
             Self.materializePrototypeFiles(project, to: root)
         }
         return await engine.validate(plan, repoRoot: root)
+    }
+
+    private func agentWorkspaceContext(repoRoot root: URL) async -> AgentWorkspaceContext {
+        if activeWorkspaceSource == .prototype, let project = activePrototypeProject {
+            let fileNames = project.files.map(\.name)
+            let entryFile = Self.firstReactNativeEntryFile(in: fileNames)
+            let usesTypeScript = fileNames.contains { path in
+                path.hasSuffix(".tsx") || path.hasSuffix(".ts")
+            }
+
+            return AgentWorkspaceContext(
+                kind: .prototype,
+                projectName: project.name,
+                projectKind: usesTypeScript ? .expoTS : .expoJS,
+                entryFile: entryFile,
+                hasExpoRouter: fileNames.contains { $0.hasPrefix("app/") },
+                dependencies: []
+            )
+        }
+
+        if activeWorkspaceSource == .repository {
+            let detection = await ExpoProjectDetector.detect(at: root, repoAccess: repoAccess)
+            return AgentWorkspaceContext(
+                kind: detection.isExpo ? .importedExpo : .importedGeneric,
+                projectName: detection.packageName ?? root.lastPathComponent,
+                projectKind: detection.projectKind,
+                entryFile: detection.entryFile,
+                hasExpoRouter: detection.hasExpoRouter,
+                dependencies: detection.dependencies
+            )
+        }
+
+        return AgentWorkspaceContext(
+            kind: .unknown,
+            projectName: root.lastPathComponent,
+            projectKind: nil,
+            entryFile: nil,
+            hasExpoRouter: false,
+            dependencies: []
+        )
+    }
+
+    private func validateActiveWorkspaceForAgentRuntime(repoRoot root: URL) async -> [ProjectDiagnostic] {
+        if activeWorkspaceSource == .prototype, let project = activePrototypeProject {
+            return ProjectValidationService.validate(project: project).diagnostics
+        }
+
+        if activeWorkspaceSource == .repository {
+            let detection = await ExpoProjectDetector.detect(at: root, repoAccess: repoAccess)
+            var diagnostics: [ProjectDiagnostic] = []
+
+            if !detection.isExpo {
+                diagnostics.append(ProjectDiagnostic(
+                    severity: .warning,
+                    message: "Imported workspace is not recognized as Expo. Agent runtime will stay on guarded patch actions until Expo support is confirmed.",
+                    filePath: nil
+                ))
+            }
+
+            if detection.isExpo, detection.entryFile == nil {
+                diagnostics.append(ProjectDiagnostic(
+                    severity: .warning,
+                    message: "Expo workspace has no obvious React Native entry file.",
+                    filePath: nil
+                ))
+            }
+
+            if detection.isExpo, detection.dependencies.contains("expo") == false {
+                diagnostics.append(ProjectDiagnostic(
+                    severity: .info,
+                    message: "Expo config was detected, but package.json does not list an expo dependency.",
+                    filePath: "package.json"
+                ))
+            }
+
+            return diagnostics
+        }
+
+        return [
+            ProjectDiagnostic(
+                severity: .warning,
+                message: "No active React Native / Expo workspace is loaded for agent-runtime validation.",
+                filePath: nil
+            )
+        ]
     }
 
     private func resolveRoute(for query: String) async throws -> RouteResolution {
@@ -1138,7 +1268,7 @@ final class AIOrchestrator {
             switch provider {
             case .qwenCodeAssistant, .qwenCodeGeneration:
                 return qwenContext
-            case .routeClassifier, .semanticSearch, .foundationModel, .patchEngine:
+            case .routeClassifier, .semanticSearch, .foundationModel, .agentRuntime, .patchEngine:
                 return context
             }
         }
@@ -1382,6 +1512,13 @@ final class AIOrchestrator {
         return results
     }
 
+    nonisolated static func firstReactNativeEntryFile(in fileNames: [String]) -> String? {
+        let entryCandidates = ["App.tsx", "App.js", "App.ts", "index.tsx", "index.ts", "index.js", "app/_layout.tsx", "app/_layout.js"]
+        return entryCandidates.first { candidate in
+            fileNames.contains(candidate)
+        }
+    }
+
     nonisolated static func clipWrappedSection(
         openingTag: String,
         body: String,
@@ -1543,6 +1680,7 @@ final class AIOrchestrator {
     private func recordExecutionTrace(
         route: Route,
         executesPatch: Bool = false,
+        usesAgentRuntime: Bool = false,
         includesRouteClassifier: Bool = true,
         explanationProvider: ExecutionProvider = .foundationModel
     ) {
@@ -1550,6 +1688,7 @@ final class AIOrchestrator {
         lastExecutionProviders = Self.expectedExecutionProviders(
             for: route,
             executesPatch: executesPatch,
+            usesAgentRuntime: usesAgentRuntime,
             includesRouteClassifier: includesRouteClassifier,
             explanationProvider: explanationProvider
         )

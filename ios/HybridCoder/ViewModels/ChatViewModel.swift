@@ -18,6 +18,7 @@ final class ChatViewModel {
     private(set) var currentRoute: Route?
     private(set) var patchPlans: [PatchPlan] = []
     private(set) var lastPatchResult: PatchEngine.PatchResult?
+    private(set) var lastAgentRuntimeReport: AgentRuntimeReport?
     private(set) var errorMessage: String?
     private(set) var memorySummary: String?
     private(set) var estimatedConversationTokens: Int = 0
@@ -180,8 +181,10 @@ final class ChatViewModel {
         )
 
         do {
-            let result = try await orchestrator.applyPatch(singlePlan)
+            let report = try await orchestrator.executePatchPlanWithAgentRuntime(singlePlan, userGoal: activeTaskSummary)
+            let result = report.patchResult
             lastPatchResult = result
+            lastAgentRuntimeReport = report
 
             var updatedPlan = patchPlans[planIndex]
             for op in result.updatedPlan.operations where op.id == operationID {
@@ -190,12 +193,14 @@ final class ChatViewModel {
             patchPlans[planIndex] = updatedPlan
 
             let fileName = plan.operations.first { $0.id == operationID }?.filePath ?? "file"
-            appendSystemMessage("Applied patch to \(fileName)")
-            recordFileOperationSummary("Applied patch to \(fileName)")
+            appendSystemMessage(report.chatSummary)
+            recordFileOperationSummary(report.chatSummary)
             mergeActiveFiles([fileName])
-            latestBuildOrRuntimeError = nil
+            latestBuildOrRuntimeError = report.blockers.first
             refreshPendingPatchSummary()
-            onPatchApplied?()
+            if report.didExecuteWorkspaceActions {
+                onPatchApplied?()
+            }
         } catch {
             appendSystemMessage("Patch failed: \(error.localizedDescription)")
             recordFileOperationSummary("Patch failed: \(error.localizedDescription)")
@@ -209,14 +214,22 @@ final class ChatViewModel {
         isStreaming = true
 
         do {
-            let result = try await orchestrator.applyPatch(patchPlans[planIndex])
+            let report = try await orchestrator.executePatchPlanWithAgentRuntime(
+                patchPlans[planIndex],
+                userGoal: activeTaskSummary
+            )
+            let result = report.patchResult
             lastPatchResult = result
+            lastAgentRuntimeReport = report
             patchPlans[planIndex] = result.updatedPlan
-            appendSystemMessage("Patch result: \(result.summary)")
-            recordFileOperationSummary("Patch result: \(result.summary)")
-            latestBuildOrRuntimeError = nil
+            appendSystemMessage(report.chatSummary)
+            recordFileOperationSummary(report.chatSummary)
+            mergeActiveFiles(result.changedFiles)
+            latestBuildOrRuntimeError = report.blockers.first
             refreshPendingPatchSummary()
-            onPatchApplied?()
+            if report.didExecuteWorkspaceActions {
+                onPatchApplied?()
+            }
         } catch {
             appendSystemMessage("Patch failed: \(error.localizedDescription)")
             recordFileOperationSummary("Patch failed: \(error.localizedDescription)")
@@ -246,6 +259,7 @@ final class ChatViewModel {
         errorMessage = nil
         patchPlans.removeAll()
         lastPatchResult = nil
+        lastAgentRuntimeReport = nil
         memorySummary = nil
         estimatedConversationTokens = 0
         conversationTurns.removeAll()

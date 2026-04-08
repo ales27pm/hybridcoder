@@ -364,6 +364,7 @@ struct ChatView: View {
         case .foundationModel: return "brain.head.profile"
         case .qwenCodeGeneration: return "hammer"
         case .qwenCodeAssistant: return "curlybraces"
+        case .agentRuntime: return "point.3.connected.trianglepath.dotted"
         case .patchEngine: return "doc.badge.gearshape"
         }
     }
@@ -375,6 +376,7 @@ struct ChatView: View {
         case .foundationModel: return "FM"
         case .qwenCodeGeneration: return "Qwen"
         case .qwenCodeAssistant: return "Qwen"
+        case .agentRuntime: return "Agent"
         case .patchEngine: return "Patch"
         }
     }
@@ -386,6 +388,7 @@ struct ChatView: View {
         case .foundationModel: return Theme.accent
         case .qwenCodeGeneration: return .orange
         case .qwenCodeAssistant: return .orange
+        case .agentRuntime: return .mint
         case .patchEngine: return .yellow
         }
     }
