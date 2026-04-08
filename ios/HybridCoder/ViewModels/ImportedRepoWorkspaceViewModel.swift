@@ -6,9 +6,11 @@ final class ImportedRepoWorkspaceViewModel {
     let workspaceSession: WorkspaceSessionViewModel
     let orchestrator: AIOrchestrator
     let previewCoordinator = PreviewCoordinator()
+    let rnPreviewViewModel = RNPreviewViewModel()
 
     private(set) var diagnostics: [ProjectDiagnostic] = []
     private(set) var lastRefreshDate: Date?
+    private(set) var rnPreviewLoaded: Bool = false
 
     init(workspaceSession: WorkspaceSessionViewModel, orchestrator: AIOrchestrator) {
         self.workspaceSession = workspaceSession
@@ -76,5 +78,18 @@ final class ImportedRepoWorkspaceViewModel {
         await previewCoordinator.validate(project: importedProject)
         diagnostics = previewCoordinator.diagnostics
         lastRefreshDate = Date()
+    }
+
+    func loadRNPreviewIfNeeded() async {
+        guard let project = studioProject, !rnPreviewLoaded else { return }
+        await rnPreviewViewModel.loadPreview(for: project)
+        rnPreviewLoaded = true
+    }
+
+    func reloadRNPreview() async {
+        guard let project = studioProject else { return }
+        rnPreviewLoaded = false
+        await rnPreviewViewModel.reparse(project: project)
+        rnPreviewLoaded = true
     }
 }

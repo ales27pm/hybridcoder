@@ -23,10 +23,15 @@ struct ImportedExpoWorkspaceView: View {
             case .files:
                 fileList
             case .preview:
-                PreviewWorkspaceView(
-                    coordinator: viewModel.previewCoordinator,
-                    workspaceName: viewModel.displayName,
-                    onRefresh: { Task { await viewModel.refresh() } }
+                ImportedPreviewTab(
+                    viewModel: viewModel,
+                    onNavigateToFile: { path in
+                        if let tree = viewModel.workspaceSession.fileTree,
+                           let node = findFileByPath(in: tree, path: path) {
+                            viewModel.workspaceSession.selectSandboxRepositoryFile(node)
+                            selectedTab = .code
+                        }
+                    }
                 )
             case .diagnostics:
                 diagnosticsView
@@ -305,5 +310,146 @@ struct ImportedExpoWorkspaceView: View {
         case .warning: return .orange
         case .info: return Theme.accent
         }
+    }
+
+    private func findFileByPath(in node: FileNode, path: String) -> FileNode? {
+        if !node.isDirectory {
+            let nodePath = node.url.lastPathComponent
+            if nodePath == path || node.url.path(percentEncoded: false).hasSuffix(path) {
+                return node
+            }
+        }
+        for child in node.children {
+            if let found = findFileByPath(in: child, path: path) {
+                return found
+            }
+        }
+        return nil
+    }
+}
+
+private struct ImportedPreviewTab: View {
+    @Bindable var viewModel: ImportedRepoWorkspaceViewModel
+    let onNavigateToFile: (String) -> Void
+
+    var body: some View {
+        Group {
+            if let project = viewModel.studioProject {
+                importedPreviewContent(project)
+            } else {
+                PreviewWorkspaceView(
+                    coordinator: viewModel.previewCoordinator,
+                    workspaceName: viewModel.displayName,
+                    onRefresh: { Task { await viewModel.refresh() } }
+                )
+            }
+        }
+        .task {
+            await viewModel.loadRNPreviewIfNeeded()
+        }
+    }
+
+    @ViewBuilder
+    private func importedPreviewContent(_ project: StudioProject) -> some View {
+        switch viewModel.rnPreviewViewModel.parseState {
+        case .idle:
+            loadingPreview(project)
+        case .parsing:
+            VStack(spacing: 16) {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(Theme.accent)
+                Text("Parsing project components…")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.dimText)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.surfaceBg)
+        case .ready:
+            RNEnvironmentPreviewView(
+                viewModel: viewModel.rnPreviewViewModel,
+                project: project,
+                onNavigateToFile: onNavigateToFile
+            )
+        case .failed:
+            fallbackToStructural(project)
+        }
+    }
+
+    private func loadingPreview(_ project: StudioProject) -> some View {
+        VStack(spacing: 20) {
+            Image(systemName: "iphone.gen3")
+                .font(.system(size: 48, weight: .ultraLight))
+                .foregroundStyle(Theme.dimText.opacity(0.4))
+
+            Text("Component Preview")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.white)
+
+            Text("HybridCoder will parse JSX components and render an approximate native preview of your React Native screens.")
+                .font(.caption)
+                .foregroundStyle(Theme.dimText)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+
+            Button {
+                Task { await viewModel.loadRNPreviewIfNeeded() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "play.fill")
+                        .font(.caption)
+                    Text("Start Preview")
+                        .font(.subheadline.weight(.semibold))
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Theme.accent)
+            .controlSize(.small)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.surfaceBg)
+    }
+
+    private func fallbackToStructural(_ project: StudioProject) -> some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.title3)
+                        .foregroundStyle(.orange)
+                        .frame(width: 36, height: 36)
+                        .background(Color.orange.opacity(0.12), in: .rect(cornerRadius: 10))
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Component Parsing Failed")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                        Text("Could not parse JSX from this project. Showing structural analysis instead.")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.dimText)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        Task { await viewModel.reloadRNPreview() }
+                    } label: {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.accent)
+                    }
+                }
+                .padding(14)
+                .background(Theme.cardBg, in: .rect(cornerRadius: 14))
+
+                PreviewWorkspaceView(
+                    coordinator: viewModel.previewCoordinator,
+                    workspaceName: viewModel.displayName,
+                    onRefresh: { Task { await viewModel.refresh() } }
+                )
+            }
+            .padding(16)
+        }
+        .background(Theme.surfaceBg)
     }
 }
