@@ -5,7 +5,7 @@ struct SandboxListView: View {
 
     var body: some View {
         Group {
-            if viewModel.projects.isEmpty && !viewModel.isLoading {
+            if viewModel.studioProjects.isEmpty && !viewModel.isLoading {
                 emptyState
             } else {
                 projectList
@@ -66,12 +66,12 @@ struct SandboxListView: View {
             LazyVStack(spacing: 12) {
                 ForEach(viewModel.studioProjects) { project in
                     ProjectCard(project: project) {
-                        viewModel.openProject(project.asLegacySandboxProject())
+                        viewModel.openProject(project)
                     } onDelete: {
-                        viewModel.projectToDelete = project.asLegacySandboxProject()
+                        viewModel.projectToDelete = project
                         viewModel.showDeleteConfirmation = true
                     } onDuplicate: {
-                        Task { await viewModel.duplicateProject(project.asLegacySandboxProject()) }
+                        Task { await viewModel.duplicateProject(project) }
                     }
                 }
             }
