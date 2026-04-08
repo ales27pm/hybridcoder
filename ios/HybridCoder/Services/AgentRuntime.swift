@@ -12,150 +12,102 @@ nonisolated struct AgentCoordinatorLayerSummary: Sendable {
 
 nonisolated struct AgentRuntimeReport: Sendable {
     let executionPlan: AgentExecutionPlan
+    let plannedActions: [AgentPlannedAction]
+    let executedActions: [AgentActionExecutionResult]
+    let blockedActions: [AgentActionExecutionResult]
+    let validationOutcome: AgentValidationOutcome
     let patchResult: PatchEngine.PatchResult
     let preflightFailures: [PatchEngine.OperationFailure]
     let workspaceDiagnostics: [ProjectDiagnostic]
-    let didExecuteWorkspaceActions: Bool
+    let didMakeMeaningfulWorkspaceProgress: Bool
     let blockers: [String]
     let plannerSummary: AgentPlannerLayerSummary
     let coordinatorSummary: AgentCoordinatorLayerSummary
 
-    var chatSummary: String {
-        let changedCount = patchResult.changedFiles.count
-        let changedNoun = changedCount == 1 ? "file" : "files"
-        let diagnosticSummary = Self.diagnosticSummary(workspaceDiagnostics)
+    var didExecuteWorkspaceActions: Bool {
+        didMakeMeaningfulWorkspaceProgress
+    }
 
+    var chatSummary: String {
         var lines: [String] = []
-        if didExecuteWorkspaceActions {
-            lines.append("Agent runtime applied guarded workspace actions: \(patchResult.summary).")
-        } else if !blockers.isEmpty {
-            lines.append("Agent runtime blocked before writing: \(blockers.joined(separator: "; ")).")
+        let changedFiles = patchResult.changedFiles
+        let writeActions = executedActions.filter {
+            switch $0.action {
+            case .createFile, .updateFile, .renameFile, .deleteFile:
+                return true
+            case .inspectFile, .validateWorkspace:
+                return false
+            }
+        }
+
+        if didMakeMeaningfulWorkspaceProgress {
+            lines.append("Agent runtime completed \(writeActions.count) workspace action\(writeActions.count == 1 ? "" : "s") and made meaningful progress.")
+        } else if let firstBlocked = blockedActions.first {
+            lines.append("Agent runtime blocked on \(firstBlocked.action.summary.lowercased()).")
         } else {
-            lines.append("Agent runtime completed without writing changes.")
+            lines.append("Agent runtime finished its action pass without meaningful workspace changes.")
         }
 
         lines.append("Workspace focus: \(executionPlan.workspace.displayName).")
+        lines.append("Planned actions: \(plannedActions.count). Executed actions: \(executedActions.count). Blocked actions: \(blockedActions.count).")
         lines.append("Planner: \(plannerSummary.strategy).")
         lines.append("Coordinator: \(coordinatorSummary.phase).")
+        lines.append("Validation: \(validationOutcome.detail)")
 
-        if changedCount > 0 {
-            let changedFiles = patchResult.changedFiles.prefix(4).joined(separator: ", ")
-            lines.append("Changed \(changedCount) \(changedNoun): \(changedFiles).")
+        if !changedFiles.isEmpty {
+            let preview = changedFiles.prefix(4).joined(separator: ", ")
+            lines.append("Changed paths: \(preview).")
         }
 
-        if let diagnosticSummary {
-            lines.append("Validation: \(diagnosticSummary).")
+        if !blockers.isEmpty {
+            lines.append("Blockers: \(blockers.prefix(3).joined(separator: "; ")).")
         }
 
         return lines.joined(separator: "\n")
     }
-
-    private static func diagnosticSummary(_ diagnostics: [ProjectDiagnostic]) -> String? {
-        guard !diagnostics.isEmpty else { return nil }
-
-        let errors = diagnostics.filter { $0.severity == .error }.count
-        let warnings = diagnostics.filter { $0.severity == .warning }.count
-        let infos = diagnostics.filter { $0.severity == .info }.count
-        var parts: [String] = []
-        if errors > 0 { parts.append("\(errors) error\(errors == 1 ? "" : "s")") }
-        if warnings > 0 { parts.append("\(warnings) warning\(warnings == 1 ? "" : "s")") }
-        if infos > 0 { parts.append("\(infos) info") }
-        return parts.isEmpty ? nil : parts.joined(separator: ", ")
-    }
 }
 
 nonisolated enum AgentRuntime {
-    static func makeBlockedPatchReport(
-        goal: String,
-        patchPlan: PatchPlan,
-        workspace: AgentWorkspaceContext,
-        preflightFailures: [PatchEngine.OperationFailure],
-        workspaceDiagnostics: [ProjectDiagnostic]
-    ) -> AgentRuntimeReport {
-        let executionPlan = IntentPlanner.planPatchExecution(
-            goal: goal,
-            patchPlan: patchPlan,
-            workspace: workspace,
-            strategyStatus: .succeeded,
-            validationStatus: .blocked,
-            coordinationStatus: .blocked,
-            applyStatus: .skipped,
-            workspaceValidationStatus: workspaceDiagnostics.isEmpty ? .succeeded : .blocked
-        )
+    static func makeReport(from outcome: AgentExecutionOutcome) -> AgentRuntimeReport {
+        let workspace = outcome.executionPlan.workspace
+        let plannedActions = outcome.executionPlan.actions
+        let blockedActions = outcome.blockedActions
+        let executedActions = outcome.executedActions
 
-        let failedOperationIDs = Set(preflightFailures.map(\.operationID))
-        let updatedPlan = PatchPlan(
-            id: patchPlan.id,
-            summary: patchPlan.summary,
-            operations: patchPlan.operations.map { operation in
-                guard failedOperationIDs.contains(operation.id) else { return operation }
-                return PatchOperation(
-                    id: operation.id,
-                    filePath: operation.filePath,
-                    searchText: operation.searchText,
-                    replaceText: operation.replaceText,
-                    description: operation.description,
-                    status: .failed
-                )
-            },
-            createdAt: patchPlan.createdAt
-        )
-        let patchResult = PatchEngine.PatchResult(
-            updatedPlan: updatedPlan,
-            changedFiles: [],
-            failures: preflightFailures
-        )
+        let plannerDetail: String
+        if let fallbackPlan = outcome.executionPlan.fallbackPatchPlan, fallbackPlan.pendingCount > 0 {
+            plannerDetail = "Planner turned \(fallbackPlan.pendingCount) pending patch operation\(fallbackPlan.pendingCount == 1 ? "" : "s") into ordered workspace actions for \(workspace.displayName.lowercased())."
+        } else {
+            plannerDetail = "Planner built an exploratory workspace-action sequence from the user goal and current workspace context."
+        }
+
+        let coordinatorPhase: String
+        if !blockedActions.isEmpty {
+            coordinatorPhase = "Stopped on blocked workspace action"
+        } else if outcome.didMakeMeaningfulWorkspaceProgress {
+            coordinatorPhase = "Executed ordered workspace actions and validated"
+        } else {
+            coordinatorPhase = "Inspected workspace and validated without writes"
+        }
 
         return AgentRuntimeReport(
-            executionPlan: executionPlan,
-            patchResult: patchResult,
-            preflightFailures: preflightFailures,
-            workspaceDiagnostics: workspaceDiagnostics,
-            didExecuteWorkspaceActions: false,
-            blockers: preflightFailures.map { "\($0.filePath): \($0.reason)" },
+            executionPlan: outcome.executionPlan,
+            plannedActions: plannedActions,
+            executedActions: executedActions,
+            blockedActions: blockedActions,
+            validationOutcome: outcome.validationOutcome,
+            patchResult: outcome.patchResult,
+            preflightFailures: outcome.preflightFailures,
+            workspaceDiagnostics: outcome.validationOutcome.diagnostics,
+            didMakeMeaningfulWorkspaceProgress: outcome.didMakeMeaningfulWorkspaceProgress,
+            blockers: outcome.blockers,
             plannerSummary: .init(
-                strategy: "Guarded exact-match patch strategy",
-                detail: "Planner stayed on the existing patch-plan lane for \(workspace.displayName.lowercased())."
+                strategy: "Action-oriented workspace planning with patch fallback",
+                detail: plannerDetail
             ),
             coordinatorSummary: .init(
-                phase: "Preflight blocked before writes",
-                detail: "Coordinator validated the patch plan, found blockers, and stopped before changing files."
-            )
-        )
-    }
-
-    static func makeAppliedPatchReport(
-        goal: String,
-        patchPlan: PatchPlan,
-        workspace: AgentWorkspaceContext,
-        patchResult: PatchEngine.PatchResult,
-        workspaceDiagnostics: [ProjectDiagnostic]
-    ) -> AgentRuntimeReport {
-        let executionPlan = IntentPlanner.planPatchExecution(
-            goal: goal,
-            patchPlan: patchPlan,
-            workspace: workspace,
-            strategyStatus: .succeeded,
-            validationStatus: .succeeded,
-            coordinationStatus: .succeeded,
-            applyStatus: patchResult.failures.isEmpty ? .succeeded : .blocked,
-            workspaceValidationStatus: workspaceDiagnostics.contains { $0.severity == .error } ? .blocked : .succeeded
-        )
-
-        return AgentRuntimeReport(
-            executionPlan: executionPlan,
-            patchResult: patchResult,
-            preflightFailures: [],
-            workspaceDiagnostics: workspaceDiagnostics,
-            didExecuteWorkspaceActions: !patchResult.changedFiles.isEmpty,
-            blockers: patchResult.failures.map { "\($0.filePath): \($0.reason)" },
-            plannerSummary: .init(
-                strategy: "Guarded exact-match patch strategy",
-                detail: "Planner selected guarded patch execution instead of claiming broader file autonomy."
-            ),
-            coordinatorSummary: .init(
-                phase: "Validated, applied, and re-checked workspace",
-                detail: "Coordinator ran preflight validation, applied the patch plan, then collected workspace diagnostics."
+                phase: coordinatorPhase,
+                detail: "Coordinator inspected files before writes, executed actions in order, stopped on blockers, and collected validation output."
             )
         )
     }

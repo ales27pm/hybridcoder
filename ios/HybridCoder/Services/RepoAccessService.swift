@@ -245,6 +245,10 @@ actor RepoAccessService {
         return result
     }
 
+    func fileExists(at url: URL) -> Bool {
+        fileManager.fileExists(atPath: url.path(percentEncoded: false))
+    }
+
     // MARK: - Coordinated Write
 
     func writeUTF8(_ content: String, to url: URL) async throws {
@@ -279,6 +283,59 @@ actor RepoAccessService {
 
         if let err = coordError { throw err }
         if let err = writeError { throw err }
+    }
+
+    func createDirectory(at url: URL) throws {
+        try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+    }
+
+    func moveItem(from sourceURL: URL, to destinationURL: URL) async throws {
+        let coordinator = NSFileCoordinator()
+        var coordError: NSError?
+        var moveError: Error?
+
+        coordinator.coordinate(
+            writingItemAt: sourceURL,
+            options: .forMoving,
+            writingItemAt: destinationURL,
+            options: .forReplacing,
+            error: &coordError
+        ) { sourceAccessURL, destinationAccessURL in
+            do {
+                try fileManager.createDirectory(
+                    at: destinationAccessURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                if fileManager.fileExists(atPath: destinationAccessURL.path(percentEncoded: false)) {
+                    try fileManager.removeItem(at: destinationAccessURL)
+                }
+                try fileManager.moveItem(at: sourceAccessURL, to: destinationAccessURL)
+            } catch {
+                moveError = error
+            }
+        }
+
+        if let err = coordError { throw err }
+        if let err = moveError { throw err }
+    }
+
+    func removeItem(at url: URL) async throws {
+        let coordinator = NSFileCoordinator()
+        var coordError: NSError?
+        var removeError: Error?
+
+        coordinator.coordinate(writingItemAt: url, options: .forDeleting, error: &coordError) { accessedURL in
+            do {
+                if fileManager.fileExists(atPath: accessedURL.path(percentEncoded: false)) {
+                    try fileManager.removeItem(at: accessedURL)
+                }
+            } catch {
+                removeError = error
+            }
+        }
+
+        if let err = coordError { throw err }
+        if let err = removeError { throw err }
     }
 
     // MARK: - Batch Operations

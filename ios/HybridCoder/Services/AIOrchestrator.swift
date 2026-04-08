@@ -1116,11 +1116,20 @@ final class AIOrchestrator {
         let trimmedGoal = userGoal?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let goal = trimmedGoal.isEmpty ? plan.summary : trimmedGoal
         let workspace = await agentWorkspaceContext(repoRoot: root)
-        let report = try await ExecutionCoordinator.executePatchPlan(
+        let executionPlan = IntentPlanner.planActions(
             goal: goal,
-            patchPlan: plan,
             workspace: workspace,
+            patchPlan: plan
+        )
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
             dependencies: .init(
+                inspectFile: { [weak self] path in
+                    guard let self else {
+                        return AgentWorkspaceFileSnapshot(path: path, exists: false, content: nil)
+                    }
+                    return await self.inspectWorkspaceFile(path)
+                },
                 validatePatchPlan: { [weak self] plan in
                     guard let self else { return [] }
                     return await self.validatePatch(plan)
@@ -1131,12 +1140,37 @@ final class AIOrchestrator {
                     }
                     return try await self.applyPatch(plan)
                 },
+                createFile: { [weak self] path, contents in
+                    guard let self else {
+                        throw OrchestratorError.repoNotLoaded
+                    }
+                    try await self.createWorkspaceFile(path: path, contents: contents)
+                },
+                updateFile: { [weak self] path, contents in
+                    guard let self else {
+                        throw OrchestratorError.repoNotLoaded
+                    }
+                    try await self.updateWorkspaceFile(path: path, contents: contents)
+                },
+                renameFile: { [weak self] from, to in
+                    guard let self else {
+                        throw OrchestratorError.repoNotLoaded
+                    }
+                    try await self.renameWorkspaceFile(from: from, to: to)
+                },
+                deleteFile: { [weak self] path in
+                    guard let self else {
+                        throw OrchestratorError.repoNotLoaded
+                    }
+                    try await self.deleteWorkspaceFile(path: path)
+                },
                 validateWorkspace: { [weak self] in
                     guard let self else { return [] }
                     return await self.validateActiveWorkspaceForAgentRuntime(repoRoot: root)
                 }
             )
         )
+        let report = AgentRuntime.makeReport(from: outcome)
         recordExecutionTrace(route: .patchPlanning, executesPatch: true, usesAgentRuntime: true, includesRouteClassifier: false)
         return report
     }
@@ -1147,6 +1181,60 @@ final class AIOrchestrator {
             Self.materializePrototypeFiles(project, to: root)
         }
         return await engine.validate(plan, repoRoot: root)
+    }
+
+    private func inspectWorkspaceFile(_ path: String) async -> AgentWorkspaceFileSnapshot {
+        guard let root = repoRoot else {
+            return AgentWorkspaceFileSnapshot(path: path, exists: false, content: nil)
+        }
+
+        if activeWorkspaceSource == .prototype, let project = activePrototypeProject {
+            Self.materializePrototypeFiles(project, to: root)
+        }
+
+        do {
+            let fileURL = try resolveWorkspaceURL(for: path, repoRoot: root)
+            let content = await repoAccess.readUTF8(at: fileURL)
+            let fileExists = await repoAccess.fileExists(at: fileURL)
+            let exists = content != nil || fileExists
+            return AgentWorkspaceFileSnapshot(
+                path: path,
+                exists: exists,
+                content: content
+            )
+        } catch {
+            return AgentWorkspaceFileSnapshot(path: path, exists: false, content: nil)
+        }
+    }
+
+    private func createWorkspaceFile(path: String, contents: String) async throws {
+        guard let root = repoRoot else { throw OrchestratorError.repoNotLoaded }
+        let fileURL = try resolveWorkspaceURL(for: path, repoRoot: root)
+        try await repoAccess.createDirectory(at: fileURL.deletingLastPathComponent())
+        try await repoAccess.writeUTF8(contents, to: fileURL)
+        await refreshWorkspaceAfterAgentMutation()
+    }
+
+    private func updateWorkspaceFile(path: String, contents: String) async throws {
+        guard let root = repoRoot else { throw OrchestratorError.repoNotLoaded }
+        let fileURL = try resolveWorkspaceURL(for: path, repoRoot: root)
+        try await repoAccess.writeUTF8(contents, to: fileURL)
+        await refreshWorkspaceAfterAgentMutation()
+    }
+
+    private func renameWorkspaceFile(from sourcePath: String, to destinationPath: String) async throws {
+        guard let root = repoRoot else { throw OrchestratorError.repoNotLoaded }
+        let sourceURL = try resolveWorkspaceURL(for: sourcePath, repoRoot: root)
+        let destinationURL = try resolveWorkspaceURL(for: destinationPath, repoRoot: root)
+        try await repoAccess.moveItem(from: sourceURL, to: destinationURL)
+        await refreshWorkspaceAfterAgentMutation()
+    }
+
+    private func deleteWorkspaceFile(path: String) async throws {
+        guard let root = repoRoot else { throw OrchestratorError.repoNotLoaded }
+        let fileURL = try resolveWorkspaceURL(for: path, repoRoot: root)
+        try await repoAccess.removeItem(at: fileURL)
+        await refreshWorkspaceAfterAgentMutation()
     }
 
     private func agentWorkspaceContext(repoRoot root: URL) async -> AgentWorkspaceContext {
@@ -1232,6 +1320,32 @@ final class AIOrchestrator {
                 filePath: nil
             )
         ]
+    }
+
+    private func refreshWorkspaceAfterAgentMutation() async {
+        if activeWorkspaceSource == .prototype {
+            await syncPrototypeFilesFromDisk()
+        } else {
+            await refreshRepositoryWorkspaceAfterChanges()
+        }
+    }
+
+    private func resolveWorkspaceURL(for relativePath: String, repoRoot root: URL) throws -> URL {
+        let trimmed = relativePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw OrchestratorError.patchApplicationFailed("Workspace path cannot be empty.")
+        }
+
+        let resolvedRoot = root.standardizedFileURL
+        let candidate = resolvedRoot.appending(path: trimmed).standardizedFileURL
+        let rootPath = resolvedRoot.path(percentEncoded: false)
+        let candidatePath = candidate.path(percentEncoded: false)
+
+        guard candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/") else {
+            throw OrchestratorError.patchApplicationFailed("Workspace path escaped the active repo: \(trimmed)")
+        }
+
+        return candidate
     }
 
     private func resolveRoute(for query: String) async throws -> RouteResolution {
@@ -1876,6 +1990,7 @@ final class AIOrchestrator {
         case routeResolutionFailed(String)
         case templateResolutionFailed(String)
         case codeGenerationModelUnavailable(String)
+        case patchApplicationFailed(String)
 
         nonisolated var errorDescription: String? {
             switch self {
@@ -1895,6 +2010,8 @@ final class AIOrchestrator {
                 return "Template resolution failed: \(reason)"
             case .codeGenerationModelUnavailable(let reason):
                 return "Code-generation model unavailable: \(reason)"
+            case .patchApplicationFailed(let reason):
+                return "Workspace action failed: \(reason)"
             }
         }
     }
