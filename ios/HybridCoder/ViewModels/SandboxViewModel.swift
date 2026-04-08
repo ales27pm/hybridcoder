@@ -60,8 +60,9 @@ final class SandboxViewModel {
 
     func createProject(name: String, template: SandboxProject.TemplateType) async {
         let fileName = "App.js"
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled" : name
         let spec = NewProjectSpec(
-            name: name,
+            name: normalizedName,
             templateID: legacyTemplateID(for: template),
             kind: .expoJS,
             navigationPreset: template == .navigation ? .stack : .none,
@@ -262,7 +263,9 @@ final class SandboxViewModel {
     }
 
     func expoGoDeepLink(for project: StudioProject) -> URL? {
-        guard let snackID = studioProjects.first(where: { $0.id == project.id })?.asLegacySandboxProject().snackID else { return nil }
+        let directSnackID = project.asLegacySandboxProject().snackID
+        let persistedSnackID = studioProjects.first(where: { $0.id == project.id })?.asLegacySandboxProject().snackID
+        guard let snackID = directSnackID ?? persistedSnackID else { return nil }
         return URL(string: "exp://exp.host/@snack/\(snackID)")
     }
 
