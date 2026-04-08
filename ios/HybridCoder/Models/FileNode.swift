@@ -1,6 +1,6 @@
 import Foundation
 
-nonisolated struct FileNode: Identifiable, Hashable, Sendable {
+struct FileNode: Identifiable, Hashable, Sendable {
     let id: UUID
     let name: String
     let url: URL
@@ -8,7 +8,7 @@ nonisolated struct FileNode: Identifiable, Hashable, Sendable {
     var children: [FileNode]
     var isExpanded: Bool
 
-    init(
+    nonisolated init(
         id: UUID = UUID(),
         name: String,
         url: URL,
@@ -24,11 +24,11 @@ nonisolated struct FileNode: Identifiable, Hashable, Sendable {
         self.isExpanded = isExpanded
     }
 
-    var fileExtension: String {
+    nonisolated var fileExtension: String {
         url.pathExtension.lowercased()
     }
 
-    var iconName: String {
+    nonisolated var iconName: String {
         if isDirectory {
             return isExpanded ? "folder.fill" : "folder"
         }
@@ -52,7 +52,7 @@ nonisolated struct FileNode: Identifiable, Hashable, Sendable {
         }
     }
 
-    var iconColor: String {
+    nonisolated var iconColor: String {
         if isDirectory { return "folder" }
         switch fileExtension {
         case "swift": return "swift"
@@ -64,11 +64,11 @@ nonisolated struct FileNode: Identifiable, Hashable, Sendable {
         }
     }
 
-    static func == (lhs: FileNode, rhs: FileNode) -> Bool {
+    nonisolated static func == (lhs: FileNode, rhs: FileNode) -> Bool {
         lhs.id == rhs.id
     }
 
-    func hash(into hasher: inout Hasher) {
+    nonisolated func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
 }

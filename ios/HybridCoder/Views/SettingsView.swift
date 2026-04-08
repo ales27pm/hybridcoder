@@ -5,6 +5,8 @@ struct SettingsView: View {
     let orchestrator: AIOrchestrator
     let onOpenRepository: (Repository) -> Void
     let onCloseRepository: () -> Void
+    var privacyService: PrivacyPolicyService? = nil
+    var sessionManager: LanguageModelSessionManager? = nil
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -12,6 +14,13 @@ struct SettingsView: View {
             List {
                 repositoriesSection
                 indexSection
+                if let privacyService {
+                    privacySection(privacyService)
+                }
+                if let sessionManager {
+                    sessionSection(sessionManager)
+                }
+                diagnosticsSection
                 aboutSection
             }
             .listStyle(.insetGrouped)
@@ -87,6 +96,43 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.accent)
             }
 
+            if let stats = orchestrator.indexStats, !stats.languageBreakdown.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Language Breakdown")
+                        .font(.subheadline)
+
+                    let sorted = stats.languageBreakdown.sorted { $0.value > $1.value }
+                    ForEach(sorted, id: \.key) { language, count in
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(languageColor(language))
+                                .frame(width: 8, height: 8)
+
+                            Text(language)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.8))
+
+                            Spacer()
+
+                            Text("\(count)")
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(Theme.accent)
+                        }
+                    }
+                }
+            }
+
+            if let stats = orchestrator.indexStats, let lastIndexed = stats.lastIndexedAt {
+                HStack {
+                    Text("Last Indexed")
+                        .font(.subheadline)
+                    Spacer()
+                    Text(lastIndexed.formatted(.relative(presentation: .named)))
+                        .font(.caption)
+                        .foregroundStyle(Theme.dimText)
+                }
+            }
+
             Button("Close Repository") {
                 onCloseRepository()
                 dismiss()
@@ -97,13 +143,109 @@ struct SettingsView: View {
         }
     }
 
+    private func languageColor(_ language: String) -> Color {
+        switch language.lowercased() {
+        case "javascript": return .yellow
+        case "typescript": return .blue
+        case "swift": return .orange
+        case "python": return .cyan
+        case "json": return .orange.opacity(0.7)
+        case "css": return .purple
+        case "html": return .red.opacity(0.7)
+        case "markdown": return .gray
+        default: return Theme.accent
+        }
+    }
+
+    private func privacySection(_ service: PrivacyPolicyService) -> some View {
+        Section {
+            Toggle("Local-Only Processing", isOn: Binding(
+                get: { service.localOnlyProcessing },
+                set: { service.localOnlyProcessing = $0 }
+            ))
+            .font(.subheadline)
+            .tint(Theme.accent)
+
+            Toggle("Allow Private Cloud Compute", isOn: Binding(
+                get: { service.allowPrivateCloudCompute },
+                set: { service.allowPrivateCloudCompute = $0 }
+            ))
+            .font(.subheadline)
+            .tint(Theme.accent)
+            .disabled(service.localOnlyProcessing)
+
+            HStack {
+                Text("Data Retention")
+                    .font(.subheadline)
+                Spacer()
+                Text("\(service.dataRetentionDays) days")
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
+            }
+
+            HStack {
+                Text("Privacy Mode")
+                    .font(.subheadline)
+                Spacer()
+                Text(service.privacyBadge)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Theme.accent.opacity(0.15), in: .capsule)
+            }
+
+            Button("Reset to Defaults") {
+                service.resetToDefaults()
+            }
+            .font(.subheadline)
+            .foregroundStyle(.orange)
+        } header: {
+            Text("Privacy")
+        } footer: {
+            Text(service.privacySummary)
+        }
+    }
+
+    private func sessionSection(_ manager: LanguageModelSessionManager) -> some View {
+        Section {
+            HStack {
+                Text("Active Sessions")
+                    .font(.subheadline)
+                Spacer()
+                Text("\(manager.activeSessions.values.filter(\.isActive).count)")
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
+            }
+
+            HStack {
+                Text("Token Budget")
+                    .font(.subheadline)
+                Spacer()
+                Text("~\(manager.totalEstimatedTokens)")
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
+            }
+
+            Button("Evict Idle Sessions") {
+                manager.evictIdleSessions()
+            }
+            .font(.subheadline)
+            .foregroundStyle(Theme.accent)
+        } header: {
+            Text("Session Management")
+        } footer: {
+            Text(manager.sessionSummary)
+        }
+    }
+
     private var aboutSection: some View {
         Section {
             HStack {
                 Text("Version")
                     .font(.subheadline)
                 Spacer()
-                Text("1.0.0")
+                Text("2.0.0")
                     .font(.system(.subheadline, design: .monospaced))
                     .foregroundStyle(Theme.dimText)
             }
@@ -116,8 +258,76 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(Theme.dimText)
             }
+
+            HStack {
+                Text("Runtime")
+                    .font(.subheadline)
+                Spacer()
+                Text("Local-First Offline")
+                    .font(.caption)
+                    .foregroundStyle(Theme.accent)
+            }
         } header: {
             Text("About")
+        }
+    }
+
+    private var diagnosticsSection: some View {
+        Section {
+            if orchestrator.discoveryDiagnostics.isEmpty {
+                Text("No diagnostics")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.dimText)
+            } else {
+                if !orchestrator.templateDiagnostics.isEmpty {
+                    diagnosticsGroup(title: "Prompt Templates", diagnostics: orchestrator.templateDiagnostics)
+                }
+
+                if !orchestrator.contextPolicyDiagnostics.isEmpty {
+                    diagnosticsGroup(title: "Context Policies", diagnostics: orchestrator.contextPolicyDiagnostics)
+                }
+            }
+        } header: {
+            Text("Diagnostics")
+        }
+    }
+
+    @ViewBuilder
+    private func diagnosticsGroup(title: String, diagnostics: [DiscoveryDiagnostic]) -> some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(Theme.dimText)
+            .textCase(nil)
+
+        ForEach(diagnostics) { diagnostic in
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(diagnostic.severity.rawValue.capitalized)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(severityColor(diagnostic.severity))
+                    Spacer()
+                    Text(diagnostic.sourcePath)
+                        .font(.caption2)
+                        .foregroundStyle(Theme.dimText)
+                        .lineLimit(1)
+                }
+
+                Text(diagnostic.actionableMessage)
+                    .font(.subheadline)
+                    .foregroundStyle(.white)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func severityColor(_ severity: DiscoveryDiagnosticSeverity) -> Color {
+        switch severity {
+        case .warning:
+            return .yellow
+        case .error:
+            return .red
+        case .collision:
+            return .orange
         }
     }
 }

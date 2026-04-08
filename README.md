@@ -1,34 +1,52 @@
 # HybridCoder
 
-HybridCoder is an on-device AI coding assistant for iOS.
+HybridCoder is an on-device iOS coding studio that is being refocused into a React Native and Expo builder.
 
-## Chosen Architecture Path
+## At a glance
 
-This repository is now standardized on **FoundationModels + CoreML (iOS 26+)**.
+- SwiftUI host app
+- local workspace and project state
+- chat-driven local coding workflow
+- Foundation Models orchestration
+- Core ML semantic retrieval
+- Qwen-based code generation
+- patch planning and editing flows
+- imported repository and prototype handling
 
-- **Generation/routing/planning:** Apple Foundation Models (`FoundationModels` framework).
-- **Semantic search embeddings:** downloaded CoreML embedding model.
-- **No MLX runtime:** MLX package and product links are removed from the Xcode project.
+## What already exists
 
-## Platform Baseline
+The repository already contains a real local LLM coding core:
 
-- Minimum deployment target: **iOS 26.0** for all app and test targets.
-- Apple Intelligence availability is required for model-backed assistant responses.
+- chat-driven route selection
+- semantic retrieval over indexed code
+- code generation and code explanation
+- structured patch planning
+- patch application to the active workspace
 
-## Supported OS / Model Matrix
+## What is still missing
 
-| Runtime capability | Supported OS | Provider | Fallback |
-| --- | --- | --- | --- |
-| Route classification | iOS 26.0+ | Apple Foundation Models | None |
-| Assistant generation (explain/code/patch planning) | iOS 26.0+ | Apple Foundation Models | None |
-| Semantic embeddings / search index | iOS 26.0+ | CoreML CodeBERT | None (user must download embedding model) |
+The repository does not yet have a finished bytecoding runtime.
 
-HybridCoder is **Foundation Models first and only** for generation/routing. If Apple Intelligence is unavailable at runtime, requests fail with a deterministic "no model available" error instead of falling back to alternate providers.
+That means there is still no fully implemented agent layer that can autonomously:
 
-## Why this path
+- interpret a user goal as a multi-step coding plan
+- choose and sequence coding sub-tasks
+- create, modify, rename, and delete files as first-class actions
+- iterate until the requested feature or app milestone is actually brought to life
 
-- Single Apple-native stack for inference + orchestration.
-- Reduced dependency surface (no third-party LLM runtime integration in project wiring).
-- Simpler boot flow and status model for users.
+## Source of truth
 
-See `docs/architecture.md` for implementation details.
+Start with `docs/architecture.md`.
+
+That file is the canonical source for:
+
+- the current implementation
+- the target builder architecture
+- the bytecoding / agent-runtime gap
+- the non-drift rules that should keep the product aligned
+
+Then use:
+
+- `docs/product-vision.md` for goals and non-goals
+- `docs/agent-runtime.md` for the bytecoding strategy
+- `docs/roadmap.md` for the phased refactor plan

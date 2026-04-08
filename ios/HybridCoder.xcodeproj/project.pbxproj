@@ -7,7 +7,50 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A1B2C3D4E5F60123456789AD /* CoreMLPipelines in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60123456789AC /* CoreMLPipelines */; };
+		A1B2C3D4E5F60123456789AF /* CoreMLPipelines in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60123456789AE /* CoreMLPipelines */; };
+		B1C2D3E4F5A60123456789AB /* Hub in Frameworks */ = {isa = PBXBuildFile; productRef = B1C2D3E4F5A60123456789AA /* Hub */; };
+		C0DEC0DEC0DEC0DEC0DEC001 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEC0DEC0DEC0DEC0DEC004 /* AppIntents.framework */; };
+		C0DEC0DEC0DEC0DEC0DEC002 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEC0DEC0DEC0DEC0DEC004 /* AppIntents.framework */; };
+		C0DEC0DEC0DEC0DEC0DEC003 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEC0DEC0DEC0DEC0DEC004 /* AppIntents.framework */; };
 /* End PBXBuildFile section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A1B2C3D4E5F60123456789AB /* XCRemoteSwiftPackageReference "CoreMLPipelines" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/finnvoor/CoreMLPipelines";
+			requirement = {
+				kind = branch;
+				branch = main;
+			};
+		};
+		B1C2D3E4F5A60123456789AC /* XCRemoteSwiftPackageReference "swift-transformers" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/huggingface/swift-transformers.git";
+			requirement = {
+				kind = branch;
+				branch = main;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A1B2C3D4E5F60123456789AC /* CoreMLPipelines */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A1B2C3D4E5F60123456789AB /* XCRemoteSwiftPackageReference "CoreMLPipelines" */;
+			productName = CoreMLPipelines;
+		};
+		A1B2C3D4E5F60123456789AE /* CoreMLPipelines */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A1B2C3D4E5F60123456789AB /* XCRemoteSwiftPackageReference "CoreMLPipelines" */;
+			productName = CoreMLPipelines;
+		};
+		B1C2D3E4F5A60123456789AA /* Hub */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B1C2D3E4F5A60123456789AC /* XCRemoteSwiftPackageReference "swift-transformers" */;
+			productName = Hub;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin PBXContainerItemProxy section */
 		105FC58A2E9EAD3200EA8BCF /* PBXContainerItemProxy */ = {
@@ -30,6 +73,7 @@
 		105FC57A2E9EAD3100EA8BCF /* HybridCoder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HybridCoder.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		105FC5892E9EAD3200EA8BCF /* HybridCoderTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HybridCoderTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		105FC5932E9EAD3200EA8BCF /* HybridCoderUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HybridCoderUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C0DEC0DEC0DEC0DEC0DEC004 /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -55,6 +99,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C0DEC0DEC0DEC0DEC0DEC001 /* AppIntents.framework in Frameworks */,
+				A1B2C3D4E5F60123456789AD /* CoreMLPipelines in Frameworks */,
+				B1C2D3E4F5A60123456789AB /* Hub in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -62,6 +109,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C0DEC0DEC0DEC0DEC0DEC002 /* AppIntents.framework in Frameworks */,
+				A1B2C3D4E5F60123456789AF /* CoreMLPipelines in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -69,6 +118,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C0DEC0DEC0DEC0DEC0DEC003 /* AppIntents.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -115,6 +165,8 @@
 			);
 			name = HybridCoder;
 			packageProductDependencies = (
+				A1B2C3D4E5F60123456789AC /* CoreMLPipelines */,
+				B1C2D3E4F5A60123456789AA /* Hub */,
 			);
 			productName = HybridCoder;
 			productReference = 105FC57A2E9EAD3100EA8BCF /* HybridCoder.app */;
@@ -138,6 +190,7 @@
 			);
 			name = HybridCoderTests;
 			packageProductDependencies = (
+				A1B2C3D4E5F60123456789AE /* CoreMLPipelines */,
 			);
 			productName = HybridCoderTests;
 			productReference = 105FC5892E9EAD3200EA8BCF /* HybridCoderTests.xctest */;
@@ -200,6 +253,8 @@
 			mainGroup = 105FC5712E9EAD3100EA8BCF;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				A1B2C3D4E5F60123456789AB /* XCRemoteSwiftPackageReference "CoreMLPipelines" */,
+				B1C2D3E4F5A60123456789AC /* XCRemoteSwiftPackageReference "swift-transformers" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 105FC57B2E9EAD3100EA8BCF /* Products */;
@@ -481,6 +536,7 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HybridCoder.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/HybridCoder";
+				TEST_TARGET_NAME = HybridCoder;
 			};
 			name = Debug;
 		};
@@ -503,6 +559,7 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HybridCoder.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/HybridCoder";
+				TEST_TARGET_NAME = HybridCoder;
 			};
 			name = Release;
 		};

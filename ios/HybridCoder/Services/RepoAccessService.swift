@@ -1,8 +1,11 @@
 import Foundation
 import UniformTypeIdentifiers
+import OSLog
 
 actor RepoAccessService {
-    private let bookmarksKey = "RepoAccessService.bookmarks"
+    private let secureStoreKey = "RepoAccessService.bookmarks"
+    private let secureStore = SecureStoreService(serviceName: "com.hybridcoder.repoAccess")
+    private let logger = Logger(subsystem: "com.hybridcoder.app", category: "RepoAccessService")
     private let fileManager = FileManager.default
 
     private let sourceExtensions: Set<String> = [
@@ -32,15 +35,15 @@ actor RepoAccessService {
 
     // MARK: - Bookmark Persistence
 
-    func saveBookmark(for url: URL) throws -> Data {
+    func saveBookmark(for url: URL) async throws -> Data {
         let data = try url.bookmarkData(
             options: .minimalBookmark,
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
-        var all = loadAllBookmarks()
+        var all = await loadAllBookmarks()
         all[url.lastPathComponent] = data
-        persistAllBookmarks(all)
+        await persistAllBookmarks(all)
         return data
     }
 
@@ -55,34 +58,52 @@ actor RepoAccessService {
         return (url, isStale)
     }
 
-    func refreshStaleBookmark(for url: URL, name: String) -> Data? {
+    func refreshStaleBookmark(for url: URL, name: String) async -> Data? {
         guard let fresh = try? url.bookmarkData(
             options: .minimalBookmark,
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         ) else { return nil }
-        var all = loadAllBookmarks()
+        var all = await loadAllBookmarks()
         all[name] = fresh
-        persistAllBookmarks(all)
+        await persistAllBookmarks(all)
         return fresh
     }
 
-    func loadAllBookmarks() -> [String: Data] {
-        guard let raw = UserDefaults.standard.data(forKey: bookmarksKey),
+    func loadAllBookmarks() async -> [String: Data] {
+        do {
+            if let decoded: [String: Data] = try await secureStore.getObject(secureStoreKey, as: [String: Data].self) {
+                return decoded
+            }
+        } catch {
+            logger.error("Failed to load bookmarks from Keychain: \(error.localizedDescription)")
+        }
+        return await migrateFromUserDefaults()
+    }
+
+    func removeBookmark(named name: String) async {
+        var all = await loadAllBookmarks()
+        all.removeValue(forKey: name)
+        await persistAllBookmarks(all)
+    }
+
+    private func persistAllBookmarks(_ map: [String: Data]) async {
+        do {
+            try await secureStore.setObject(secureStoreKey, value: map)
+        } catch {
+            logger.error("Failed to persist bookmarks to Keychain: \(error.localizedDescription)")
+        }
+    }
+
+    private func migrateFromUserDefaults() async -> [String: Data] {
+        let legacyKey = "RepoAccessService.bookmarks"
+        guard let raw = UserDefaults.standard.data(forKey: legacyKey),
               let decoded = try? JSONDecoder().decode([String: Data].self, from: raw)
         else { return [:] }
+        await persistAllBookmarks(decoded)
+        UserDefaults.standard.removeObject(forKey: legacyKey)
+        logger.info("Migrated \(decoded.count) repo bookmarks from UserDefaults to Keychain")
         return decoded
-    }
-
-    func removeBookmark(named name: String) {
-        var all = loadAllBookmarks()
-        all.removeValue(forKey: name)
-        persistAllBookmarks(all)
-    }
-
-    private func persistAllBookmarks(_ map: [String: Data]) {
-        guard let encoded = try? JSONEncoder().encode(map) else { return }
-        UserDefaults.standard.set(encoded, forKey: bookmarksKey)
     }
 
     // MARK: - Security-Scoped Access

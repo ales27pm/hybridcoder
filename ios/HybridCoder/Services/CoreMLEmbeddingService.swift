@@ -12,6 +12,9 @@ actor CoreMLEmbeddingService {
         case inferenceFailure(String)
         case outputMissing(String)
         case dimensionMismatch(expected: Int, got: Int)
+        case modelArtifactsMissing(cacheRoot: String, compiledPath: String, packagePath: String)
+        case modelCompilationFailed(packagePath: String, detail: String)
+        case compiledModelPersistenceFailed(compiledPath: String, detail: String)
 
         nonisolated var errorDescription: String? {
             switch self {
@@ -25,6 +28,12 @@ actor CoreMLEmbeddingService {
                 return "Expected output '\(name)' not found in model prediction."
             case .dimensionMismatch(let expected, let got):
                 return "Embedding dimension mismatch: expected \(expected), got \(got)."
+            case .modelArtifactsMissing(let cacheRoot, let compiledPath, let packagePath):
+                return "No model artifacts found for '\(cacheRoot)'. Expected compiled model at '\(compiledPath)' or package at '\(packagePath)'."
+            case .modelCompilationFailed(let packagePath, let detail):
+                return "Failed to compile model package at '\(packagePath)': \(detail)"
+            case .compiledModelPersistenceFailed(let compiledPath, let detail):
+                return "Failed to persist compiled model to '\(compiledPath)': \(detail)"
             }
         }
     }
@@ -62,8 +71,11 @@ actor CoreMLEmbeddingService {
             registry.setLoadState(for: modelID, .loading)
         }
 
-        let modelURL = await MainActor.run {
-            registry.downloadedModelDirectory(for: modelID).appendingPathComponent("model.mlmodelc")
+        let modelPaths = await MainActor.run {
+            let cacheRoot = registry.downloadedModelDirectory(for: modelID)
+            let compiled = cacheRoot.appendingPathComponent("model.mlmodelc", isDirectory: true)
+            let package = cacheRoot.appendingPathComponent("model.mlpackage", isDirectory: true)
+            return (cacheRoot: cacheRoot, compiled: compiled, package: package)
         }
         let tokenizerURL = await MainActor.run {
             registry.downloadedTokenizerDirectory(for: modelID)
@@ -73,7 +85,13 @@ actor CoreMLEmbeddingService {
             let config = MLModelConfiguration()
             config.computeUnits = .cpuAndNeuralEngine
 
-            let loadedModel = try await MLModel.load(contentsOf: modelURL, configuration: config)
+            let compiledModelURL = try ensureCompiledModel(
+                cacheRoot: modelPaths.cacheRoot,
+                compiledURL: modelPaths.compiled,
+                packageURL: modelPaths.package
+            )
+
+            let loadedModel = try await MLModel.load(contentsOf: compiledModelURL, configuration: config)
             self.model = loadedModel
 
             try await tokenizer.load(from: tokenizerURL)
@@ -109,6 +127,57 @@ actor CoreMLEmbeddingService {
             }
             throw error
         }
+    }
+
+    private func ensureCompiledModel(
+        cacheRoot: URL,
+        compiledURL: URL,
+        packageURL: URL
+    ) throws -> URL {
+        let fm = FileManager.default
+        let hasCompiled = fm.fileExists(atPath: compiledURL.path)
+        if hasCompiled {
+            return compiledURL
+        }
+
+        let hasPackage = fm.fileExists(atPath: packageURL.path)
+        guard hasPackage else {
+            throw EmbeddingError.modelArtifactsMissing(
+                cacheRoot: cacheRoot.path,
+                compiledPath: compiledURL.path,
+                packagePath: packageURL.path
+            )
+        }
+
+        let compiledTempURL: URL
+        do {
+            compiledTempURL = try MLModel.compileModel(at: packageURL)
+        } catch {
+            throw EmbeddingError.modelCompilationFailed(
+                packagePath: packageURL.path,
+                detail: error.localizedDescription
+            )
+        }
+
+        do {
+            if fm.fileExists(atPath: compiledURL.path) {
+                try fm.removeItem(at: compiledURL)
+            }
+            try fm.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
+            try fm.moveItem(at: compiledTempURL, to: compiledURL)
+        } catch {
+            do {
+                if fm.fileExists(atPath: compiledURL.path) {
+                    return compiledURL
+                }
+            }
+            throw EmbeddingError.compiledModelPersistenceFailed(
+                compiledPath: compiledURL.path,
+                detail: error.localizedDescription
+            )
+        }
+
+        return compiledURL
     }
 
     func embed(text: String) async throws -> [Float] {
