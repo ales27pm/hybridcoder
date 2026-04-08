@@ -250,6 +250,11 @@ struct ContentView: View {
                 .navigationTitle("Models")
                 .navigationBarTitleDisplayMode(.inline)
 
+        case .docs:
+            DocumentationManagerView(orchestrator: viewModel.orchestrator)
+                .navigationTitle("Docs RAG")
+                .navigationBarTitleDisplayMode(.inline)
+
         case .sandbox:
             sandboxContent
                 .navigationTitle(viewModel.sandboxNavigationTitle)

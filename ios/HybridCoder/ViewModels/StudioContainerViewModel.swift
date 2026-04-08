@@ -6,6 +6,7 @@ enum StudioSidebarSection: Hashable {
     case fileViewer(FileNode)
     case patches
     case models
+    case docs
     case sandbox
 }
 

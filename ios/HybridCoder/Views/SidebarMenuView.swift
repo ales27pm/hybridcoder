@@ -178,6 +178,13 @@ struct SidebarMenuView: View {
             )
 
             menuItem(
+                icon: "book.closed",
+                label: "Docs RAG",
+                section: .docs,
+                badge: 0
+            )
+
+            menuItem(
                 icon: "hammer",
                 label: "Builder",
                 section: .sandbox,

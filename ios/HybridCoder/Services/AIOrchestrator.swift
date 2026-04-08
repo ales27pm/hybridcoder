@@ -59,6 +59,7 @@ final class AIOrchestrator {
     let contextPolicyLoader: ContextPolicyLoader
     let promptTemplateService: PromptTemplateService
     let globalPolicyDirectory: URL?
+    let documentationRAG: DocumentationRAGService
 
     private(set) var searchIndex: SemanticSearchIndex?
     private(set) var patchEngine: PatchEngine?
@@ -106,6 +107,7 @@ final class AIOrchestrator {
         self.promptTemplateService = promptTemplateService
         self.globalPolicyDirectory = globalPolicyDirectory
         self.sessionManager = sessionManager
+        self.documentationRAG = DocumentationRAGService(embeddingService: embeddingService)
         Task { [weak self] in
             await self?.refreshRegistryInstallState()
         }
@@ -215,6 +217,8 @@ final class AIOrchestrator {
         if patchEngine == nil {
             patchEngine = PatchEngine(repoAccess: repoAccess)
         }
+
+        await documentationRAG.restorePersistedIndex()
 
         if foundationModel == nil {
             if #available(iOS 26.0, *) {
@@ -1615,6 +1619,19 @@ final class AIOrchestrator {
             }
         }
 
+        let docHits = await searchDocumentationRAG(query: retrievalQuery, topK: 3)
+        for hit in docHits {
+            let header = "--- docs: \(hit.filePath) L\(hit.chunk.startLine)-\(hit.chunk.endLine) ---"
+            codeContextParts.append("\(header)\n\(hit.chunk.content)")
+            sources.append(ContextSource(
+                filePath: hit.filePath,
+                startLine: hit.chunk.startLine,
+                endLine: hit.chunk.endLine,
+                method: .semanticSearch,
+                score: hit.score
+            ))
+        }
+
         let rnConventionsBlock = Self.rnConventionsForWorkspace(activeWorkspaceSource, activePrototypeProject: activePrototypeProject)
 
         let rawPolicyText = contextPolicySnapshot.renderForPrompt(
@@ -2090,6 +2107,18 @@ final class AIOrchestrator {
     nonisolated static func rnConventionsForWorkspace(_ source: WorkspaceSource?, activePrototypeProject: SandboxProject?) -> String {
         guard source == .prototype || source == .repository else { return "" }
         return RNCodeConventions.conventionsBlock(includePatterns: false, includeLibraries: false)
+    }
+
+    private func searchDocumentationRAG(query: String, topK: Int) async -> [SearchHit] {
+        let rag = documentationRAG
+        let isEmpty = await rag.isEmpty
+        guard !isEmpty else { return [] }
+        do {
+            return try await rag.search(query: query, topK: topK)
+        } catch {
+            logger.info("doc.rag.search.skipped reason=\(error.localizedDescription, privacy: .public)")
+            return []
+        }
     }
 
     nonisolated static func extractCodeBlocks(from text: String, fallbackToWholeText: Bool = false) -> [CodeBlock] {
