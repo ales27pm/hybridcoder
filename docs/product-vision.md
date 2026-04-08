@@ -9,6 +9,15 @@ HybridCoder should become a local-first mobile app builder for React Native and 
 - project continuity
 - template-driven starts
 - useful diagnostics and preview feedback
+- bytecoding: transform user intent into working code autonomously
+
+## Bytecoding definition
+
+Bytecoding is the ability for the system to:
+
+- translate a user request into a structured plan
+- execute that plan through file operations
+- iterate until the result is functionally correct
 
 ## What it should not be
 
