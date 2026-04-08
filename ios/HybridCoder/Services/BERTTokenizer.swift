@@ -95,6 +95,7 @@ actor HFTokenizer {
     private static let byteLevelPattern = "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+"
 
     private let maxLength = 512
+    private let maxBPECacheSize = 4096
 
     private var isLoaded = false
     private var addPrefixSpace = false
@@ -102,6 +103,7 @@ actor HFTokenizer {
     private var vocab: [String: Int] = [:]
     private var mergesRank: [String: Int] = [:]
     private var bpeCache: [String: [String]] = [:]
+    private var bpeCacheOrder: [String] = []
 
     private var clsTokenID: Int = 0
     private var sepTokenID: Int = 2
@@ -301,8 +303,22 @@ actor HFTokenizer {
             if word.count == 1 { break }
         }
 
+        if bpeCache.count >= maxBPECacheSize {
+            let removeCount = maxBPECacheSize / 4
+            let keysToRemove = Array(bpeCacheOrder.prefix(removeCount))
+            for key in keysToRemove {
+                bpeCache.removeValue(forKey: key)
+            }
+            bpeCacheOrder.removeFirst(min(removeCount, bpeCacheOrder.count))
+        }
         bpeCache[token] = word
+        bpeCacheOrder.append(token)
         return word
+    }
+
+    func trimCache() {
+        bpeCache.removeAll(keepingCapacity: true)
+        bpeCacheOrder.removeAll(keepingCapacity: true)
     }
 
     private func adjacentPairs(_ word: [String]) -> Set<String> {

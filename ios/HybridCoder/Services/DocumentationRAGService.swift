@@ -35,6 +35,7 @@ actor DocumentationRAGService {
     private var chunks: [UUID: SourceChunk] = [:]
     private var lastIndexedAt: Date?
     private var indexedSourceIDs: Set<UUID> = []
+    private var isEvicted: Bool = false
 
     init(embeddingService: CoreMLEmbeddingService) {
         self.embeddingService = embeddingService
@@ -225,6 +226,11 @@ actor DocumentationRAGService {
         guard await embeddingService.isLoaded else {
             throw RAGError.embeddingServiceNotReady
         }
+
+        if isEvicted {
+            await restorePersistedIndex()
+        }
+
         guard !records.isEmpty else {
             throw RAGError.indexEmpty
         }
@@ -257,7 +263,18 @@ actor DocumentationRAGService {
         return hits
     }
 
+    func evictFromMemory() {
+        guard store != nil, !records.isEmpty else { return }
+        let recordCount = records.count
+        let chunkCount = chunks.count
+        records.removeAll()
+        chunks.removeAll()
+        isEvicted = true
+        logger.info("doc.index.memory_evicted records=\(recordCount) chunks=\(chunkCount)")
+    }
+
     func clearIndex() {
+        isEvicted = false
         records.removeAll()
         chunks.removeAll()
         indexedSourceIDs.removeAll()

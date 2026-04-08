@@ -216,6 +216,10 @@ actor CoreMLEmbeddingService {
         return results
     }
 
+    func trimTokenizerCache() async {
+        await tokenizer.trimCache()
+    }
+
     func unload() async {
         model = nil
         tokenizerLoaded = false

@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import OSLog
 
 nonisolated enum PromptContextBudget {
@@ -84,6 +85,8 @@ final class AIOrchestrator {
     private(set) var warmUpError: String?
     private(set) var indexingProgress: (completed: Int, total: Int)?
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "AIOrchestrator")
+    private var memoryPressureObserver: (any NSObjectProtocol)?
+    private var qwenIdleTimer: Task<Void, Never>?
     private var codeGenerationLifecycleToken: UInt64 = 0
     private var isCodeGenerationWarmUpInFlight: Bool = false
     private var workspaceStateGeneration: UInt64 = 0
@@ -111,6 +114,35 @@ final class AIOrchestrator {
         Task { [weak self] in
             await self?.refreshRegistryInstallState()
         }
+        startMemoryPressureObserver()
+    }
+
+    private func startMemoryPressureObserver() {
+        memoryPressureObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                await self.handleMemoryPressure()
+            }
+        }
+    }
+
+    func handleMemoryPressure() async {
+        logger.warning("memory.pressure received — evicting caches")
+
+        await searchIndex?.evictFromMemory()
+        await documentationRAG.evictFromMemory()
+
+        if let qwen = qwenCoderService, await qwen.isLoaded, await !qwen.isGenerating {
+            logger.info("memory.pressure unloading_qwen")
+            _ = try? await qwen.unload()
+            modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
+        }
+
+        await embeddingService.trimTokenizerCache()
     }
 
     func configureSessionManager(_ manager: LanguageModelSessionManager) {
@@ -1942,11 +1974,30 @@ final class AIOrchestrator {
         do {
             let coder = try await ensureQwenCoderLoaded()
             modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .loaded)
+            scheduleQwenIdleUnload()
             return coder
         } catch {
             modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .failed(error.localizedDescription))
             throw error
         }
+    }
+
+    private func scheduleQwenIdleUnload() {
+        qwenIdleTimer?.cancel()
+        qwenIdleTimer = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(120))
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            await self.idleUnloadQwenIfSafe()
+        }
+    }
+
+    private func idleUnloadQwenIfSafe() async {
+        guard let qwen = qwenCoderService else { return }
+        guard await qwen.isLoaded, await !qwen.isGenerating else { return }
+        logger.info("qwen.idle_unload after 120s inactivity")
+        _ = try? await qwen.unload()
+        modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
     }
 
     private func ensureQwenCoderLoaded() async throws -> QwenCoderService {

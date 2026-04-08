@@ -40,6 +40,7 @@ actor SemanticSearchIndex {
     private var totalFileCount: Int = 0
     private var workspaceFingerprint: String?
     private(set) var persistenceError: String?
+    private var isEvicted: Bool = false
 
     init(
         embeddingService: CoreMLEmbeddingService,
@@ -227,6 +228,11 @@ actor SemanticSearchIndex {
         guard await embeddingService.isLoaded else {
             throw IndexError.embeddingServiceNotReady
         }
+
+        if isEvicted {
+            await restorePersistedSnapshotIfAvailable()
+        }
+
         guard !records.isEmpty else {
             throw IndexError.indexEmpty
         }
@@ -272,6 +278,16 @@ actor SemanticSearchIndex {
         return hits
     }
 
+    func evictFromMemory() {
+        guard store != nil, !records.isEmpty else { return }
+        let recordCount = records.count
+        let chunkCount = chunks.count
+        records.removeAll()
+        chunks.removeAll()
+        isEvicted = true
+        logger.info("index.memory_evicted records=\(recordCount) chunks=\(chunkCount)")
+    }
+
     func verifyRoundTrip() async -> (stored: Int, retrieved: Int, searchable: Bool) {
         let storedCount = records.count
         var retrievedCount = 0
@@ -287,6 +303,7 @@ actor SemanticSearchIndex {
     }
 
     func clear() {
+        isEvicted = false
         guard let store else {
             records.removeAll()
             chunks.removeAll()
