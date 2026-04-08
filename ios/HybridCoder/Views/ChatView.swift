@@ -309,6 +309,17 @@ struct ChatView: View {
                     .onSubmit {
                         Task { await viewModel.sendMessage() }
                     }
+                    .toolbar {
+                        ToolbarItemGroup(placement: .keyboard) {
+                            Spacer()
+                            Button {
+                                isInputFocused = false
+                            } label: {
+                                Image(systemName: "checkmark")
+                                    .fontWeight(.semibold)
+                            }
+                        }
+                    }
 
                 Button {
                     Task { await viewModel.sendMessage() }
