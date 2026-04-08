@@ -8,6 +8,7 @@ struct BuilderWorkspaceView: View {
     @State private var showAddFileSheet: Bool = false
     @State private var showRenameSheet: Bool = false
     @State private var previewCoordinator = PreviewCoordinator()
+    @State private var rnPreviewViewModel = RNPreviewViewModel()
 
     private enum BuilderTab: String, CaseIterable {
         case code = "Code"
@@ -27,10 +28,15 @@ struct BuilderWorkspaceView: View {
             case .files:
                 fileList
             case .preview:
-                PreviewWorkspaceView(
-                    coordinator: previewCoordinator,
-                    workspaceName: project.name,
-                    onRefresh: { Task { await previewCoordinator.validate(project: project) } }
+                RNEnvironmentPreviewView(
+                    viewModel: rnPreviewViewModel,
+                    project: project,
+                    onNavigateToFile: { filePath in
+                        if let file = project.files.first(where: { $0.path == filePath }) {
+                            selectedFileID = file.id
+                            selectedTab = .code
+                        }
+                    }
                 )
             case .diagnostics:
                 diagnosticsView
