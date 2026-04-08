@@ -38,6 +38,7 @@ actor SemanticSearchIndex {
     private var languageCounts: [String: Int] = [:]
     private var lastIndexedAt: Date?
     private var totalFileCount: Int = 0
+    private var workspaceFingerprint: String?
     private(set) var persistenceError: String?
 
     init(
@@ -67,11 +68,31 @@ actor SemanticSearchIndex {
             languageCounts = snapshot.languageCounts
             lastIndexedAt = snapshot.lastIndexedAt
             totalFileCount = snapshot.totalFileCount
+            workspaceFingerprint = snapshot.workspaceFingerprint
             persistenceError = nil
+            let restoredRecordCount = records.count
+            let restoredChunkCount = chunks.count
+            let restoredFingerprint = workspaceFingerprint ?? "none"
+            logger.info("index.restore records=\(restoredRecordCount) chunks=\(restoredChunkCount) fingerprint=\(restoredFingerprint, privacy: .public)")
         } catch {
             persistenceError = error.localizedDescription
             logger.error("SQLite index snapshot load failed; continuing with empty in-memory index: \(error.localizedDescription, privacy: .private)")
         }
+    }
+
+    func isStale(forWorkspaceFingerprint fingerprint: String) -> Bool {
+        guard !records.isEmpty else { return true }
+        return workspaceFingerprint != fingerprint
+    }
+
+    nonisolated static func computeWorkspaceFingerprint(filePaths: [String]) -> String {
+        let sorted = filePaths.sorted()
+        let combined = sorted.joined(separator: "\n")
+        var hash: UInt64 = 5381
+        for byte in combined.utf8 {
+            hash = ((hash &<< 5) &+ hash) &+ UInt64(byte)
+        }
+        return String(hash, radix: 16)
     }
 
     var stats: RepoIndexStats {
@@ -94,6 +115,9 @@ actor SemanticSearchIndex {
         guard !files.isEmpty else {
             throw IndexError.noFilesProvided
         }
+
+        let fingerprint = Self.computeWorkspaceFingerprint(filePaths: files.map { $0.0.relativePath })
+        logger.info("index.rebuild.start files=\(files.count) fingerprint=\(fingerprint, privacy: .public)")
 
         let allChunks = chunker.chunkFiles(files)
         let newChunks = Dictionary(uniqueKeysWithValues: allChunks.map { ($0.id, $0) })
@@ -161,7 +185,8 @@ actor SemanticSearchIndex {
                 try store.persistMetadata(
                     totalFileCount: newTotalFileCount,
                     lastIndexedAt: indexedAt,
-                    languageCounts: newLanguageCounts
+                    languageCounts: newLanguageCounts,
+                    workspaceFingerprint: fingerprint
                 )
                 try store.commitTransaction()
             }
@@ -172,6 +197,8 @@ actor SemanticSearchIndex {
             languageCounts = newLanguageCounts
             lastIndexedAt = indexedAt
             totalFileCount = newTotalFileCount
+            workspaceFingerprint = fingerprint
+            logger.info("index.rebuild.complete records=\(newRecords.count) chunks=\(newChunks.count) fingerprint=\(fingerprint, privacy: .public)")
         } catch {
             if error is CancellationError {
                 if let store {
@@ -205,6 +232,8 @@ actor SemanticSearchIndex {
         }
 
         let queryVector = try await embeddingService.embed(text: query)
+        let recordCount = records.count
+        logger.info("search.query topK=\(topK) records=\(recordCount) query=\(query.prefix(80), privacy: .private)")
 
         let candidateLimit = max(topK * 4, topK)
         var scored: [(record: EmbeddingRecord, score: Float)] = []
@@ -239,7 +268,22 @@ actor SemanticSearchIndex {
             ))
         }
 
+        logger.info("search.results hits=\(hits.count) top_score=\(hits.first?.score ?? 0) bottom_score=\(hits.last?.score ?? 0)")
         return hits
+    }
+
+    func verifyRoundTrip() async -> (stored: Int, retrieved: Int, searchable: Bool) {
+        let storedCount = records.count
+        var retrievedCount = 0
+        if let store {
+            retrievedCount = (try? store.loadEmbeddingCount()) ?? 0
+        } else {
+            retrievedCount = storedCount
+        }
+        let searchable = await embeddingService.isLoaded && !records.isEmpty
+        let verifyFingerprint = workspaceFingerprint ?? "none"
+        logger.info("index.verify stored=\(storedCount) retrieved=\(retrievedCount) searchable=\(searchable) fingerprint=\(verifyFingerprint, privacy: .public)")
+        return (storedCount, retrievedCount, searchable)
     }
 
     func clear() {
@@ -328,6 +372,7 @@ nonisolated private final class SQLiteIndexStore {
         let totalFileCount: Int
         let lastIndexedAt: Date?
         let languageCounts: [String: Int]
+        let workspaceFingerprint: String?
     }
 
     enum StoreError: Error, LocalizedError {
@@ -412,7 +457,8 @@ nonisolated private final class SQLiteIndexStore {
             chunks: chunkMap,
             totalFileCount: metadata.totalFileCount,
             lastIndexedAt: metadata.lastIndexedAt,
-            languageCounts: metadata.languageCounts
+            languageCounts: metadata.languageCounts,
+            workspaceFingerprint: metadata.workspaceFingerprint
         )
     }
 
@@ -507,7 +553,7 @@ nonisolated private final class SQLiteIndexStore {
         }
     }
 
-    nonisolated func persistMetadata(totalFileCount: Int, lastIndexedAt: Date?, languageCounts: [String: Int]) throws {
+    nonisolated func persistMetadata(totalFileCount: Int, lastIndexedAt: Date?, languageCounts: [String: Int], workspaceFingerprint: String? = nil) throws {
         try writeMetadata(key: "totalFileCount", value: String(totalFileCount))
 
         if let lastIndexedAt {
@@ -519,6 +565,8 @@ nonisolated private final class SQLiteIndexStore {
         let languageData = try JSONEncoder().encode(languageCounts)
         let languageJSON = String(data: languageData, encoding: .utf8) ?? "{}"
         try writeMetadata(key: "languageCounts", value: languageJSON)
+
+        try writeMetadata(key: "workspaceFingerprint", value: workspaceFingerprint ?? "")
     }
 
     nonisolated func searchLexical(query: String, limit: Int) throws -> [UUID] {
@@ -554,6 +602,17 @@ nonisolated private final class SQLiteIndexStore {
         }
 
         return chunkIDs
+    }
+
+    nonisolated func loadEmbeddingCount() throws -> Int {
+        let sql = "SELECT COUNT(*) FROM embeddings;"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw StoreError.prepareFailed(lastErrorMessage)
+        }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int64(statement, 0))
     }
 
     private nonisolated func loadChunks() throws -> [SourceChunk] {
@@ -657,7 +716,7 @@ nonisolated private final class SQLiteIndexStore {
         return records
     }
 
-    private nonisolated func loadMetadata() throws -> (totalFileCount: Int, lastIndexedAt: Date?, languageCounts: [String: Int]) {
+    private nonisolated func loadMetadata() throws -> (totalFileCount: Int, lastIndexedAt: Date?, languageCounts: [String: Int], workspaceFingerprint: String?) {
         let sql = "SELECT key, value FROM metadata;"
 
         var statement: OpaquePointer?
@@ -696,7 +755,14 @@ nonisolated private final class SQLiteIndexStore {
             languageCounts = [:]
         }
 
-        return (totalFileCount, lastIndexedAt, languageCounts)
+        let workspaceFingerprint: String?
+        if let raw = values["workspaceFingerprint"], !raw.isEmpty {
+            workspaceFingerprint = raw
+        } else {
+            workspaceFingerprint = nil
+        }
+
+        return (totalFileCount, lastIndexedAt, languageCounts, workspaceFingerprint)
     }
 
     private nonisolated func writeMetadata(key: String, value: String) throws {

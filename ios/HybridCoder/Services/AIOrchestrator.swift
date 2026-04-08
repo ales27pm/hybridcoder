@@ -50,6 +50,7 @@ final class AIOrchestrator {
     // Keep this equal to ConversationMemoryContext.renderForPrompt(maxCharacters:) input.
     // We intentionally enforce the same budget here as a second guardrail during final packing.
     private static let conversationMemoryRenderBudget = max(maximumConversationContextBudget, qwenMaximumConversationContextBudget)
+    private static let minimumRelevanceScore: Float = 0.15
 
     let repoAccess = RepoAccessService()
     let modelRegistry: ModelRegistry
@@ -193,9 +194,9 @@ final class AIOrchestrator {
         isWarmingUp = true
         warmUpError = nil
 
-        let embeddingAlreadyLoaded = await embeddingService.isLoaded
+        let embeddingWasLoaded = await embeddingService.isLoaded
 
-        if !embeddingAlreadyLoaded {
+        if !embeddingWasLoaded {
             if modelRegistry.entry(for: modelRegistry.activeEmbeddingModelID)?.installState == .installed {
                 do {
                     try await embeddingService.load()
@@ -230,13 +231,43 @@ final class AIOrchestrator {
             modelRegistry.setLoadState(for: modelRegistry.activeCodeGenerationModelID, .unloaded)
         }
 
+        let embeddingNowLoaded = await embeddingService.isLoaded
+        if !embeddingWasLoaded, embeddingNowLoaded, indexNeedsRebuild {
+            logger.info("embedding.model.now_loaded triggering_deferred_reindex")
+            isWarmingUp = false
+            await rebuildIndexForCurrentWorkspace()
+            return
+        }
+
         isWarmingUp = false
+    }
+
+    private var indexNeedsRebuild: Bool {
+        guard repoRoot != nil else { return false }
+        if let stats = indexStats, stats.embeddedChunks > 0 { return false }
+        if !repoFiles.isEmpty { return true }
+        return false
+    }
+
+    private func rebuildIndexForCurrentWorkspace() async {
+        switch activeWorkspaceSource {
+        case .prototype:
+            await rebuildPrototypeIndex()
+        case .repository:
+            await rebuildIndex()
+        case nil:
+            break
+        }
     }
 
     func downloadActiveEmbeddingModel() async {
         await modelDownload.download(modelID: modelRegistry.activeEmbeddingModelID)
         if modelRegistry.entry(for: modelRegistry.activeEmbeddingModelID)?.installState == .installed {
             try? await embeddingService.load()
+            if await embeddingService.isLoaded, indexNeedsRebuild {
+                logger.info("embedding.download.complete triggering_deferred_reindex")
+                await rebuildIndexForCurrentWorkspace()
+            }
         }
     }
 
@@ -634,6 +665,15 @@ final class AIOrchestrator {
 
         do {
             let contents = await repoAccess.readAllSourceContents(in: root)
+            let fingerprint = SemanticSearchIndex.computeWorkspaceFingerprint(filePaths: contents.map { $0.0.relativePath })
+            let isStale = await index.isStale(forWorkspaceFingerprint: fingerprint)
+            if !isStale {
+                logger.info("index.rebuild.skipped fingerprint_matches=\(fingerprint, privacy: .public)")
+                indexStats = await index.stats
+                isIndexing = false
+                return
+            }
+
             try await index.rebuild(files: contents) { [weak self] completed, total in
                 Task { @MainActor [weak self] in
                     self?.indexingProgress = (completed, total)
@@ -723,6 +763,30 @@ final class AIOrchestrator {
             throw OrchestratorError.indexNotReady
         }
         return try await index.search(query: query, topK: topK)
+    }
+
+    func verifyEmbeddingPipeline() async -> EmbeddingPipelineDiagnostic {
+        let embeddingLoaded = await embeddingService.isLoaded
+        let indexVerification: (stored: Int, retrieved: Int, searchable: Bool)?
+        if let index = searchIndex {
+            indexVerification = await index.verifyRoundTrip()
+        } else {
+            indexVerification = nil
+        }
+
+        let diagnostic = EmbeddingPipelineDiagnostic(
+            embeddingModelLoaded: embeddingLoaded,
+            indexExists: searchIndex != nil,
+            storedEmbeddings: indexVerification?.stored ?? 0,
+            persistedEmbeddings: indexVerification?.retrieved ?? 0,
+            searchable: indexVerification?.searchable ?? false,
+            workspaceFileCount: repoFiles.count,
+            indexStats: indexStats,
+            persistenceError: searchIndex != nil ? await searchIndex!.persistenceError : nil
+        )
+
+        logger.info("pipeline.verify embeddingLoaded=\(diagnostic.embeddingModelLoaded) stored=\(diagnostic.storedEmbeddings) persisted=\(diagnostic.persistedEmbeddings) searchable=\(diagnostic.searchable) files=\(diagnostic.workspaceFileCount)")
+        return diagnostic
     }
 
     func refreshRepositoryWorkspaceAfterChanges() async {
@@ -1514,7 +1578,9 @@ final class AIOrchestrator {
         do {
             let hits = try await searchCode(query: retrievalQuery, topK: 12)
             usedSemanticSearch = true
-            for hit in hits {
+            let qualifiedHits = hits.filter { $0.score >= Self.minimumRelevanceScore }
+            logger.info("context.search total_hits=\(hits.count) qualified_hits=\(qualifiedHits.count) min_score=\(Self.minimumRelevanceScore)")
+            for hit in qualifiedHits {
                 let normalizedPath = hit.filePath.lowercased()
                 let chunkKey = "\(normalizedPath)#\(hit.chunk.startLine)-\(hit.chunk.endLine)"
                 guard !routeHintPaths.contains(normalizedPath) else { continue }
