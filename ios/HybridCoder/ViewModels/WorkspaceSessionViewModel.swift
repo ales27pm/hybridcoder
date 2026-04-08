@@ -5,7 +5,7 @@ import Foundation
 final class WorkspaceSessionViewModel {
     enum SandboxWorkspace {
         case repository(URL)
-        case prototype(SandboxProject)
+        case prototype(StudioProject)
 
         var title: String {
             switch self {
@@ -75,7 +75,7 @@ final class WorkspaceSessionViewModel {
     var repositoryWorkspaceBadgeText: String { repositoryWorkspaceKind.badgeText }
     var repositoryWorkspaceDetailText: String { repositoryWorkspaceKind.detailText }
 
-    func activeSandboxWorkspace(prototype: SandboxProject?) -> SandboxWorkspace? {
+    func activeSandboxWorkspace(prototype: StudioProject?) -> SandboxWorkspace? {
         if let url = activeRepositoryURL { return .repository(url) }
         if let prototype { return .prototype(prototype) }
         return nil
@@ -92,7 +92,7 @@ final class WorkspaceSessionViewModel {
         Task {
             await orchestrator.syncPrototypeFilesFromDisk()
             if let updatedProject = orchestrator.activePrototypeProject {
-                await sandboxViewModel.replaceProjectFiles(updatedProject)
+                await sandboxViewModel.replaceProjectFiles(updatedProject.asStudioProject)
             }
         }
     }
@@ -196,7 +196,7 @@ final class WorkspaceSessionViewModel {
     }
 
     func closeRepository(studioContainer: StudioContainerViewModel, sandboxViewModel: SandboxViewModel) {
-        let prototypeToRestore = sandboxViewModel.activeProject
+        let prototypeToRestore = sandboxViewModel.activeStudioProject
 
         cancelRepositoryLoad(stopActiveResource: true)
 
@@ -204,8 +204,8 @@ final class WorkspaceSessionViewModel {
             await orchestrator.closeRepo()
             if let prototypeToRestore,
                self.activeRepositoryURL == nil,
-               sandboxViewModel.activeProject?.id == prototypeToRestore.id {
-                await orchestrator.openPrototypeWorkspace(prototypeToRestore)
+               sandboxViewModel.activeStudioProject?.id == prototypeToRestore.id {
+                await orchestrator.openPrototypeWorkspace(prototypeToRestore.asLegacySandboxProject())
             }
         }
 

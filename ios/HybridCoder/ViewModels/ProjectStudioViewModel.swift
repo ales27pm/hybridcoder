@@ -28,15 +28,15 @@ final class ProjectStudioViewModel {
     }
 
     func openPrototypeProject(_ project: SandboxProject, workspace: WorkspaceSessionViewModel, container: StudioContainerViewModel) {
+        openStudioProject(project.asStudioProject, workspace: workspace, container: container)
+    }
+
+    func openStudioProject(_ project: StudioProject, workspace: WorkspaceSessionViewModel, container: StudioContainerViewModel) {
         if workspace.activeRepositoryURL != nil {
             closeRepository(workspace: workspace, container: container)
         }
         sandboxViewModel.openProject(project)
         container.selectedSection = .chat
-    }
-
-    func openStudioProject(_ project: StudioProject, workspace: WorkspaceSessionViewModel, container: StudioContainerViewModel) {
-        openPrototypeProject(project.asLegacySandboxProject(), workspace: workspace, container: container)
     }
 
     func createProject(from spec: NewProjectSpec, workspace: WorkspaceSessionViewModel, container: StudioContainerViewModel) {

@@ -182,7 +182,7 @@ struct ProjectHubView: View {
                     disabled: workspaceViewModel.activeRepositoryURL == nil || projectStudioViewModel.activeStudioProject == nil
                 ) {
                     Task {
-                        guard let project = projectStudioViewModel.sandboxViewModel.activeProject,
+                        guard let project = projectStudioViewModel.sandboxViewModel.activeStudioProject,
                               let repoURL = workspaceViewModel.activeRepositoryURL else { return }
                         await projectStudioViewModel.sandboxViewModel.exportStateFromProjectFolder(project.id, sourceRoot: repoURL)
                     }
@@ -195,7 +195,7 @@ struct ProjectHubView: View {
                     disabled: workspaceViewModel.activeRepositoryURL == nil || projectStudioViewModel.activeStudioProject == nil
                 ) {
                     Task {
-                        guard let project = projectStudioViewModel.sandboxViewModel.activeProject,
+                        guard let project = projectStudioViewModel.sandboxViewModel.activeStudioProject,
                               let repoURL = workspaceViewModel.activeRepositoryURL else { return }
                         _ = await projectStudioViewModel.sandboxViewModel.importStateToProjectFolder(project.id, destinationRoot: repoURL)
                     }
