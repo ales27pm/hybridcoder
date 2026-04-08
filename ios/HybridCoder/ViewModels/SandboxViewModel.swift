@@ -24,7 +24,7 @@ final class SandboxViewModel {
 
     // Compatibility-only views for legacy seams.
     var projects: [SandboxProject] {
-        studioProjects.map(\.asLegacySandboxProject)
+        studioProjects.map { $0.asLegacySandboxProject() }
     }
 
     var activeProject: SandboxProject? {
@@ -43,8 +43,12 @@ final class SandboxViewModel {
 
             if let loadedLegacy: [SandboxProject] = try await secureStore.getObject(legacyStorageKey, as: [SandboxProject].self) {
                 studioProjects = loadedLegacy.map(\.asStudioProject).sorted { $0.lastOpenedAt > $1.lastOpenedAt }
-                await saveProjects()
-                try await secureStore.deleteItem(legacyStorageKey)
+                guard await saveProjects() else { return }
+                do {
+                    try await secureStore.deleteItem(legacyStorageKey)
+                } catch {
+                    logger.error("Failed to delete legacy sandbox projects key: \(error.localizedDescription)")
+                }
                 return
             }
 
@@ -101,6 +105,8 @@ final class SandboxViewModel {
 
     func openProject(_ project: StudioProject) {
         let previous = activeStudioProject
+        let targetProjectID = project.id
+        restoredState = nil
         if let idx = studioProjects.firstIndex(where: { $0.id == project.id }) {
             studioProjects[idx].lastOpenedAt = Date()
             let opened = studioProjects.remove(at: idx)
@@ -116,7 +122,13 @@ final class SandboxViewModel {
         notifyActiveProjectChangedIfNeeded(previous: previous)
         Task {
             await saveProjects()
-            restoredState = await stateMemory.loadState(for: project.id)
+            let loadedState = await stateMemory.loadState(for: targetProjectID)
+            guard activeStudioProject?.id == targetProjectID else { return }
+            guard let loadedState, loadedState.projectID == targetProjectID else {
+                restoredState = nil
+                return
+            }
+            restoredState = loadedState
         }
     }
 
@@ -125,8 +137,9 @@ final class SandboxViewModel {
     }
 
     func closeProject() {
+        let stateSnapshot = restoredState
         if let project = activeStudioProject {
-            Task { await persistCurrentState(for: project) }
+            Task { await persistCurrentState(for: project, existingState: stateSnapshot) }
         }
         let previous = activeStudioProject
         activeStudioProject = nil
@@ -210,11 +223,16 @@ final class SandboxViewModel {
     }
 
     func duplicateProject(_ project: StudioProject) async {
-        var duplicate = project
-        duplicate.name = "\(project.name) Copy"
-        duplicate.metadata.source = .duplicated
-        duplicate.lastOpenedAt = Date()
-        studioProjects.removeAll { $0.id == duplicate.id }
+        var duplicateMetadata = project.metadata
+        duplicateMetadata.source = .duplicated
+        let duplicate = StudioProject(
+            id: UUID(),
+            name: "\(project.name) Copy",
+            metadata: duplicateMetadata,
+            createdAt: Date(),
+            lastOpenedAt: Date(),
+            files: project.files
+        )
         studioProjects.insert(duplicate, at: 0)
         await saveProjects()
     }
@@ -260,38 +278,42 @@ final class SandboxViewModel {
 
     func saveActiveEditorState(fileID: UUID?, cursorPosition: Int?, tab: String?) async {
         guard let project = activeStudioProject else { return }
-        var state = restoredState ?? PrototypeStateMemory.ProjectState(
+        var state = restoredState?.projectID == project.id ? restoredState : nil
+        state = state ?? PrototypeStateMemory.ProjectState(
             projectID: project.id,
             conversationSnippets: [],
             lastSavedAt: Date()
         )
-        state.activeFileID = fileID
-        state.editorCursorPosition = cursorPosition
-        state.lastOpenedTab = tab
-        state.lastSavedAt = Date()
-        restoredState = state
-        await stateMemory.saveState(state)
+        guard var resolvedState = state else { return }
+        resolvedState.activeFileID = fileID
+        resolvedState.editorCursorPosition = cursorPosition
+        resolvedState.lastOpenedTab = tab
+        resolvedState.lastSavedAt = Date()
+        restoredState = resolvedState
+        await stateMemory.saveState(resolvedState)
     }
 
     func appendConversationSnippet(role: String, content: String) async {
         guard let project = activeStudioProject else { return }
-        var state = restoredState ?? PrototypeStateMemory.ProjectState(
+        var state = restoredState?.projectID == project.id ? restoredState : nil
+        state = state ?? PrototypeStateMemory.ProjectState(
             projectID: project.id,
             conversationSnippets: [],
             lastSavedAt: Date()
         )
+        guard var resolvedState = state else { return }
         let snippet = PrototypeStateMemory.ProjectState.ConversationSnippet(
             role: role,
             content: String(content.prefix(500)),
             timestamp: Date()
         )
-        state.conversationSnippets.append(snippet)
-        if state.conversationSnippets.count > 20 {
-            state.conversationSnippets = Array(state.conversationSnippets.suffix(20))
+        resolvedState.conversationSnippets.append(snippet)
+        if resolvedState.conversationSnippets.count > 20 {
+            resolvedState.conversationSnippets = Array(resolvedState.conversationSnippets.suffix(20))
         }
-        state.lastSavedAt = Date()
-        restoredState = state
-        await stateMemory.saveState(state)
+        resolvedState.lastSavedAt = Date()
+        restoredState = resolvedState
+        await stateMemory.saveState(resolvedState)
     }
 
     func importStateToProjectFolder(_ projectID: UUID, destinationRoot: URL) async -> Bool {
@@ -306,8 +328,11 @@ final class SandboxViewModel {
         }
     }
 
-    private func persistCurrentState(for project: StudioProject) async {
-        var state = restoredState ?? PrototypeStateMemory.ProjectState(
+    private func persistCurrentState(
+        for project: StudioProject,
+        existingState: PrototypeStateMemory.ProjectState?
+    ) async {
+        var state = (existingState?.projectID == project.id ? existingState : nil) ?? PrototypeStateMemory.ProjectState(
             projectID: project.id,
             conversationSnippets: [],
             lastSavedAt: Date()
@@ -316,11 +341,14 @@ final class SandboxViewModel {
         await stateMemory.saveState(state)
     }
 
-    private func saveProjects() async {
+    @discardableResult
+    private func saveProjects() async -> Bool {
         do {
             try await secureStore.setObject(studioStorageKey, value: studioProjects)
+            return true
         } catch {
             logger.error("Failed to save studio projects to Keychain: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -329,7 +357,7 @@ final class SandboxViewModel {
             let legacyStorage = try AsyncStorageService(name: "sandbox_storage.sqlite")
             if let loaded: [SandboxProject] = try await legacyStorage.getObject(legacyStorageKey, as: [SandboxProject].self) {
                 studioProjects = loaded.map(\.asStudioProject).sorted { $0.lastOpenedAt > $1.lastOpenedAt }
-                await saveProjects()
+                guard await saveProjects() else { return }
                 try await legacyStorage.removeItem(legacyStorageKey)
                 logger.info("Migrated \(loaded.count) sandbox projects from SQLite to StudioProject storage")
             }
@@ -355,6 +383,7 @@ final class SandboxViewModel {
 
         let previous = activeStudioProject
         activeStudioProject = updatedProject
+        restoredState = nil
         if shouldNotifyActiveProject {
             notifyActiveProjectChangedIfNeeded(previous: previous)
         }
