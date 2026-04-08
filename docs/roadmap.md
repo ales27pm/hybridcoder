@@ -26,6 +26,14 @@ Implement the bytecoding runtime: introduce an agent layer that can turn user in
 - iterative apply, validate, and retry loops
 - transition from chat request to real workspace progress
 
+### Phase 6 current status (April 8, 2026)
+
+- classification: less patch-centric but still partial
+- main `.patchPlanning` chat entry now runs a goal-first runtime path (`goal -> action plan -> execute -> validate -> report`)
+- runtime execution now prefers goal-derived workspace actions first and falls back to patch-backed writes only when needed
+- primary chat flow now receives and stores agent-runtime reports directly
+- the runtime is still not fully agentic: patch-backed write strategies remain central for many create/update edits, `PatchResult` is still a first-class output, and no iterative validate -> replan -> retry loop exists yet
+
 ## Phase 7
 Delete obsolete files and finish the documentation and code alignment.
 
@@ -44,6 +52,6 @@ The repository now has partial progress inside several phases:
 - Phase 2 is underway through `StudioProject` and manifest-driven Expo scaffolds
 - Phase 4 is underway through structural preview coordination and diagnostics
 - Phase 5 is underway through an Expo-first imported workspace path with generic repo fallback
-- Phase 6 is underway through a planner/coordinator layer on top of the existing guarded patch runtime
+- Phase 6 is underway through goal-first runtime entry in the main chat path, action-sequenced execution, and guarded patch fallback
 
-Those phase starts should not be mistaken for completion. The remaining gaps are still the full builder project migration, richer scaffold breadth, stronger preview/runtime truthfulness in every screen, and a more complete bytecoding execution loop.
+Those phase starts should not be mistaken for completion. The remaining gaps are still the full builder project migration, richer scaffold breadth, stronger preview/runtime truthfulness in every screen, direct create/update action generation beyond patch fallback, and a validate -> replan -> retry loop for the bytecoding runtime.
