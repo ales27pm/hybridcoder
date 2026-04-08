@@ -14,6 +14,8 @@ nonisolated enum IntentPlanner {
             actions.append(contentsOf: planPatchBackedActions(goal: safeGoal, patchPlan: patchPlan))
         }
 
+        actions.append(contentsOf: planGoalBackedActions(goal: safeGoal))
+
         if actions.isEmpty {
             actions.append(contentsOf: exploratoryActions(goal: safeGoal, workspace: workspace))
         }
@@ -127,6 +129,126 @@ nonisolated enum IntentPlanner {
         operations.allSatisfy { $0.searchText.isEmpty }
     }
 
+    private static func planGoalBackedActions(goal: String) -> [AgentPlannedAction] {
+        var actions: [AgentPlannedAction] = []
+        var seenKeys: Set<String> = []
+
+        for intent in goalFileOperationIntents(goal: goal) {
+            switch intent {
+            case .rename(let from, let to):
+                let key = "rename|\(from.lowercased())|\(to.lowercased())"
+                guard !seenKeys.contains(key) else { continue }
+                seenKeys.insert(key)
+                actions.append(
+                    AgentPlannedAction(
+                        title: "Rename \(from) to \(to)",
+                        action: .renameFile(
+                            from: from,
+                            to: to,
+                            reason: "Requested directly by the goal: \(goal)"
+                        ),
+                        detail: "Goal-derived rename action for \(from)"
+                    )
+                )
+
+            case .delete(let path):
+                let key = "delete|\(path.lowercased())"
+                guard !seenKeys.contains(key) else { continue }
+                seenKeys.insert(key)
+                actions.append(
+                    AgentPlannedAction(
+                        title: "Delete \(path)",
+                        action: .deleteFile(
+                            path: path,
+                            reason: "Requested directly by the goal: \(goal)"
+                        ),
+                        detail: "Goal-derived delete action for \(path)"
+                    )
+                )
+            }
+        }
+
+        return actions
+    }
+
+    private static func goalFileOperationIntents(goal: String) -> [GoalFileOperationIntent] {
+        parseRenameIntents(goal) + parseDeleteIntents(goal)
+    }
+
+    private static func parseRenameIntents(_ goal: String) -> [GoalFileOperationIntent] {
+        let matches = regexCapturePairs(
+            pattern: #"(?i)\b(?:rename|move)\s+(?:the\s+)?(?:file\s+)?[`'"]?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)[`'"]?\s+(?:to|into)\s+[`'"]?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)[`'"]?"#,
+            in: goal,
+            firstGroup: 1,
+            secondGroup: 2
+        )
+        return matches.compactMap { pair in
+            let from = normalizeWorkspacePath(pair.0)
+            let to = normalizeWorkspacePath(pair.1)
+            guard !from.isEmpty, !to.isEmpty, from.lowercased() != to.lowercased() else { return nil }
+            return .rename(from: from, to: to)
+        }
+    }
+
+    private static func parseDeleteIntents(_ goal: String) -> [GoalFileOperationIntent] {
+        let paths = regexCaptures(
+            pattern: #"(?i)\b(?:delete|remove)\s+(?:the\s+)?(?:file\s+)?[`'"]?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)[`'"]?"#,
+            in: goal,
+            captureGroup: 1
+        )
+        return paths.compactMap { rawPath in
+            let path = normalizeWorkspacePath(rawPath)
+            guard !path.isEmpty else { return nil }
+            return .delete(path: path)
+        }
+    }
+
+    private static func normalizeWorkspacePath(_ rawPath: String) -> String {
+        var path = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        path = path.replacingOccurrences(of: "\\", with: "/")
+        while path.hasPrefix("./") {
+            path.removeFirst(2)
+        }
+        while path.hasPrefix("/") {
+            path.removeFirst()
+        }
+        return path
+    }
+
+    private static func regexCapturePairs(
+        pattern: String,
+        in text: String,
+        firstGroup: Int,
+        secondGroup: Int
+    ) -> [(String, String)] {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let nsText = text as NSString
+        let range = NSRange(location: 0, length: nsText.length)
+        return regex.matches(in: text, range: range).compactMap { match in
+            guard match.numberOfRanges > max(firstGroup, secondGroup) else { return nil }
+            let firstRange = match.range(at: firstGroup)
+            let secondRange = match.range(at: secondGroup)
+            guard firstRange.location != NSNotFound, secondRange.location != NSNotFound else { return nil }
+            return (nsText.substring(with: firstRange), nsText.substring(with: secondRange))
+        }
+    }
+
+    private static func regexCaptures(
+        pattern: String,
+        in text: String,
+        captureGroup: Int
+    ) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let nsText = text as NSString
+        let range = NSRange(location: 0, length: nsText.length)
+        return regex.matches(in: text, range: range).compactMap { match in
+            guard match.numberOfRanges > captureGroup else { return nil }
+            let captureRange = match.range(at: captureGroup)
+            guard captureRange.location != NSNotFound else { return nil }
+            return nsText.substring(with: captureRange)
+        }
+    }
+
     private static func groupedOperations(_ operations: [PatchOperation]) -> [(filePath: String, operations: [PatchOperation])] {
         var orderedGroups: [(filePath: String, operations: [PatchOperation])] = []
 
@@ -140,4 +262,9 @@ nonisolated enum IntentPlanner {
 
         return orderedGroups
     }
+}
+
+private enum GoalFileOperationIntent {
+    case rename(from: String, to: String)
+    case delete(path: String)
 }

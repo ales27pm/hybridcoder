@@ -105,4 +105,82 @@ struct AgentRuntimeTests {
         #expect(report.chatSummary.contains("Planned actions: 3. Executed actions: 2. Blocked actions: 1."))
         #expect(report.chatSummary.contains("Validation: Validation found 1 warning."))
     }
+
+    @Test func plannerDerivesRenameAndDeleteActionsFromGoalWithoutPatchFallback() {
+        let workspace = AgentWorkspaceContext(
+            kind: .importedExpo,
+            projectName: "expo-app",
+            projectKind: .importedExpo,
+            entryFile: "app/index.tsx",
+            hasExpoRouter: true,
+            dependencies: ["expo", "react-native"]
+        )
+
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Rename app/legacy.tsx to app/home.tsx and delete app/unused.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        #expect(executionPlan.actions.map(\.title) == [
+            "Rename app/legacy.tsx to app/home.tsx",
+            "Delete app/unused.tsx",
+            "Validate workspace after actions"
+        ])
+    }
+
+    @Test func coordinatorExecutesGoalDerivedRenameWithoutPatchPlan() async throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Rename App.tsx to app/AppScreen.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        var renamedFrom: String?
+        var renamedTo: String?
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    AgentWorkspaceFileSnapshot(path: path, exists: path == "App.tsx", content: nil)
+                },
+                validatePatchPlan: { _ in
+                    Issue.record("Patch validation should not run for goal-derived rename actions without patch fallback.")
+                    return []
+                },
+                applyPatchPlan: { _ in
+                    Issue.record("Patch apply should not run for goal-derived rename actions without patch fallback.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: PatchPlan(summary: "unused", operations: []),
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in },
+                updateFile: { _, _ in },
+                renameFile: { from, to in
+                    renamedFrom = from
+                    renamedTo = to
+                },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        #expect(renamedFrom == "App.tsx")
+        #expect(renamedTo == "app/AppScreen.tsx")
+        #expect(outcome.didMakeMeaningfulWorkspaceProgress)
+        #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
+        #expect(outcome.patchResult.changedFiles.sorted() == ["App.tsx", "app/AppScreen.tsx"])
+        #expect(outcome.executedActions.count == 2)
+    }
 }

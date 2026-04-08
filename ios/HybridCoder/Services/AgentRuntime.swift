@@ -73,10 +73,29 @@ nonisolated enum AgentRuntime {
         let plannedActions = outcome.executionPlan.actions
         let blockedActions = outcome.blockedActions
         let executedActions = outcome.executedActions
+        let goalDerivedWriteActions = plannedActions.filter { action in
+            switch action.action {
+            case .createFile(_, let strategy, _), .updateFile(_, let strategy, _):
+                if case .direct = strategy {
+                    return true
+                }
+                return false
+            case .renameFile, .deleteFile:
+                return true
+            case .inspectFile, .validateWorkspace:
+                return false
+            }
+        }
 
         let plannerDetail: String
         if let fallbackPlan = outcome.executionPlan.fallbackPatchPlan, fallbackPlan.pendingCount > 0 {
-            plannerDetail = "Planner turned \(fallbackPlan.pendingCount) pending patch operation\(fallbackPlan.pendingCount == 1 ? "" : "s") into ordered workspace actions for \(workspace.displayName.lowercased())."
+            if goalDerivedWriteActions.isEmpty {
+                plannerDetail = "Planner turned \(fallbackPlan.pendingCount) pending patch operation\(fallbackPlan.pendingCount == 1 ? "" : "s") into ordered workspace actions for \(workspace.displayName.lowercased())."
+            } else {
+                plannerDetail = "Planner turned \(fallbackPlan.pendingCount) pending patch operation\(fallbackPlan.pendingCount == 1 ? "" : "s") into ordered workspace actions and appended \(goalDerivedWriteActions.count) goal-derived write action\(goalDerivedWriteActions.count == 1 ? "" : "s")."
+            }
+        } else if !goalDerivedWriteActions.isEmpty {
+            plannerDetail = "Planner built \(goalDerivedWriteActions.count) goal-derived write action\(goalDerivedWriteActions.count == 1 ? "" : "s") directly from the user goal and workspace context."
         } else {
             plannerDetail = "Planner built an exploratory workspace-action sequence from the user goal and current workspace context."
         }
