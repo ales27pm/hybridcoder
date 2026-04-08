@@ -44,6 +44,7 @@ final class SandboxViewModel {
             if let loadedLegacy: [SandboxProject] = try await secureStore.getObject(legacyStorageKey, as: [SandboxProject].self) {
                 studioProjects = loadedLegacy.map(\.asStudioProject).sorted { $0.lastOpenedAt > $1.lastOpenedAt }
                 await saveProjects()
+                try await secureStore.deleteItem(legacyStorageKey)
                 return
             }
 
@@ -56,8 +57,9 @@ final class SandboxViewModel {
 
     func createProject(name: String, template: SandboxProject.TemplateType) async {
         let fileName = "App.js"
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled" : name
         let spec = NewProjectSpec(
-            name: name,
+            name: normalizedName,
             templateID: legacyTemplateID(for: template),
             kind: .expoJS,
             navigationPreset: template == .navigation ? .stack : .none,
@@ -212,7 +214,9 @@ final class SandboxViewModel {
         duplicate.name = "\(project.name) Copy"
         duplicate.metadata.source = .duplicated
         duplicate.lastOpenedAt = Date()
-        await insertAndOpenProject(duplicate)
+        studioProjects.removeAll { $0.id == duplicate.id }
+        studioProjects.insert(duplicate, at: 0)
+        await saveProjects()
     }
 
     func duplicateProject(_ legacyProject: SandboxProject) async {
@@ -240,7 +244,9 @@ final class SandboxViewModel {
     }
 
     func expoGoDeepLink(for project: StudioProject) -> URL? {
-        guard let snackID = studioProjects.first(where: { $0.id == project.id })?.asLegacySandboxProject().snackID else { return nil }
+        let snackID = studioProjects.first(where: { $0.id == project.id })?.asLegacySandboxProject().snackID
+            ?? project.asLegacySandboxProject().snackID
+        guard let snackID else { return nil }
         return URL(string: "exp://exp.host/@snack/\(snackID)")
     }
 
