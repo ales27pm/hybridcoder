@@ -290,7 +290,82 @@ struct SidebarMenuView: View {
                         .padding(.vertical, 4)
                     }
                 }
+            } else if let project = viewModel.sandboxViewModel.activeStudioProject, !project.files.isEmpty {
+                prototypeFilesSection(project: project)
             }
+        }
+    }
+
+    private func prototypeFilesSection(project: StudioProject) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("FILES")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Theme.dimText)
+
+                Spacer()
+
+                Text("\(project.files.count)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Theme.dimText)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(project.files) { file in
+                        Button {
+                            selectedSection = .sandbox
+                            closeSidebar()
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: prototypeFileIcon(for: file.path))
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(prototypeFileIconColor(for: file.path))
+                                    .frame(width: 18)
+
+                                Text(file.fileName)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.8))
+                                    .lineLimit(1)
+
+                                Spacer()
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 7)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    private func prototypeFileIcon(for path: String) -> String {
+        let ext = (path as NSString).pathExtension.lowercased()
+        switch ext {
+        case "js", "jsx": return "j.square"
+        case "ts", "tsx": return "t.square"
+        case "json": return "curlybraces"
+        case "css": return "paintbrush"
+        case "html": return "globe"
+        case "md": return "doc.richtext"
+        default: return "doc.text"
+        }
+    }
+
+    private func prototypeFileIconColor(for path: String) -> Color {
+        let ext = (path as NSString).pathExtension.lowercased()
+        switch ext {
+        case "js", "jsx": return .yellow
+        case "ts", "tsx": return .blue
+        case "json": return .orange
+        case "css": return .purple
+        default: return Theme.dimText
         }
     }
 
