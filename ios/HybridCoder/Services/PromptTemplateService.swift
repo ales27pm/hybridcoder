@@ -250,14 +250,11 @@ actor PromptTemplateService {
         let escapedDollarSentinel = "__HYBRIDCODER_ESCAPED_DOLLAR_\(UUID().uuidString)__"
         var working = template.body.replacingOccurrences(of: "\\$", with: escapedDollarSentinel)
 
-        let pattern = #"\$\{(@(?::\d+)?)|(\d+)\}|\$(\d+)"#
+        let pattern = #"\$\{(?:(@(?::\d+)?)|(\d+))\}|\$(\d+)"#
         let regex = try NSRegularExpression(pattern: pattern)
         let matches = regex.matches(in: working, range: NSRange(working.startIndex..<working.endIndex, in: working))
 
-        for match in matches.reversed() {
-            guard let fullRange = Range(match.range(at: 0), in: working) else { continue }
-            let replacement: String
-
+        func replacement(for match: NSTextCheckingResult) throws -> String? {
             let positionalRange = Range(match.range(at: 2), in: working) ?? Range(match.range(at: 3), in: working)
             if let positionalRange {
                 let token = String(working[positionalRange])
@@ -267,27 +264,35 @@ actor PromptTemplateService {
                 guard index <= arguments.count else {
                     throw TemplateError.missingRequiredArgument(template.name, requiredIndex: index, providedCount: arguments.count)
                 }
-                replacement = arguments[index - 1]
+                return arguments[index - 1]
             } else if let variadicRange = Range(match.range(at: 1), in: working) {
                 let token = String(working[variadicRange])
                 if token == "@" {
-                    replacement = arguments.joined(separator: " ")
+                    return arguments.joined(separator: " ")
                 } else if token.hasPrefix("@:") {
                     let startToken = String(token.dropFirst(2))
                     guard let startIndex = Int(startToken), startIndex > 0 else {
                         throw TemplateError.malformedInterpolation(template.name, "Variadic placeholder must be positive: ${\(token)}")
                     }
                     if startIndex > arguments.count {
-                        replacement = ""
+                        return ""
                     } else {
-                        replacement = arguments[(startIndex - 1)...].joined(separator: " ")
+                        return arguments[(startIndex - 1)...].joined(separator: " ")
                     }
                 } else {
                     throw TemplateError.malformedInterpolation(template.name, "Unsupported interpolation token: ${\(token)}")
                 }
-            } else {
-                continue
             }
+            return nil
+        }
+
+        for match in matches {
+            _ = try replacement(for: match)
+        }
+
+        for match in matches.reversed() {
+            guard let fullRange = Range(match.range(at: 0), in: working),
+                  let replacement = try replacement(for: match) else { continue }
 
             working.replaceSubrange(fullRange, with: replacement)
         }

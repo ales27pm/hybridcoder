@@ -80,7 +80,7 @@ actor HFTokenizer {
                 }
             }
 
-            let type: String
+            let type: String?
             let vocab: [String: Int]
             let merges: [MergeEntry]?
             let unk_token: String?
@@ -130,8 +130,9 @@ actor HFTokenizer {
             throw TokenizerError.invalidFormat("tokenizer.json decode failed: \(error.localizedDescription)")
         }
 
-        guard decoded.model.type.uppercased() == "BPE" else {
-            throw TokenizerError.incompatibleTokenizer("Expected model.type=BPE, got \(decoded.model.type)")
+        if let modelType = decoded.model.type,
+           modelType.uppercased() != "BPE" {
+            throw TokenizerError.incompatibleTokenizer("Expected model.type=BPE, got \(modelType)")
         }
 
         let preTokenizer = decoded.pre_tokenizer

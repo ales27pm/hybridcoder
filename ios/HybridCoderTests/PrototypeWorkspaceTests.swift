@@ -32,7 +32,7 @@ struct PrototypeWorkspaceTests {
         await viewModel.sandboxViewModel.createProject(name: "State Memory", template: .blank)
         let repoURL = URL(fileURLWithPath: "/tmp/repo-sandbox")
 
-        viewModel.activeRepositoryURL = repoURL
+        viewModel.workspaceSession.activeRepositoryURL = repoURL
 
         let workspace = try #require(viewModel.activeSandboxWorkspace)
         switch workspace {

@@ -558,7 +558,17 @@ final class AIOrchestrator {
             return (resolvedRepoRoot, resolvedRepoRoot)
         }
 
-        let resolvedPreferred = preferredWorkingDirectory.standardizedFileURL.resolvingSymlinksInPath()
+        var preferredDirectory = preferredWorkingDirectory.standardizedFileURL
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: preferredDirectory.path(percentEncoded: false), isDirectory: &isDirectory) {
+            if !isDirectory.boolValue {
+                preferredDirectory = preferredDirectory.deletingLastPathComponent()
+            }
+        } else if !preferredDirectory.hasDirectoryPath && !preferredDirectory.pathExtension.isEmpty {
+            preferredDirectory = preferredDirectory.deletingLastPathComponent()
+        }
+
+        let resolvedPreferred = preferredDirectory.resolvingSymlinksInPath()
         let repoComponents = resolvedRepoRoot.pathComponents.map { $0.lowercased() }
         let preferredComponents = resolvedPreferred.pathComponents.map { $0.lowercased() }
 
@@ -1258,8 +1268,23 @@ final class AIOrchestrator {
         var remaining = totalLimit
         var remainingNonCodeBudget = maxNonCodeBudget
 
+        func separatorCostForNextSection() -> Int {
+            sections.isEmpty ? 0 : 2
+        }
+
+        func appendSection(_ section: String, countsAgainstNonCodeBudget: Bool) {
+            let separatorCost = separatorCostForNextSection()
+            guard section.count + separatorCost <= remaining else { return }
+            sections.append(section)
+            remaining -= section.count + separatorCost
+            if countsAgainstNonCodeBudget {
+                remainingNonCodeBudget = max(0, remainingNonCodeBudget - section.count - separatorCost)
+            }
+        }
+
         if !policyText.isEmpty {
-            let policyLimit = min(remaining, remainingNonCodeBudget)
+            let separatorCost = separatorCostForNextSection()
+            let policyLimit = min(remaining, remainingNonCodeBudget) - separatorCost
             let clipped = clipWrappedSection(
                 openingTag: "<policy_context>\n",
                 body: policyText,
@@ -1267,14 +1292,13 @@ final class AIOrchestrator {
                 limit: policyLimit
             )
             if !clipped.isEmpty {
-                sections.append(clipped)
-                remaining -= clipped.count
-                remainingNonCodeBudget = max(0, remainingNonCodeBudget - clipped.count)
+                appendSection(clipped, countsAgainstNonCodeBudget: true)
             }
         }
 
         if !conversationText.isEmpty, remaining > 0, remainingNonCodeBudget > 0 {
-            let conversationLimit = min(remaining, remainingNonCodeBudget)
+            let separatorCost = separatorCostForNextSection()
+            let conversationLimit = min(remaining, remainingNonCodeBudget) - separatorCost
             let clipped = clipExistingWrappedBlock(
                 conversationText,
                 openingTag: "<conversation_memory>\n",
@@ -1282,16 +1306,15 @@ final class AIOrchestrator {
                 limit: min(conversationLimit, allowedConversationBudget)
             )
             if !clipped.isEmpty {
-                sections.append(clipped)
-                remaining -= clipped.count
-                remainingNonCodeBudget = max(0, remainingNonCodeBudget - clipped.count)
+                appendSection(clipped, countsAgainstNonCodeBudget: true)
             }
         }
 
         if hasCode, remaining > 0 {
-            let clippedCode = String(codeText.prefix(remaining)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let codeLimit = max(0, remaining - separatorCostForNextSection())
+            let clippedCode = String(codeText.prefix(codeLimit)).trimmingCharacters(in: .whitespacesAndNewlines)
             if !clippedCode.isEmpty {
-                sections.append(clippedCode)
+                appendSection(clippedCode, countsAgainstNonCodeBudget: false)
             }
         }
 

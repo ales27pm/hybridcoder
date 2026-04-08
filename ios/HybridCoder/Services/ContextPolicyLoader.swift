@@ -85,6 +85,19 @@ nonisolated final class ContextPolicyLoader {
         let start = directoryURL.standardizedFileURL.resolvingSymlinksInPath()
         let boundary = boundaryURL?.standardizedFileURL.resolvingSymlinksInPath()
 
+        if let boundary, !isWithinBoundary(candidate: start, boundary: boundary) {
+            let warning = LoadWarning(
+                fileName: start.lastPathComponent,
+                sourcePath: makeDisplayPath(fileURL: start, rootURL: boundary),
+                message: "Policy start directory resolves outside boundary"
+            )
+            let diagnostic = DiscoveryDiagnostic.warning(WarningDiagnostic(
+                sourcePath: warning.sourcePath,
+                message: warning.message
+            ))
+            return (ContextPolicySnapshot(files: [], diagnostics: [diagnostic]), [warning])
+        }
+
         var directories: [URL] = []
         var cursor = start
 

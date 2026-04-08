@@ -68,15 +68,21 @@ final class SandboxViewModel {
     }
 
     func openProject(_ project: SandboxProject) {
+        let previous = activeProject
         if let idx = projects.firstIndex(where: { $0.id == project.id }) {
             projects[idx].lastOpenedAt = Date()
-            let previous = activeProject
             activeProject = projects[idx]
-            notifyActiveProjectChangedIfNeeded(previous: previous)
-            Task {
-                await saveProjects()
-                restoredState = await stateMemory.loadState(for: project.id)
-            }
+        } else {
+            var opened = project
+            opened.lastOpenedAt = Date()
+            projects.insert(opened, at: 0)
+            activeProject = opened
+        }
+
+        notifyActiveProjectChangedIfNeeded(previous: previous)
+        Task {
+            await saveProjects()
+            restoredState = await stateMemory.loadState(for: project.id)
         }
     }
 

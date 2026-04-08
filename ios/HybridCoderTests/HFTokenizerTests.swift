@@ -100,14 +100,14 @@ struct HFTokenizerTests {
     }
 
     private func tokenizerFixtureDirectory() throws -> URL {
-        let testsRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-        let fixtureDir = testsRoot.appendingPathComponent("Fixtures", isDirectory: true)
-        let tokenizer = fixtureDir.appendingPathComponent("tokenizer.json")
+        let bundle = Bundle(for: HFTokenizerTestsBundleMarker.self)
+        let tokenizer = try #require(bundle.url(forResource: "tokenizer", withExtension: "json"))
 
         guard FileManager.default.fileExists(atPath: tokenizer.path) else {
             throw HFTokenizer.TokenizerError.fileNotFound("Missing test fixture tokenizer.json at \(tokenizer.path)")
         }
-        return fixtureDir
+        return tokenizer.deletingLastPathComponent()
     }
 }
+
+private final class HFTokenizerTestsBundleMarker {}

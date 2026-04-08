@@ -281,13 +281,13 @@ actor PatchEngine {
 
     private static func safeResolvedFileURL(for relativePath: String, repoRoot: URL) throws -> URL {
         let resolvedRoot = repoRoot.standardizedFileURL.resolvingSymlinksInPath()
-        let candidate = repoRoot
+        let candidate = resolvedRoot
             .appending(path: relativePath)
             .standardizedFileURL
             .resolvingSymlinksInPath()
 
-        let rootPath = resolvedRoot.path(percentEncoded: false)
-        let candidatePath = candidate.path(percentEncoded: false)
+        let rootPath = normalizedPath(resolvedRoot.path(percentEncoded: false))
+        let candidatePath = normalizedPath(candidate.path(percentEncoded: false))
 
         if candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/") {
             return candidate
@@ -296,12 +296,20 @@ actor PatchEngine {
         throw PatchError.pathOutsideRepo(relativePath)
     }
 
+    private static func normalizedPath(_ path: String) -> String {
+        var normalized = path
+        while normalized.count > 1 && normalized.hasSuffix("/") {
+            normalized.removeLast()
+        }
+        return normalized
+    }
+
     private static func displayRelativePath(for resolvedFileURL: URL, repoRoot: URL) -> String {
-        let resolvedRootPath = repoRoot
+        let resolvedRootPath = normalizedPath(repoRoot
             .standardizedFileURL
             .resolvingSymlinksInPath()
-            .path(percentEncoded: false)
-        let resolvedFilePath = resolvedFileURL.path(percentEncoded: false)
+            .path(percentEncoded: false))
+        let resolvedFilePath = normalizedPath(resolvedFileURL.path(percentEncoded: false))
 
         guard resolvedFilePath.hasPrefix(resolvedRootPath) else {
             return resolvedFilePath
