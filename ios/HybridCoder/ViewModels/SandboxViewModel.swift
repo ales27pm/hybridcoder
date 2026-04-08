@@ -262,8 +262,9 @@ final class SandboxViewModel {
     }
 
     func expoGoDeepLink(for project: StudioProject) -> URL? {
-        let snackID = studioProjects.first(where: { $0.id == project.id })?.asLegacySandboxProject().snackID
-            ?? project.asLegacySandboxProject().snackID
+        let snackID = project.asLegacySandboxProject().snackID
+            // Compatibility fallback for array-backed legacy projects that may still surface a snack ID.
+            ?? studioProjects.first(where: { $0.id == project.id })?.asLegacySandboxProject().snackID
         guard let snackID else { return nil }
         return URL(string: "exp://exp.host/@snack/\(snackID)")
     }
