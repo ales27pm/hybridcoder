@@ -1,97 +1,33 @@
 import Foundation
 import SwiftUI
 
-nonisolated struct StudioTemplate: Identifiable, Sendable, Hashable {
-    let id: String
-    let name: String
-    let subtitle: String
-    let category: Category
-    let iconName: String
-    let accentColor: Color
-    let kind: ProjectKind
-    let navigationPreset: NavigationPreset
-    let files: [TemplateFileBlueprint]
-
-    nonisolated enum Category: String, CaseIterable, Sendable, Hashable {
-        case starter = "Starter"
-        case navigation = "Navigation"
-        case features = "Features"
-        case fullApp = "Full Apps"
-
-        var iconName: String {
-            switch self {
-            case .starter: return "sparkles"
-            case .navigation: return "arrow.triangle.branch"
-            case .features: return "puzzlepiece"
-            case .fullApp: return "app.badge.checkmark"
-            }
-        }
-    }
-
-    var templateType: SandboxProject.TemplateType {
-        switch id {
-        case "blank_expo_ts", "blank_expo_js": return .blank
-        case "hello_world": return .helloWorld
-        case "stack_starter": return .navigation
-        case "todo_app": return .todoApp
-        case "api_example": return .apiExample
-        default: return .blank
-        }
-    }
-
-    var asProjectTemplate: ProjectTemplate {
-        ProjectTemplate(
-            id: id,
-            name: name,
-            subtitle: subtitle,
-            category: legacyCategory,
-            iconName: iconName,
-            accentColor: accentColor,
-            files: files.map { ProjectTemplate.TemplateFile(name: $0.name, content: $0.content, language: $0.language) }
-        )
-    }
-
-    private var legacyCategory: ProjectTemplate.Category {
-        switch category {
-        case .starter: return .starter
-        case .navigation: return .ui
-        case .features: return .data
-        case .fullApp: return .fullApp
-        }
-    }
-}
-
-nonisolated struct TemplateFileBlueprint: Sendable, Hashable {
-    let name: String
-    let content: String
-    let language: String
-
-    init(name: String, content: String, language: String = "typescript") {
-        self.name = name
-        self.content = content
-        self.language = language
-    }
-}
-
 enum TemplateCatalog {
-    static let all: [StudioTemplate] = starters + navigationTemplates + featureTemplates + fullApps
+    static let blankExpoStarterID = "blank_expo_ts"
+    static let tabsStarterID = "tabs_starter"
+    static let stackStarterID = "stack_starter"
 
-    static func grouped() -> [(StudioTemplate.Category, [StudioTemplate])] {
-        StudioTemplate.Category.allCases.compactMap { category in
-            let templates = all.filter { $0.category == category }
-            return templates.isEmpty ? nil : (category, templates)
+    static let all: [TemplateManifest] = starters + navigationTemplates + featureTemplates + fullApps
+
+    static func grouped() -> [(TemplateManifest.Category, [TemplateManifest])] {
+        TemplateManifest.Category.allCases.compactMap { category in
+            let manifests = all.filter { $0.category == category }
+            return manifests.isEmpty ? nil : (category, manifests)
         }
     }
 
-    static func template(for id: String) -> StudioTemplate? {
+    static func manifest(for id: String) -> TemplateManifest? {
         all.first { $0.id == id }
     }
 
-    static let starters: [StudioTemplate] = [
-        StudioTemplate(
-            id: "blank_expo_ts",
+    static func template(for id: String) -> TemplateManifest? {
+        manifest(for: id)
+    }
+
+    static let starters: [TemplateManifest] = [
+        TemplateManifest(
+            id: blankExpoStarterID,
             name: "Blank (TypeScript)",
-            subtitle: "Empty Expo project with TypeScript",
+            subtitle: "Expo starter with TypeScript, app.json, and package scripts",
             category: .starter,
             iconName: "doc",
             accentColor: .gray,
@@ -99,12 +35,12 @@ enum TemplateCatalog {
             navigationPreset: .none,
             files: BlankExpoTSFiles.files
         ),
-        StudioTemplate(
+        TemplateManifest(
             id: "blank_expo_js",
             name: "Blank (JavaScript)",
-            subtitle: "Empty Expo project with JavaScript",
+            subtitle: "Expo starter with JavaScript for legacy compatibility",
             category: .starter,
-            iconName: "doc",
+            iconName: "doc.plaintext",
             accentColor: .gray,
             kind: .expoJS,
             navigationPreset: .none,
@@ -112,11 +48,11 @@ enum TemplateCatalog {
         ),
     ]
 
-    static let navigationTemplates: [StudioTemplate] = [
-        StudioTemplate(
-            id: "tabs_starter",
-            name: "Tab Navigation",
-            subtitle: "Bottom tab bar with Home, Search, Profile",
+    static let navigationTemplates: [TemplateManifest] = [
+        TemplateManifest(
+            id: tabsStarterID,
+            name: "Tabs Starter",
+            subtitle: "Expo workspace with tab navigation and three screens",
             category: .navigation,
             iconName: "rectangle.split.3x1",
             accentColor: .purple,
@@ -124,10 +60,10 @@ enum TemplateCatalog {
             navigationPreset: .tabs,
             files: TabsStarterFiles.files
         ),
-        StudioTemplate(
-            id: "stack_starter",
-            name: "Stack Navigation",
-            subtitle: "Multi-screen stack with React Navigation",
+        TemplateManifest(
+            id: stackStarterID,
+            name: "Stack Starter",
+            subtitle: "Expo workspace with a stack flow and shared screen files",
             category: .navigation,
             iconName: "rectangle.stack",
             accentColor: .blue,
@@ -137,11 +73,11 @@ enum TemplateCatalog {
         ),
     ]
 
-    static let featureTemplates: [StudioTemplate] = [
-        StudioTemplate(
+    static let featureTemplates: [TemplateManifest] = [
+        TemplateManifest(
             id: "api_example",
             name: "REST API Client",
-            subtitle: "Fetch, display, and paginate API data",
+            subtitle: "Fetch, display, and paginate API data from Expo",
             category: .features,
             iconName: "network",
             accentColor: .cyan,
@@ -149,10 +85,10 @@ enum TemplateCatalog {
             navigationPreset: .none,
             files: APIClientFiles.files
         ),
-        StudioTemplate(
+        TemplateManifest(
             id: "auth_starter",
             name: "Auth Starter",
-            subtitle: "Sign in / sign up flow with mock auth",
+            subtitle: "Sign in and sign up flow backed by local mock auth state",
             category: .features,
             iconName: "lock.shield",
             accentColor: .orange,
@@ -162,11 +98,11 @@ enum TemplateCatalog {
         ),
     ]
 
-    static let fullApps: [StudioTemplate] = [
-        StudioTemplate(
+    static let fullApps: [TemplateManifest] = [
+        TemplateManifest(
             id: "todo_app",
             name: "Todo App",
-            subtitle: "Full CRUD with add, toggle, delete, persist",
+            subtitle: "Expo CRUD starter with multiple files and persistent-friendly structure",
             category: .fullApp,
             iconName: "checklist",
             accentColor: .green,
@@ -174,10 +110,10 @@ enum TemplateCatalog {
             navigationPreset: .none,
             files: TodoAppFiles.files
         ),
-        StudioTemplate(
+        TemplateManifest(
             id: "notes_tasks",
             name: "Notes & Tasks",
-            subtitle: "Create, edit, search notes with tabs",
+            subtitle: "Tabbed Expo app with dedicated screens for notes and tasks",
             category: .fullApp,
             iconName: "note.text",
             accentColor: .yellow,
@@ -185,10 +121,10 @@ enum TemplateCatalog {
             navigationPreset: .tabs,
             files: NotesTasksFiles.files
         ),
-        StudioTemplate(
+        TemplateManifest(
             id: "dashboard_starter",
             name: "Dashboard",
-            subtitle: "Stats cards, charts placeholder, activity feed",
+            subtitle: "Expo dashboard shell with activity and metric tabs",
             category: .fullApp,
             iconName: "chart.bar",
             accentColor: .indigo,

@@ -1,31 +1,31 @@
 import Foundation
 
 enum StructuralPreviewEngine {
-    static func buildSnapshot(from project: SandboxProject) -> StructuralSnapshot {
-        let fileNames = project.files.map(\.name)
+    static func buildSnapshot(from project: StudioProject) -> StructuralSnapshot {
+        let fileNames = project.files.map(\.path)
 
         let entryCandidates = ["App.tsx", "App.js", "App.ts", "index.tsx", "index.ts", "index.js", "app/_layout.tsx", "app/_layout.js"]
         let entryFile = entryCandidates.first { name in fileNames.contains(name) }
 
         let screenFiles = project.files.filter { file in
-            let lower = file.name.lowercased()
+            let lower = file.path.lowercased()
             return lower.contains("screen") || lower.contains("page") ||
                    lower.hasPrefix("src/screens/") || lower.hasPrefix("app/") ||
                    lower.hasPrefix("screens/") || lower.hasPrefix("src/pages/")
         }
 
         let screens = screenFiles.enumerated().map { index, file in
-            let screenName = extractScreenName(from: file.name)
+            let screenName = extractScreenName(from: file.path)
             return StructuralSnapshot.ScreenNode(
-                id: file.name,
+                id: file.path,
                 name: screenName,
-                filePath: file.name,
+                filePath: file.path,
                 isEntry: index == 0 && entryFile == nil
             )
         }
 
         let navigationKind = detectNavigationKind(from: project)
-        let componentCount = project.files.filter { isComponentFile($0.name) }.count
+        let componentCount = project.files.filter { isComponentFile($0.path) }.count
 
         return StructuralSnapshot(
             screens: screens,
@@ -36,6 +36,10 @@ enum StructuralPreviewEngine {
         )
     }
 
+    static func buildSnapshot(from project: SandboxProject) -> StructuralSnapshot {
+        buildSnapshot(from: project.asStudioProject)
+    }
+
     private static func extractScreenName(from filePath: String) -> String {
         let fileName = (filePath as NSString).lastPathComponent
         let name = (fileName as NSString).deletingPathExtension
@@ -44,7 +48,7 @@ enum StructuralPreviewEngine {
             .replacingOccurrences(of: "Page", with: "")
     }
 
-    private static func detectNavigationKind(from project: SandboxProject) -> NavigationPreset {
+    private static func detectNavigationKind(from project: StudioProject) -> NavigationPreset {
         let allContent = project.files.map(\.content).joined(separator: "\n")
 
         if allContent.contains("createBottomTabNavigator") || allContent.contains("Tab.Navigator") {

@@ -2,7 +2,8 @@ import SwiftUI
 
 struct PreviewWorkspaceView: View {
     let coordinator: PreviewCoordinator
-    let project: SandboxProject
+    let workspaceName: String
+    let onRefresh: () -> Void
 
     var body: some View {
         ScrollView {
@@ -37,16 +38,14 @@ struct PreviewWorkspaceView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white)
 
-                Text(statusSubtitle)
+                Text(coordinator.readiness.detail)
                     .font(.caption2)
                     .foregroundStyle(Theme.dimText)
             }
 
             Spacer()
 
-            Button {
-                Task { await coordinator.validate(project: project) }
-            } label: {
+            Button(action: onRefresh) {
                 Image(systemName: "arrow.triangle.2.circlepath")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Theme.accent)
@@ -59,9 +58,13 @@ struct PreviewWorkspaceView: View {
     private func structuralPreview(_ snapshot: StructuralSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("APP STRUCTURE")
+                Text("WORKSPACE")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(Theme.dimText)
+
+                Text(workspaceName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
 
                 HStack(spacing: 12) {
                     statBadge(icon: "doc.text", value: "\(snapshot.fileCount)", label: "Files")
@@ -148,7 +151,7 @@ struct PreviewWorkspaceView: View {
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.white)
 
-                    Text("Your project structure has been analyzed.\nRun the project with Expo on your Mac for a live preview,\nor use the AI builder to iterate on your screens.")
+                    Text("HybridCoder is confirming structure, entry points, and diagnostics here.\nRun the same workspace with Expo on your Mac for a live runtime preview.")
                         .font(.caption)
                         .foregroundStyle(Theme.dimText)
                         .multilineTextAlignment(.center)
@@ -162,21 +165,22 @@ struct PreviewWorkspaceView: View {
 
     private func failedPreview(_ diagnostics: [ProjectDiagnostic]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("VALIDATION ISSUES")
+            Text("DIAGNOSTICS")
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundStyle(Theme.dimText)
 
-            ForEach(diagnostics) { diag in
+            ForEach(diagnostics) { diagnostic in
                 HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: diag.severity == .error ? "xmark.circle.fill" : "exclamationmark.triangle.fill")
+                    Image(systemName: diagnosticIcon(diagnostic.severity))
                         .font(.caption)
-                        .foregroundStyle(diag.severity == .error ? .red : .orange)
+                        .foregroundStyle(diagnosticColor(diagnostic.severity))
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(diag.message)
+                        Text(diagnostic.message)
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.85))
-                        if let path = diag.filePath {
+
+                        if let path = diagnostic.filePath {
                             Text(path)
                                 .font(.system(.caption2, design: .monospaced))
                                 .foregroundStyle(Theme.dimText)
@@ -195,7 +199,8 @@ struct PreviewWorkspaceView: View {
             ProgressView()
                 .controlSize(.large)
                 .tint(Theme.accent)
-            Text("Analyzing project structure…")
+
+            Text("Analyzing project structure and diagnostics…")
                 .font(.subheadline)
                 .foregroundStyle(Theme.dimText)
         }
@@ -209,62 +214,73 @@ struct PreviewWorkspaceView: View {
                 .font(.system(size: 40, weight: .light))
                 .foregroundStyle(Theme.dimText.opacity(0.4))
 
-            Text("No Preview Available")
+            Text("No Preview Data Yet")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.white)
 
-            Text("Add files to your project or tap\nthe refresh button to validate.")
+            Text("Validate the current workspace to inspect entry points, files, and preview readiness.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
                 .multilineTextAlignment(.center)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
-    }
-
-    private func statBadge(icon: String, value: String, label: String) -> some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.accent.opacity(0.7))
-                Text(value)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(.white)
-            }
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(Theme.dimText)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .background(Theme.cardBg, in: .rect(cornerRadius: 10))
     }
 
     private var statusIcon: String {
         switch coordinator.state {
-        case .idle: return "eye.slash"
-        case .validating: return "arrow.triangle.2.circlepath"
-        case .structuralReady: return "checkmark.circle.fill"
-        case .failed: return "exclamationmark.triangle.fill"
+        case .idle:
+            return "eye"
+        case .validating:
+            return "clock"
+        case .structuralReady:
+            return "checkmark.seal"
+        case .failed:
+            return "exclamationmark.triangle"
         }
     }
 
     private var statusColor: Color {
         switch coordinator.state {
-        case .idle: return Theme.dimText
-        case .validating: return Theme.accent
-        case .structuralReady: return .green
-        case .failed: return .orange
+        case .structuralReady:
+            return .green
+        case .failed:
+            return .orange
+        case .idle, .validating:
+            return Theme.accent
         }
     }
 
-    private var statusSubtitle: String {
-        switch coordinator.state {
-        case .idle: return "Tap refresh to analyze project structure"
-        case .validating: return "Analyzing files and navigation…"
-        case .structuralReady(let s): return "\(s.fileCount) files · \(s.screens.count) screens"
-        case .failed(let d): return "\(d.count) issue\(d.count == 1 ? "" : "s") found"
+    private func diagnosticIcon(_ severity: ProjectDiagnostic.Severity) -> String {
+        switch severity {
+        case .error: return "xmark.circle.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .info: return "info.circle.fill"
         }
+    }
+
+    private func diagnosticColor(_ severity: ProjectDiagnostic.Severity) -> Color {
+        switch severity {
+        case .error: return .red
+        case .warning: return .orange
+        case .info: return Theme.accent
+        }
+    }
+
+    private func statBadge(icon: String, value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.caption2)
+                    .foregroundStyle(Theme.accent)
+                Text(value)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+            }
+
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(Theme.dimText)
+        }
+        .padding(10)
+        .background(Theme.cardBg, in: .rect(cornerRadius: 10))
     }
 }

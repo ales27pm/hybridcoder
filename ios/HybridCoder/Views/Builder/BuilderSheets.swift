@@ -59,7 +59,7 @@ struct AddFileSheet: View {
 
 struct RenameProjectSheet: View {
     @Bindable var viewModel: SandboxViewModel
-    let project: SandboxProject
+    let project: StudioProject
     @State private var newName: String = ""
     @Environment(\.dismiss) private var dismiss
 

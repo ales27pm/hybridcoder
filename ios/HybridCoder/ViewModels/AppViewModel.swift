@@ -9,6 +9,7 @@ final class AppViewModel {
     let studioContainer: StudioContainerViewModel
     let projectStudio: ProjectStudioViewModel
     let workspaceSession: WorkspaceSessionViewModel
+    let importedRepoWorkspace: ImportedRepoWorkspaceViewModel
 
     let orchestrator: AIOrchestrator
     let bookmarkService: BookmarkService
@@ -112,6 +113,10 @@ final class AppViewModel {
             studioContainer: self.studioContainer,
             sandboxViewModel: projectStudio.sandboxViewModel
         )
+        self.importedRepoWorkspace = ImportedRepoWorkspaceViewModel(
+            workspaceSession: self.workspaceSession,
+            orchestrator: orchestrator
+        )
 
         self.orchestrator = orchestrator
         self.bookmarkService = projectStudio.bookmarkService
@@ -126,6 +131,9 @@ final class AppViewModel {
                 self.workspaceSession.syncPrototypeAfterPatch(sandboxViewModel: self.sandboxViewModel)
             } else {
                 self.workspaceSession.refreshFileTree()
+                Task {
+                    await self.importedRepoWorkspace.refreshIfNeeded()
+                }
             }
         }
 

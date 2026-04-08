@@ -260,8 +260,12 @@ struct ContentView: View {
     @ViewBuilder
     private var sandboxContent: some View {
         if case .some(.repository) = viewModel.activeSandboxWorkspace {
-            RepositorySandboxView(workspaceViewModel: viewModel.workspaceSession, projectStudioViewModel: viewModel.projectStudio)
-        } else if let project = viewModel.sandboxViewModel.activeProject {
+            if viewModel.isRepositoryExpoWorkspace {
+                ImportedExpoWorkspaceView(viewModel: viewModel.importedRepoWorkspace)
+            } else {
+                RepositorySandboxView(workspaceViewModel: viewModel.workspaceSession, projectStudioViewModel: viewModel.projectStudio)
+            }
+        } else if let project = viewModel.sandboxViewModel.activeStudioProject {
             BuilderWorkspaceView(
                 viewModel: viewModel.sandboxViewModel,
                 project: project

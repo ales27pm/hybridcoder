@@ -22,7 +22,14 @@ HybridCoder already has a local LLM coding core with:
 - patch planning
 - patch application
 
-That is necessary groundwork, but it is not yet a full bytecoding system.
+The current repository now also has a first agent-runtime milestone:
+
+- workspace context detection
+- structured execution plans for guarded patch work
+- execution coordination around validation, apply, and workspace diagnostics
+- visible runtime reports back into chat
+
+That is meaningful groundwork, but it is not yet a full bytecoding system.
 
 ## Missing capability
 
@@ -111,6 +118,8 @@ The first realistic bytecoding milestone is not full autonomy. It is:
 - produce a structured execution plan
 - execute approved file actions through existing patching and workspace services
 - surface progress and blockers back into chat
+
+The current implementation now reaches that milestone for guarded patch-plan execution, but it still does not complete the broader create/rename/delete/retry loop for first-class workspace actions.
 
 ## Definition of success
 

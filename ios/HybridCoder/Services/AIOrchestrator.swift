@@ -1105,7 +1105,7 @@ final class AIOrchestrator {
     }
 
     func executePatchPlanWithAgentRuntime(_ plan: PatchPlan, userGoal: String?) async throws -> AgentRuntimeReport {
-        guard let engine = patchEngine, let root = repoRoot else {
+        guard patchEngine != nil, let root = repoRoot else {
             throw OrchestratorError.repoNotLoaded
         }
 
@@ -1116,31 +1116,29 @@ final class AIOrchestrator {
         let trimmedGoal = userGoal?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let goal = trimmedGoal.isEmpty ? plan.summary : trimmedGoal
         let workspace = await agentWorkspaceContext(repoRoot: root)
-        let preflightFailures = await engine.validate(plan, repoRoot: root)
-
-        if !preflightFailures.isEmpty {
-            recordExecutionTrace(route: .patchPlanning, executesPatch: true, usesAgentRuntime: true, includesRouteClassifier: false)
-            let diagnostics = await validateActiveWorkspaceForAgentRuntime(repoRoot: root)
-            return AgentRuntime.makeBlockedPatchReport(
-                goal: goal,
-                patchPlan: plan,
-                workspace: workspace,
-                preflightFailures: preflightFailures,
-                workspaceDiagnostics: diagnostics
-            )
-        }
-
-        let result = try await applyPatch(plan)
-        let diagnostics = await validateActiveWorkspaceForAgentRuntime(repoRoot: root)
-        recordExecutionTrace(route: .patchPlanning, executesPatch: true, usesAgentRuntime: true, includesRouteClassifier: false)
-
-        return AgentRuntime.makeAppliedPatchReport(
+        let report = try await ExecutionCoordinator.executePatchPlan(
             goal: goal,
             patchPlan: plan,
             workspace: workspace,
-            patchResult: result,
-            workspaceDiagnostics: diagnostics
+            dependencies: .init(
+                validatePatchPlan: { [weak self] plan in
+                    guard let self else { return [] }
+                    return await self.validatePatch(plan)
+                },
+                applyPatchPlan: { [weak self] plan in
+                    guard let self else {
+                        throw OrchestratorError.repoNotLoaded
+                    }
+                    return try await self.applyPatch(plan)
+                },
+                validateWorkspace: { [weak self] in
+                    guard let self else { return [] }
+                    return await self.validateActiveWorkspaceForAgentRuntime(repoRoot: root)
+                }
+            )
         )
+        recordExecutionTrace(route: .patchPlanning, executesPatch: true, usesAgentRuntime: true, includesRouteClassifier: false)
+        return report
     }
 
     func validatePatch(_ plan: PatchPlan) async -> [PatchEngine.OperationFailure] {

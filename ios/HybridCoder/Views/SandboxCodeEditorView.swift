@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SandboxCodeEditorView: View {
-    let file: SandboxFile
+    let file: StudioProjectFile
     let onSave: (String) -> Void
     @State private var editedContent: String = ""
     @State private var hasChanges: Bool = false

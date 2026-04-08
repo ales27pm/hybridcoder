@@ -21,6 +21,14 @@ final class SandboxViewModel {
 
     init() {}
 
+    var studioProjects: [StudioProject] {
+        projects.map(\.asStudioProject)
+    }
+
+    var activeStudioProject: StudioProject? {
+        activeProject?.asStudioProject
+    }
+
     func loadProjects() async {
         isLoading = true
         defer { isLoading = false }
@@ -50,6 +58,15 @@ final class SandboxViewModel {
         activeProject = project
         notifyActiveProjectChangedIfNeeded(previous: previous)
         await saveProjects()
+    }
+
+    func createProject(from spec: NewProjectSpec) async {
+        let project = SandboxProject(studioProject: TemplateScaffoldBuilder.buildProject(from: spec))
+        await insertAndOpenProject(project)
+    }
+
+    func createProject(from studioProject: StudioProject) async {
+        await insertAndOpenProject(SandboxProject(studioProject: studioProject))
     }
 
     func createProjectFromTemplate(name: String, template: ProjectTemplate) async {
@@ -164,12 +181,13 @@ final class SandboxViewModel {
     }
 
     func duplicateProject(_ project: SandboxProject) async {
-        var copy = SandboxProject(
-            name: "\(project.name) Copy",
-            templateType: project.templateType,
-            files: project.files.map { SandboxFile(name: $0.name, content: $0.content, language: $0.language) }
-        )
+        var duplicate = project.asStudioProject
+        duplicate.name = "\(project.name) Copy"
+        duplicate.metadata.source = .duplicated
+        duplicate.lastOpenedAt = Date()
+        var copy = SandboxProject(studioProject: duplicate)
         copy.lastOpenedAt = Date()
+        projects.removeAll { $0.id == copy.id }
         projects.insert(copy, at: 0)
         await saveProjects()
     }
@@ -286,5 +304,19 @@ final class SandboxViewModel {
     private func notifyActiveProjectChangedIfNeeded(previous: SandboxProject?) {
         guard previous != activeProject else { return }
         notifyActiveProjectChanged()
+    }
+
+    private func insertAndOpenProject(_ project: SandboxProject, shouldNotifyActiveProject: Bool = true) async {
+        var updatedProject = project
+        updatedProject.lastOpenedAt = Date()
+        projects.removeAll { $0.id == updatedProject.id }
+        projects.insert(updatedProject, at: 0)
+
+        let previous = activeProject
+        activeProject = updatedProject
+        if shouldNotifyActiveProject {
+            notifyActiveProjectChangedIfNeeded(previous: previous)
+        }
+        await saveProjects()
     }
 }

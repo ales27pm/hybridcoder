@@ -1,81 +1,5 @@
 import Foundation
 
-nonisolated struct AgentWorkspaceContext: Sendable {
-    let kind: Kind
-    let projectName: String
-    let projectKind: ProjectKind?
-    let entryFile: String?
-    let hasExpoRouter: Bool
-    let dependencies: [String]
-
-    nonisolated enum Kind: String, Sendable {
-        case prototype
-        case importedExpo
-        case importedGeneric
-        case unknown
-    }
-
-    var isExpoFocused: Bool {
-        kind == .prototype || kind == .importedExpo || projectKind?.isExpo == true
-    }
-
-    var displayName: String {
-        switch kind {
-        case .prototype:
-            return "Prototype Expo workspace"
-        case .importedExpo:
-            return "Imported Expo workspace"
-        case .importedGeneric:
-            return "Imported generic workspace"
-        case .unknown:
-            return "Unknown workspace"
-        }
-    }
-}
-
-nonisolated struct AgentExecutionPlan: Sendable {
-    let goal: String
-    let workspace: AgentWorkspaceContext
-    let steps: [AgentExecutionStep]
-}
-
-nonisolated struct AgentExecutionStep: Identifiable, Sendable {
-    let id: UUID
-    let title: String
-    let action: AgentWorkspaceAction
-    let status: Status
-    let detail: String
-
-    nonisolated enum Status: String, Sendable {
-        case planned
-        case running
-        case succeeded
-        case blocked
-        case skipped
-    }
-
-    init(
-        id: UUID = UUID(),
-        title: String,
-        action: AgentWorkspaceAction,
-        status: Status,
-        detail: String
-    ) {
-        self.id = id
-        self.title = title
-        self.action = action
-        self.status = status
-        self.detail = detail
-    }
-}
-
-nonisolated enum AgentWorkspaceAction: Sendable, Equatable {
-    case decomposeIntent
-    case validatePatchPlan(operationCount: Int)
-    case applyPatchPlan(operationCount: Int)
-    case validateReactNativeWorkspace
-}
-
 nonisolated struct AgentRuntimeReport: Sendable {
     let executionPlan: AgentExecutionPlan
     let patchResult: PatchEngine.PatchResult
@@ -127,52 +51,6 @@ nonisolated struct AgentRuntimeReport: Sendable {
 }
 
 nonisolated enum AgentRuntime {
-    static func makePatchExecutionPlan(
-        goal: String,
-        patchPlan: PatchPlan,
-        workspace: AgentWorkspaceContext,
-        validationStatus: AgentExecutionStep.Status = .planned,
-        applyStatus: AgentExecutionStep.Status = .planned,
-        workspaceValidationStatus: AgentExecutionStep.Status = .planned
-    ) -> AgentExecutionPlan {
-        let operationCount = patchPlan.operations.filter { $0.status == .pending }.count
-        let normalizedGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
-        let safeGoal = normalizedGoal.isEmpty ? patchPlan.summary : normalizedGoal
-
-        return AgentExecutionPlan(
-            goal: safeGoal,
-            workspace: workspace,
-            steps: [
-                AgentExecutionStep(
-                    title: "Decompose chat request",
-                    action: .decomposeIntent,
-                    status: .succeeded,
-                    detail: safeGoal
-                ),
-                AgentExecutionStep(
-                    title: "Validate exact-match patch plan",
-                    action: .validatePatchPlan(operationCount: operationCount),
-                    status: validationStatus,
-                    detail: "\(operationCount) pending operation\(operationCount == 1 ? "" : "s")"
-                ),
-                AgentExecutionStep(
-                    title: "Apply guarded workspace edits",
-                    action: .applyPatchPlan(operationCount: operationCount),
-                    status: applyStatus,
-                    detail: "Executed through PatchEngine against the active workspace"
-                ),
-                AgentExecutionStep(
-                    title: "Validate React Native / Expo workspace",
-                    action: .validateReactNativeWorkspace,
-                    status: workspaceValidationStatus,
-                    detail: workspace.isExpoFocused
-                        ? "Expo-focused diagnostics"
-                        : "Generic workspace guardrail; Expo support not confirmed"
-                )
-            ]
-        )
-    }
-
     static func makeBlockedPatchReport(
         goal: String,
         patchPlan: PatchPlan,
@@ -180,7 +58,7 @@ nonisolated enum AgentRuntime {
         preflightFailures: [PatchEngine.OperationFailure],
         workspaceDiagnostics: [ProjectDiagnostic]
     ) -> AgentRuntimeReport {
-        let executionPlan = makePatchExecutionPlan(
+        let executionPlan = IntentPlanner.planPatchExecution(
             goal: goal,
             patchPlan: patchPlan,
             workspace: workspace,
@@ -188,6 +66,7 @@ nonisolated enum AgentRuntime {
             applyStatus: .skipped,
             workspaceValidationStatus: workspaceDiagnostics.isEmpty ? .succeeded : .blocked
         )
+
         let failedOperationIDs = Set(preflightFailures.map(\.operationID))
         let updatedPlan = PatchPlan(
             id: patchPlan.id,
@@ -228,7 +107,7 @@ nonisolated enum AgentRuntime {
         patchResult: PatchEngine.PatchResult,
         workspaceDiagnostics: [ProjectDiagnostic]
     ) -> AgentRuntimeReport {
-        let executionPlan = makePatchExecutionPlan(
+        let executionPlan = IntentPlanner.planPatchExecution(
             goal: goal,
             patchPlan: patchPlan,
             workspace: workspace,

@@ -36,3 +36,14 @@ At every phase, `docs/architecture.md` should remain the canonical source for:
 - what is already implemented
 - what is still missing
 - what the product is supposed to become
+
+## Status note
+
+The repository now has partial progress inside several phases:
+
+- Phase 2 is underway through `StudioProject` and manifest-driven Expo scaffolds
+- Phase 4 is underway through structural preview coordination and diagnostics
+- Phase 5 is underway through an Expo-first imported workspace path with generic repo fallback
+- Phase 6 is underway through a planner/coordinator layer on top of the existing guarded patch runtime
+
+Those phase starts should not be mistaken for completion. The remaining gaps are still the full builder project migration, richer scaffold breadth, stronger preview/runtime truthfulness in every screen, and a more complete bytecoding execution loop.

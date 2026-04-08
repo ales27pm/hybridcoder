@@ -19,6 +19,7 @@ final class ChatViewModel {
     private(set) var patchPlans: [PatchPlan] = []
     private(set) var lastPatchResult: PatchEngine.PatchResult?
     private(set) var lastAgentRuntimeReport: AgentRuntimeReport?
+    private(set) var lastAgentExecutionPlan: AgentExecutionPlan?
     private(set) var errorMessage: String?
     private(set) var memorySummary: String?
     private(set) var estimatedConversationTokens: Int = 0
@@ -185,6 +186,7 @@ final class ChatViewModel {
             let result = report.patchResult
             lastPatchResult = result
             lastAgentRuntimeReport = report
+            lastAgentExecutionPlan = report.executionPlan
 
             var updatedPlan = patchPlans[planIndex]
             for op in result.updatedPlan.operations where op.id == operationID {
@@ -221,6 +223,7 @@ final class ChatViewModel {
             let result = report.patchResult
             lastPatchResult = result
             lastAgentRuntimeReport = report
+            lastAgentExecutionPlan = report.executionPlan
             patchPlans[planIndex] = result.updatedPlan
             appendSystemMessage(report.chatSummary)
             recordFileOperationSummary(report.chatSummary)
@@ -260,6 +263,7 @@ final class ChatViewModel {
         patchPlans.removeAll()
         lastPatchResult = nil
         lastAgentRuntimeReport = nil
+        lastAgentExecutionPlan = nil
         memorySummary = nil
         estimatedConversationTokens = 0
         conversationTurns.removeAll()

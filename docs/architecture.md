@@ -10,8 +10,11 @@ HybridCoder is currently a SwiftUI iOS app with:
 - semantic retrieval
 - patch planning and application
 - project and workspace persistence
-- imported repository handling
-- a prototype-oriented editing flow
+- imported repository handling with an Expo-first builder path
+- a builder-oriented `StudioProject` model bridged to the legacy sandbox store
+- manifest-driven Expo scaffolds for new multi-file projects
+- structural preview coordination and diagnostics
+- a transitional prototype-oriented editing flow that still remains in compatibility seams
 
 ## What is already implemented in the LLM coding core
 
@@ -40,6 +43,8 @@ Today, the repo does not yet implement a full execution loop for:
 - selecting sub-tasks and execution order
 - creating, renaming, deleting, and restructuring files as first-class actions
 - validating progress and iterating until the requested feature is actually brought to life
+
+The current codebase now includes an initial planner/coordinator layer around guarded patch execution, but it is still patch-plan centric rather than a finished autonomous execution loop.
 
 ## Target architecture
 

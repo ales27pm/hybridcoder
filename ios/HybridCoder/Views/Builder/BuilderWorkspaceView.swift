@@ -2,7 +2,7 @@ import SwiftUI
 
 struct BuilderWorkspaceView: View {
     @Bindable var viewModel: SandboxViewModel
-    let project: SandboxProject
+    let project: StudioProject
     @State private var selectedTab: BuilderTab = .code
     @State private var selectedFileID: UUID?
     @State private var showAddFileSheet: Bool = false
@@ -29,7 +29,8 @@ struct BuilderWorkspaceView: View {
             case .preview:
                 PreviewWorkspaceView(
                     coordinator: previewCoordinator,
-                    project: project
+                    workspaceName: project.name,
+                    onRefresh: { Task { await previewCoordinator.validate(project: project) } }
                 )
             case .diagnostics:
                 diagnosticsView

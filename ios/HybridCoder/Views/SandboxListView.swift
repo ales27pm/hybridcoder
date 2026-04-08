@@ -64,14 +64,14 @@ struct SandboxListView: View {
     private var projectList: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
-                ForEach(viewModel.projects) { project in
+                ForEach(viewModel.studioProjects) { project in
                     ProjectCard(project: project) {
-                        viewModel.openProject(project)
+                        viewModel.openProject(project.asLegacySandboxProject())
                     } onDelete: {
-                        viewModel.projectToDelete = project
+                        viewModel.projectToDelete = project.asLegacySandboxProject()
                         viewModel.showDeleteConfirmation = true
                     } onDuplicate: {
-                        Task { await viewModel.duplicateProject(project) }
+                        Task { await viewModel.duplicateProject(project.asLegacySandboxProject()) }
                     }
                 }
             }
@@ -82,7 +82,7 @@ struct SandboxListView: View {
 }
 
 private struct ProjectCard: View {
-    let project: SandboxProject
+    let project: StudioProject
     let onOpen: () -> Void
     let onDelete: () -> Void
     let onDuplicate: () -> Void
@@ -97,7 +97,7 @@ private struct ProjectCard: View {
                         .fill(Theme.accent.opacity(0.12))
                         .frame(width: 44, height: 44)
 
-                    Image(systemName: project.templateType.iconName)
+                    Image(systemName: project.kind.iconName)
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(Theme.accent)
                 }
@@ -109,14 +109,14 @@ private struct ProjectCard: View {
                         .lineLimit(1)
 
                     HStack(spacing: 8) {
-                        Text(project.templateType.rawValue)
+                        Text(project.templateReference?.name ?? project.kind.displayName)
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(Theme.accent.opacity(0.7))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Theme.accent.opacity(0.1), in: Capsule())
 
-                        Text("\(project.files.count) file\(project.files.count == 1 ? "" : "s")")
+                        Text("\(project.fileCount) file\(project.fileCount == 1 ? "" : "s")")
                             .font(.caption2)
                             .foregroundStyle(Theme.dimText)
                     }
@@ -220,8 +220,14 @@ struct NewSandboxProjectSheet: View {
                         Button("Create") {
                             guard let template = selectedStudioTemplate else { return }
                             Task {
-                                let project = TemplateScaffoldBuilder.buildProject(from: template, name: projectName)
-                                await viewModel.createProjectFromTemplate(name: project.name, template: template.asProjectTemplate)
+                                let spec = NewProjectSpec(
+                                    name: projectName,
+                                    templateID: template.id,
+                                    kind: template.kind,
+                                    navigationPreset: template.navigationPreset,
+                                    source: .scaffold
+                                )
+                                await viewModel.createProject(from: spec)
                                 dismiss()
                             }
                         }

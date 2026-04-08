@@ -35,7 +35,7 @@ struct ProjectHubView: View {
 
     @ViewBuilder
     private var activeProjectCard: some View {
-        if workspaceViewModel.activeRepositoryURL != nil || projectStudioViewModel.sandboxViewModel.activeProject != nil {
+        if workspaceViewModel.activeRepositoryURL != nil || projectStudioViewModel.activeStudioProject != nil {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
                     Circle()
@@ -87,9 +87,9 @@ struct ProjectHubView: View {
                                 .foregroundStyle(Theme.dimText)
                         }
                     }
-                } else if let project = projectStudioViewModel.sandboxViewModel.activeProject {
+                } else if let project = projectStudioViewModel.activeStudioProject {
                     HStack(spacing: 12) {
-                        Image(systemName: project.templateType.iconName)
+                        Image(systemName: project.kind.iconName)
                             .font(.title3)
                             .foregroundStyle(Theme.accent)
                             .frame(width: 40, height: 40)
@@ -100,7 +100,7 @@ struct ProjectHubView: View {
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.white)
 
-                            Text("\(project.files.count) file\(project.files.count == 1 ? "" : "s") · Project")
+                            Text("\(project.fileCount) file\(project.fileCount == 1 ? "" : "s") · Builder Project")
                                 .font(.caption2)
                                 .foregroundStyle(Theme.dimText)
                         }
@@ -164,9 +164,9 @@ struct ProjectHubView: View {
                     icon: "square.and.arrow.down",
                     label: "Save & Close",
                     description: "Current project",
-                    disabled: workspaceViewModel.activeRepositoryURL == nil && projectStudioViewModel.sandboxViewModel.activeProject == nil
+                    disabled: workspaceViewModel.activeRepositoryURL == nil && projectStudioViewModel.activeStudioProject == nil
                 ) {
-                    if projectStudioViewModel.sandboxViewModel.activeProject != nil {
+                    if projectStudioViewModel.activeStudioProject != nil {
                         projectStudioViewModel.sandboxViewModel.closeProject()
                     }
                     if workspaceViewModel.activeRepositoryURL != nil {
@@ -179,7 +179,7 @@ struct ProjectHubView: View {
                     icon: "arrow.down.doc",
                     label: "Import State",
                     description: "From repo .hybridcoder",
-                    disabled: workspaceViewModel.activeRepositoryURL == nil || projectStudioViewModel.sandboxViewModel.activeProject == nil
+                    disabled: workspaceViewModel.activeRepositoryURL == nil || projectStudioViewModel.activeStudioProject == nil
                 ) {
                     Task {
                         guard let project = projectStudioViewModel.sandboxViewModel.activeProject,
@@ -192,7 +192,7 @@ struct ProjectHubView: View {
                     icon: "arrow.up.doc",
                     label: "Export State",
                     description: "To repo .hybridcoder",
-                    disabled: workspaceViewModel.activeRepositoryURL == nil || projectStudioViewModel.sandboxViewModel.activeProject == nil
+                    disabled: workspaceViewModel.activeRepositoryURL == nil || projectStudioViewModel.activeStudioProject == nil
                 ) {
                     Task {
                         guard let project = projectStudioViewModel.sandboxViewModel.activeProject,
@@ -246,25 +246,25 @@ struct ProjectHubView: View {
 
                 Spacer()
 
-                if !projectStudioViewModel.sandboxViewModel.projects.isEmpty {
-                    Text("\(projectStudioViewModel.sandboxViewModel.projects.count)")
+                if !projectStudioViewModel.studioProjects.isEmpty {
+                    Text("\(projectStudioViewModel.studioProjects.count)")
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
                         .foregroundStyle(Theme.accent.opacity(0.6))
                 }
             }
 
-            if projectStudioViewModel.sandboxViewModel.projects.isEmpty {
+            if projectStudioViewModel.studioProjects.isEmpty {
                 emptyCard(
                     icon: "apps.iphone",
                     message: "No projects yet.\nCreate one from New Project."
                 )
             } else {
-                ForEach(projectStudioViewModel.sandboxViewModel.projects.prefix(5)) { project in
+                ForEach(projectStudioViewModel.studioProjects.prefix(5)) { project in
                     SandboxRow(
                         project: project,
-                        isActive: projectStudioViewModel.sandboxViewModel.activeProject?.id == project.id
+                        isActive: projectStudioViewModel.activeStudioProject?.id == project.id
                     ) {
-                        projectStudioViewModel.openPrototypeProject(project, workspace: workspaceViewModel, container: containerViewModel)
+                        projectStudioViewModel.openStudioProject(project, workspace: workspaceViewModel, container: containerViewModel)
                         dismiss()
                     }
                 }
@@ -383,7 +383,7 @@ private struct RepoRow: View {
 }
 
 private struct SandboxRow: View {
-    let project: SandboxProject
+    let project: StudioProject
     let isActive: Bool
     let onOpen: () -> Void
 
@@ -392,7 +392,7 @@ private struct SandboxRow: View {
             onOpen()
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: project.templateType.iconName)
+                Image(systemName: project.kind.iconName)
                     .font(.system(size: 15))
                     .foregroundStyle(isActive ? Theme.accent : Theme.accent.opacity(0.6))
                     .frame(width: 32, height: 32)
@@ -405,14 +405,14 @@ private struct SandboxRow: View {
                         .lineLimit(1)
 
                     HStack(spacing: 6) {
-                        Text(project.templateType.rawValue)
+                        Text(project.templateReference?.name ?? project.kind.displayName)
                             .font(.system(size: 9, weight: .medium))
                             .foregroundStyle(Theme.accent.opacity(0.7))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(Theme.accent.opacity(0.08), in: Capsule())
 
-                        Text("\(project.files.count) file\(project.files.count == 1 ? "" : "s")")
+                        Text("\(project.fileCount) file\(project.fileCount == 1 ? "" : "s")")
                             .font(.caption2)
                             .foregroundStyle(Theme.dimText)
                     }
