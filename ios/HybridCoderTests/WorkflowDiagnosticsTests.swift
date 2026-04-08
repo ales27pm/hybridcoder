@@ -10,6 +10,7 @@ struct WorkflowDiagnosticsTests {
         #expect(AIOrchestrator.expectedExecutionProviders(for: .codeGeneration) == [.routeClassifier, .semanticSearch, .qwenCodeGeneration])
         #expect(AIOrchestrator.expectedExecutionProviders(for: .patchPlanning) == [.routeClassifier, .semanticSearch, .foundationModel])
         #expect(AIOrchestrator.expectedExecutionProviders(for: .patchPlanning, executesPatch: true) == [.routeClassifier, .semanticSearch, .foundationModel, .patchEngine])
+        #expect(AIOrchestrator.expectedExecutionProviders(for: .patchPlanning, usesAgentRuntime: true) == [.routeClassifier, .semanticSearch, .agentRuntime])
         #expect(AIOrchestrator.expectedExecutionProviders(for: .patchPlanning, executesPatch: true, usesAgentRuntime: true) == [.routeClassifier, .semanticSearch, .foundationModel, .agentRuntime, .patchEngine])
         #expect(AIOrchestrator.expectedExecutionProviders(for: .patchPlanning, includesRouteClassifier: false) == [.semanticSearch, .foundationModel])
     }

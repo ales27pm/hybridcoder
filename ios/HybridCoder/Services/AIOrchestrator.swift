@@ -755,8 +755,10 @@ final class AIOrchestrator {
         case .codeGeneration:
             providers = [.semanticSearch, .qwenCodeGeneration]
         case .patchPlanning:
-            if executesPatch, usesAgentRuntime {
+            if usesAgentRuntime, executesPatch {
                 providers = [.semanticSearch, .foundationModel, .agentRuntime, .patchEngine]
+            } else if usesAgentRuntime {
+                providers = [.semanticSearch, .agentRuntime]
             } else if executesPatch {
                 providers = [.semanticSearch, .foundationModel, .patchEngine]
             } else {
@@ -867,12 +869,16 @@ final class AIOrchestrator {
             )
 
         case .patchPlanning:
-            recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
-            logProviderSelection(query: resolved.query, route: route, mode: "non-stream")
-            let plan = try await generatePatchPlan(query: resolved.query, context: gathered.context)
+            logProviderSelection(query: resolved.query, route: route, mode: "non-stream", provider: .agentRuntime)
+            let report = try await executeGoalWithAgentRuntime(
+                goal: resolved.query,
+                patchPlanningContext: gathered.context,
+                includesRouteClassifier: resolved.routeOverride == nil
+            )
             return AssistantResponse(
-                text: plan.summary,
-                patchPlan: plan,
+                text: report.chatSummary,
+                patchPlan: pendingPatchPlan(from: report),
+                agentRuntimeReport: report,
                 contextSources: gathered.sources,
                 retrievalNotice: gathered.retrievalNotice,
                 routeUsed: .patchPlanning
@@ -957,13 +963,18 @@ final class AIOrchestrator {
             ), route)
 
         case .patchPlanning:
-            recordExecutionTrace(route: route, includesRouteClassifier: resolved.routeOverride == nil)
-            logProviderSelection(query: resolved.query, route: route, mode: "stream")
-            let plan = try await generatePatchPlan(query: resolved.query, context: gathered.context)
-            onPartial(plan.summary)
+            logProviderSelection(query: resolved.query, route: route, mode: "stream", provider: .agentRuntime)
+            onPartial("Running workspace actions from your goal...")
+            let report = try await executeGoalWithAgentRuntime(
+                goal: resolved.query,
+                patchPlanningContext: gathered.context,
+                includesRouteClassifier: resolved.routeOverride == nil
+            )
+            onPartial(report.chatSummary)
             return (AssistantResponse(
-                text: plan.summary,
-                patchPlan: plan,
+                text: report.chatSummary,
+                patchPlan: pendingPatchPlan(from: report),
+                agentRuntimeReport: report,
                 contextSources: gathered.sources,
                 retrievalNotice: gathered.retrievalNotice,
                 routeUsed: .patchPlanning
@@ -1104,6 +1115,57 @@ final class AIOrchestrator {
         return result
     }
 
+    func executeGoalWithAgentRuntime(
+        goal: String,
+        patchPlanningContext: String,
+        includesRouteClassifier: Bool
+    ) async throws -> AgentRuntimeReport {
+        guard patchEngine != nil, let root = repoRoot else {
+            throw OrchestratorError.repoNotLoaded
+        }
+
+        if activeWorkspaceSource == .prototype, let project = activePrototypeProject {
+            Self.materializePrototypeFiles(project, to: root)
+        }
+
+        let trimmedGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeGoal = trimmedGoal.isEmpty ? "Improve the active workspace" : trimmedGoal
+        let workspace = await agentWorkspaceContext(repoRoot: root)
+
+        let goalFirstPlan = IntentPlanner.planActions(
+            goal: safeGoal,
+            workspace: workspace,
+            patchPlan: nil
+        )
+        let hasGoalWriteActions = goalFirstPlan.actions.contains { $0.action.isWriteAction }
+
+        let executionPlan: AgentExecutionPlan
+        if hasGoalWriteActions {
+            executionPlan = goalFirstPlan
+        } else {
+            let patchPlan = try await generatePatchPlan(query: safeGoal, context: patchPlanningContext)
+            executionPlan = IntentPlanner.planActions(
+                goal: safeGoal,
+                workspace: workspace,
+                patchPlan: patchPlan
+            )
+        }
+
+        let report = try await executeAgentRuntimePlan(
+            executionPlan,
+            repoRoot: root
+        )
+
+        recordExecutionTrace(
+            route: .patchPlanning,
+            executesPatch: Self.didExecutePatchBackedWriteActions(in: report),
+            usesAgentRuntime: true,
+            includesRouteClassifier: includesRouteClassifier
+        )
+
+        return report
+    }
+
     func executePatchPlanWithAgentRuntime(_ plan: PatchPlan, userGoal: String?) async throws -> AgentRuntimeReport {
         guard patchEngine != nil, let root = repoRoot else {
             throw OrchestratorError.repoNotLoaded
@@ -1121,58 +1183,97 @@ final class AIOrchestrator {
             workspace: workspace,
             patchPlan: plan
         )
+
+        let report = try await executeAgentRuntimePlan(
+            executionPlan,
+            repoRoot: root
+        )
+        recordExecutionTrace(
+            route: .patchPlanning,
+            executesPatch: Self.didExecutePatchBackedWriteActions(in: report),
+            usesAgentRuntime: true,
+            includesRouteClassifier: false
+        )
+        return report
+    }
+
+    private func pendingPatchPlan(from report: AgentRuntimeReport) -> PatchPlan? {
+        let updatedPlan = report.patchResult.updatedPlan
+        return updatedPlan.pendingCount > 0 ? updatedPlan : nil
+    }
+
+    private func executeAgentRuntimePlan(
+        _ executionPlan: AgentExecutionPlan,
+        repoRoot root: URL
+    ) async throws -> AgentRuntimeReport {
         let outcome = try await ExecutionCoordinator.executeActionPlan(
             executionPlan,
-            dependencies: .init(
-                inspectFile: { [weak self] path in
-                    guard let self else {
-                        return AgentWorkspaceFileSnapshot(path: path, exists: false, content: nil)
-                    }
-                    return await self.inspectWorkspaceFile(path)
-                },
-                validatePatchPlan: { [weak self] plan in
-                    guard let self else { return [] }
-                    return await self.validatePatch(plan)
-                },
-                applyPatchPlan: { [weak self] plan in
-                    guard let self else {
-                        throw OrchestratorError.repoNotLoaded
-                    }
-                    return try await self.applyPatch(plan)
-                },
-                createFile: { [weak self] path, contents in
-                    guard let self else {
-                        throw OrchestratorError.repoNotLoaded
-                    }
-                    try await self.createWorkspaceFile(path: path, contents: contents)
-                },
-                updateFile: { [weak self] path, contents in
-                    guard let self else {
-                        throw OrchestratorError.repoNotLoaded
-                    }
-                    try await self.updateWorkspaceFile(path: path, contents: contents)
-                },
-                renameFile: { [weak self] from, to in
-                    guard let self else {
-                        throw OrchestratorError.repoNotLoaded
-                    }
-                    try await self.renameWorkspaceFile(from: from, to: to)
-                },
-                deleteFile: { [weak self] path in
-                    guard let self else {
-                        throw OrchestratorError.repoNotLoaded
-                    }
-                    try await self.deleteWorkspaceFile(path: path)
-                },
-                validateWorkspace: { [weak self] in
-                    guard let self else { return [] }
-                    return await self.validateActiveWorkspaceForAgentRuntime(repoRoot: root)
-                }
-            )
+            dependencies: makeAgentRuntimeDependencies(repoRoot: root)
         )
-        let report = AgentRuntime.makeReport(from: outcome)
-        recordExecutionTrace(route: .patchPlanning, executesPatch: true, usesAgentRuntime: true, includesRouteClassifier: false)
-        return report
+        return AgentRuntime.makeReport(from: outcome)
+    }
+
+    private func makeAgentRuntimeDependencies(repoRoot root: URL) -> ExecutionCoordinator.Dependencies {
+        .init(
+            inspectFile: { [weak self] path in
+                guard let self else {
+                    return AgentWorkspaceFileSnapshot(path: path, exists: false, content: nil)
+                }
+                return await self.inspectWorkspaceFile(path)
+            },
+            validatePatchPlan: { [weak self] plan in
+                guard let self else { return [] }
+                return await self.validatePatch(plan)
+            },
+            applyPatchPlan: { [weak self] plan in
+                guard let self else {
+                    throw OrchestratorError.repoNotLoaded
+                }
+                return try await self.applyPatch(plan)
+            },
+            createFile: { [weak self] path, contents in
+                guard let self else {
+                    throw OrchestratorError.repoNotLoaded
+                }
+                try await self.createWorkspaceFile(path: path, contents: contents)
+            },
+            updateFile: { [weak self] path, contents in
+                guard let self else {
+                    throw OrchestratorError.repoNotLoaded
+                }
+                try await self.updateWorkspaceFile(path: path, contents: contents)
+            },
+            renameFile: { [weak self] from, to in
+                guard let self else {
+                    throw OrchestratorError.repoNotLoaded
+                }
+                try await self.renameWorkspaceFile(from: from, to: to)
+            },
+            deleteFile: { [weak self] path in
+                guard let self else {
+                    throw OrchestratorError.repoNotLoaded
+                }
+                try await self.deleteWorkspaceFile(path: path)
+            },
+            validateWorkspace: { [weak self] in
+                guard let self else { return [] }
+                return await self.validateActiveWorkspaceForAgentRuntime(repoRoot: root)
+            }
+        )
+    }
+
+    nonisolated private static func didExecutePatchBackedWriteActions(in report: AgentRuntimeReport) -> Bool {
+        report.executedActions.contains { result in
+            switch result.action {
+            case .createFile(_, let strategy, _), .updateFile(_, let strategy, _):
+                if case .patchPlan = strategy {
+                    return true
+                }
+                return false
+            case .inspectFile, .renameFile, .deleteFile, .validateWorkspace:
+                return false
+            }
+        }
     }
 
     func validatePatch(_ plan: PatchPlan) async -> [PatchEngine.OperationFailure] {

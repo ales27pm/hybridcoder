@@ -4,6 +4,7 @@ nonisolated struct AssistantResponse: Sendable {
     let text: String
     let codeBlocks: [CodeBlock]
     let patchPlan: PatchPlan?
+    let agentRuntimeReport: AgentRuntimeReport?
     let searchHits: [SearchHit]
     let contextSources: [ContextSource]
     let retrievalNotice: String?
@@ -20,6 +21,7 @@ nonisolated struct AssistantResponse: Sendable {
         text: String,
         codeBlocks: [CodeBlock] = [],
         patchPlan: PatchPlan? = nil,
+        agentRuntimeReport: AgentRuntimeReport? = nil,
         searchHits: [SearchHit] = [],
         contextSources: [ContextSource] = [],
         retrievalNotice: String? = nil,
@@ -28,6 +30,7 @@ nonisolated struct AssistantResponse: Sendable {
         self.text = text
         self.codeBlocks = codeBlocks
         self.patchPlan = patchPlan
+        self.agentRuntimeReport = agentRuntimeReport
         self.searchHits = searchHits
         self.contextSources = contextSources
         self.retrievalNotice = retrievalNotice

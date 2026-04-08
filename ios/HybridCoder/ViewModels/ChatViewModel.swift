@@ -116,6 +116,18 @@ final class ChatViewModel {
                 planID = plan.id
             }
 
+            if let runtimeReport = response.agentRuntimeReport {
+                lastPatchResult = runtimeReport.patchResult
+                lastAgentRuntimeReport = runtimeReport
+                lastAgentExecutionPlan = runtimeReport.executionPlan
+                latestBuildOrRuntimeError = runtimeReport.blockers.first
+                recordFileOperationSummary(runtimeReport.chatSummary)
+                mergeActiveFiles(runtimeReport.patchResult.changedFiles)
+                if runtimeReport.didExecuteWorkspaceActions {
+                    onPatchApplied?()
+                }
+            }
+
             messages.append(ChatMessage(
                 role: .assistant,
                 content: response.text,
