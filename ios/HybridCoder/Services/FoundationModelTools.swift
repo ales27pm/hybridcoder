@@ -4,13 +4,13 @@ import FoundationModels
 @available(iOS 26.0, *)
 struct ReadFileTool: Tool {
     let name = "read_file"
-    let description = "Reads the content of a source file from the workspace. Use this when you need to see the actual code in a file to answer the user's question accurately."
+    let description = "Reads the content of a source file from the React Native / Expo workspace. Use this to inspect component code, hooks, styles, navigation config, or package.json. Common paths: App.tsx, src/screens/*.tsx, src/components/*.tsx, src/hooks/*.ts, src/context/*.tsx, app/_layout.tsx (Expo Router)."
 
     let fileProvider: @Sendable (String) async -> String?
 
     @Generable
     struct Arguments {
-        @Guide(description: "The relative file path within the repository, e.g. 'src/utils/helpers.ts'")
+        @Guide(description: "The relative file path within the React Native project, e.g. 'src/screens/HomeScreen.tsx', 'App.tsx', 'app/_layout.tsx', 'src/hooks/useAuth.ts', 'package.json'")
         var filePath: String
     }
 
@@ -30,13 +30,13 @@ struct ReadFileTool: Tool {
 @available(iOS 26.0, *)
 struct SearchCodeTool: Tool {
     let name = "search_code"
-    let description = "Searches the codebase semantically for code related to a query. Returns the most relevant code chunks. Use this to find where specific functionality is implemented."
+    let description = "Searches the React Native codebase semantically for components, hooks, navigation logic, context providers, API services, or style patterns. Use this to find where specific functionality is implemented — e.g. 'authentication flow', 'bottom tab navigator', 'user profile hook', 'API fetch service'."
 
     let searchProvider: @Sendable (String, Int) async -> [(filePath: String, startLine: Int, endLine: Int, content: String, score: Float)]
 
     @Generable
     struct Arguments {
-        @Guide(description: "A natural language description of the code you're looking for, e.g. 'authentication middleware' or 'database connection setup'")
+        @Guide(description: "A natural language description of the React Native code you're looking for, e.g. 'authentication context provider', 'bottom tab navigator setup', 'custom hook for fetching user data', 'FlatList rendering items', 'AsyncStorage persistence'")
         var query: String
 
         @Guide(description: "Number of results to return, between 1 and 8", .range(1...8))
@@ -64,13 +64,13 @@ struct SearchCodeTool: Tool {
 @available(iOS 26.0, *)
 struct ListFilesTool: Tool {
     let name = "list_files"
-    let description = "Lists source files in the workspace, optionally filtered by a path prefix or file extension. Use this to understand the project structure."
+    let description = "Lists source files in the React Native workspace, optionally filtered by directory (src/screens/, src/components/, src/hooks/, app/) or extension (.tsx, .ts, .js). Use this to understand the project structure, find screens, discover existing components, or check what hooks are available."
 
     let filesProvider: @Sendable (String?) async -> [String]
 
     @Generable
     struct Arguments {
-        @Guide(description: "Optional filter: a directory prefix like 'src/components' or a file extension like '.swift'. Leave empty to list all files.")
+        @Guide(description: "Optional filter: a directory prefix like 'src/screens', 'src/components', 'src/hooks', 'app/' or a file extension like '.tsx', '.ts'. Leave empty to list all files.")
         var filter: String
     }
 

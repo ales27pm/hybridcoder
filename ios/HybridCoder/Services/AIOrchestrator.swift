@@ -1615,12 +1615,17 @@ final class AIOrchestrator {
             }
         }
 
+        let rnConventionsBlock = Self.rnConventionsForWorkspace(activeWorkspaceSource, activePrototypeProject: activePrototypeProject)
+
         let rawPolicyText = contextPolicySnapshot.renderForPrompt(
             maxCharacters: max(Self.maximumPolicyContextBudget, Self.qwenMaximumPolicyContextBudget)
         )
+        let combinedPolicyText = rnConventionsBlock.isEmpty
+            ? rawPolicyText
+            : (rnConventionsBlock + "\n\n" + rawPolicyText)
         let memoryBlock = memory?.renderForPrompt(maxCharacters: Self.conversationMemoryRenderBudget) ?? ""
         let context = Self.buildPromptContext(
-            rawPolicyText: rawPolicyText,
+            rawPolicyText: combinedPolicyText,
             conversationMemoryBlock: memoryBlock,
             codeParts: codeContextParts,
             totalLimit: Self.downstreamContextCap,
@@ -1629,7 +1634,7 @@ final class AIOrchestrator {
             maxConversationBudget: Self.maximumConversationContextBudget
         )
         let qwenContext = Self.buildPromptContext(
-            rawPolicyText: rawPolicyText,
+            rawPolicyText: combinedPolicyText,
             conversationMemoryBlock: memoryBlock,
             codeParts: codeContextParts,
             totalLimit: Self.qwenContextCap,
@@ -2080,6 +2085,11 @@ final class AIOrchestrator {
             counts[RepoFile.detectLanguage(for: file.name), default: 0] += 1
         }
         return counts
+    }
+
+    nonisolated static func rnConventionsForWorkspace(_ source: WorkspaceSource?, activePrototypeProject: SandboxProject?) -> String {
+        guard source == .prototype || source == .repository else { return "" }
+        return RNCodeConventions.conventionsBlock(includePatterns: false, includeLibraries: false)
     }
 
     nonisolated static func extractCodeBlocks(from text: String, fallbackToWholeText: Bool = false) -> [CodeBlock] {
