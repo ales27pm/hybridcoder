@@ -1335,6 +1335,7 @@ final class AIOrchestrator {
 
     nonisolated private static func didExecutePatchBackedWriteActions(in report: AgentRuntimeReport) -> Bool {
         report.executedActions.contains { result in
+            guard result.status == .succeeded else { return false }
             switch result.action {
             case .createFile(_, let strategy, _), .updateFile(_, let strategy, _):
                 if case .patchPlan = strategy {

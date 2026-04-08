@@ -14,6 +14,7 @@ nonisolated struct AgentRuntimeReport: Sendable {
     let executionPlan: AgentExecutionPlan
     let plannedActions: [AgentPlannedAction]
     let executedActions: [AgentActionExecutionResult]
+    let succeededActions: [AgentActionExecutionResult]
     let blockedActions: [AgentActionExecutionResult]
     let validationOutcome: AgentValidationOutcome
     let patchResult: PatchEngine.PatchResult
@@ -50,7 +51,7 @@ nonisolated struct AgentRuntimeReport: Sendable {
         }
 
         lines.append("Workspace focus: \(executionPlan.workspace.displayName).")
-        lines.append("Planned actions: \(plannedActions.count). Executed actions: \(executedActions.count). Blocked actions: \(blockedActions.count).")
+        lines.append("Planned actions: \(plannedActions.count). Succeeded: \(succeededActions.count). Blocked: \(blockedActions.count).")
         lines.append("Planner: \(plannerSummary.strategy).")
         lines.append("Coordinator: \(coordinatorSummary.phase).")
         lines.append("Validation: \(validationOutcome.detail)")
@@ -74,6 +75,7 @@ nonisolated enum AgentRuntime {
         let plannedActions = outcome.executionPlan.actions
         let blockedActions = outcome.blockedActions
         let executedActions = outcome.executedActions
+        let succeededActions = outcome.succeededActions
         let goalDerivedWriteActions = plannedActions.filter { action in
             switch action.action {
             case .createFile(_, let strategy, _), .updateFile(_, let strategy, _):
@@ -114,6 +116,7 @@ nonisolated enum AgentRuntime {
             executionPlan: outcome.executionPlan,
             plannedActions: plannedActions,
             executedActions: executedActions,
+            succeededActions: succeededActions,
             blockedActions: blockedActions,
             validationOutcome: outcome.validationOutcome,
             patchResult: outcome.patchResult,

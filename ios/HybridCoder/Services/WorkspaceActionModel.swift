@@ -147,6 +147,10 @@ nonisolated struct AgentExecutionOutcome: Sendable {
         actionResults.filter { $0.status != .skipped }
     }
 
+    var succeededActions: [AgentActionExecutionResult] {
+        actionResults.filter { $0.status == .succeeded }
+    }
+
     var blockedActions: [AgentActionExecutionResult] {
         actionResults.filter { $0.status == .blocked }
     }
