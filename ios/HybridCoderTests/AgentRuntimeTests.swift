@@ -5,7 +5,12 @@ import Testing
 private actor RuntimeActionCapture {
     private var renamedFrom: String?
     private var renamedTo: String?
+    private var updatedFilePath: String?
+    private var updatedFileContents: String?
     private var createdFolder: String?
+    private var renamedFolderFrom: String?
+    private var renamedFolderTo: String?
+    private var deletedFolderPath: String?
     private var movedFrom: String?
     private var movedTo: String?
 
@@ -18,8 +23,26 @@ private actor RuntimeActionCapture {
         (renamedFrom, renamedTo)
     }
 
+    func recordUpdate(path: String, contents: String) {
+        updatedFilePath = path
+        updatedFileContents = contents
+    }
+
+    func updateSnapshot() -> (String?, String?) {
+        (updatedFilePath, updatedFileContents)
+    }
+
     func recordCreatedFolder(_ path: String) {
         createdFolder = path
+    }
+
+    func recordFolderRename(from: String, to: String) {
+        renamedFolderFrom = from
+        renamedFolderTo = to
+    }
+
+    func recordDeletedFolder(_ path: String) {
+        deletedFolderPath = path
     }
 
     func recordMove(from: String, to: String) {
@@ -29,6 +52,10 @@ private actor RuntimeActionCapture {
 
     func folderMoveSnapshot() -> (String?, String?, String?) {
         (createdFolder, movedFrom, movedTo)
+    }
+
+    func folderRenameDeleteSnapshot() -> (String?, String?, String?) {
+        (renamedFolderFrom, renamedFolderTo, deletedFolderPath)
     }
 }
 
@@ -117,6 +144,8 @@ struct AgentRuntimeTests {
                 createFile: { _, _ in },
                 updateFile: { _, _ in },
                 createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
                 moveFile: { _, _ in },
                 renameFile: { _, _ in },
                 deleteFile: { _ in },
@@ -185,6 +214,29 @@ struct AgentRuntimeTests {
         ])
     }
 
+    @Test func plannerDerivesRenameAndDeleteFolderActionsFromGoalWithoutPatchFallback() {
+        let workspace = AgentWorkspaceContext(
+            kind: .importedExpo,
+            projectName: "expo-app",
+            projectKind: .importedExpo,
+            entryFile: "app/index.tsx",
+            hasExpoRouter: true,
+            dependencies: ["expo", "react-native"]
+        )
+
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Rename folder app/legacy to app/screens and delete folder app/deprecated",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        #expect(executionPlan.actions.map(\.title) == [
+            "Rename folder app/legacy to app/screens",
+            "Delete folder app/deprecated",
+            "Validate workspace after actions"
+        ])
+    }
+
     @Test func plannerDerivesCreateActionFromGoalWithoutPatchFallback() {
         let workspace = AgentWorkspaceContext(
             kind: .importedExpo,
@@ -212,6 +264,38 @@ struct AgentRuntimeTests {
         }
         guard case .direct(let contents) = strategy else {
             Issue.record("Expected create file action to use direct write strategy.")
+            return
+        }
+        #expect(contents.contains("export default function Settings()"))
+    }
+
+    @Test func plannerDerivesOverwriteActionFromGoalWithoutPatchFallback() {
+        let workspace = AgentWorkspaceContext(
+            kind: .importedExpo,
+            projectName: "expo-app",
+            projectKind: .importedExpo,
+            entryFile: "app/index.tsx",
+            hasExpoRouter: true,
+            dependencies: ["expo", "react-native"]
+        )
+
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Replace file app/settings.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        #expect(executionPlan.actions.map(\.title) == [
+            "Overwrite app/settings.tsx",
+            "Validate workspace after actions"
+        ])
+
+        guard case .updateFile(_, let strategy, _) = executionPlan.actions[0].action else {
+            Issue.record("Expected first action to be update file.")
+            return
+        }
+        guard case .direct(let contents) = strategy else {
+            Issue.record("Expected overwrite action to use direct write strategy.")
             return
         }
         #expect(contents.contains("export default function Settings()"))
@@ -255,6 +339,8 @@ struct AgentRuntimeTests {
                 createFile: { _, _ in },
                 updateFile: { _, _ in },
                 createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
                 moveFile: { _, _ in },
                 renameFile: { from, to in
                     await capture.recordRename(from: from, to: to)
@@ -270,6 +356,66 @@ struct AgentRuntimeTests {
         #expect(outcome.didMakeMeaningfulWorkspaceProgress)
         #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
         #expect(outcome.patchResult.changedFiles.sorted() == ["App.tsx", "app/AppScreen.tsx"])
+        #expect(outcome.executedActions.count == 2)
+    }
+
+    @Test func coordinatorExecutesGoalDerivedOverwriteWithoutPatchPlan() async throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Overwrite file App.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        let capture = RuntimeActionCapture()
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    AgentWorkspaceFileSnapshot(path: path, exists: path == "App.tsx", content: nil)
+                },
+                validatePatchPlan: { _ in
+                    Issue.record("Patch validation should not run for goal-derived overwrite actions without patch fallback.")
+                    return []
+                },
+                applyPatchPlan: { _ in
+                    Issue.record("Patch apply should not run for goal-derived overwrite actions without patch fallback.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: PatchPlan(summary: "unused", operations: []),
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in
+                    Issue.record("Create file should not run for goal-derived overwrite actions.")
+                },
+                updateFile: { path, contents in
+                    await capture.recordUpdate(path: path, contents: contents)
+                },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        let (updatedPath, updatedContents) = await capture.updateSnapshot()
+        #expect(updatedPath == "App.tsx")
+        #expect(updatedContents?.contains("export default function App()") == true)
+        #expect(outcome.didMakeMeaningfulWorkspaceProgress)
+        #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
+        #expect(outcome.patchResult.changedFiles == ["App.tsx"])
         #expect(outcome.executedActions.count == 2)
     }
 
@@ -313,6 +459,12 @@ struct AgentRuntimeTests {
                 createFolder: { path in
                     await capture.recordCreatedFolder(path)
                 },
+                renameFolder: { _, _ in
+                    Issue.record("Rename folder should not run for goal-derived create-folder/move actions.")
+                },
+                deleteFolder: { _ in
+                    Issue.record("Delete folder should not run for goal-derived create-folder/move actions.")
+                },
                 moveFile: { from, to in
                     await capture.recordMove(from: from, to: to)
                 },
@@ -331,6 +483,79 @@ struct AgentRuntimeTests {
         #expect(outcome.didMakeMeaningfulWorkspaceProgress)
         #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
         #expect(outcome.patchResult.changedFiles.sorted() == ["app/legacy.tsx", "app/screens", "app/screens/home.tsx"])
+        #expect(outcome.executedActions.count == 3)
+    }
+
+    @Test func coordinatorExecutesGoalDerivedFolderRenameAndDeleteWithoutPatchPlan() async throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Rename folder app/legacy to app/screens and delete folder app/deprecated",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        let capture = RuntimeActionCapture()
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    AgentWorkspaceFileSnapshot(
+                        path: path,
+                        exists: path == "app/legacy" || path == "app/deprecated",
+                        content: nil
+                    )
+                },
+                validatePatchPlan: { _ in
+                    Issue.record("Patch validation should not run for goal-derived folder rename/delete actions without patch fallback.")
+                    return []
+                },
+                applyPatchPlan: { _ in
+                    Issue.record("Patch apply should not run for goal-derived folder rename/delete actions without patch fallback.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: PatchPlan(summary: "unused", operations: []),
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in },
+                updateFile: { _, _ in },
+                createFolder: { _ in
+                    Issue.record("Create folder should not run for goal-derived folder rename/delete actions.")
+                },
+                renameFolder: { from, to in
+                    await capture.recordFolderRename(from: from, to: to)
+                },
+                deleteFolder: { path in
+                    await capture.recordDeletedFolder(path)
+                },
+                moveFile: { _, _ in
+                    Issue.record("Move file should not run for goal-derived folder rename/delete actions.")
+                },
+                renameFile: { _, _ in
+                    Issue.record("Rename file should not run for goal-derived folder rename/delete actions.")
+                },
+                deleteFile: { _ in
+                    Issue.record("Delete file should not run for goal-derived folder rename/delete actions.")
+                },
+                validateWorkspace: { [] }
+            )
+        )
+
+        let (renamedFolderFrom, renamedFolderTo, deletedFolderPath) = await capture.folderRenameDeleteSnapshot()
+        #expect(renamedFolderFrom == "app/legacy")
+        #expect(renamedFolderTo == "app/screens")
+        #expect(deletedFolderPath == "app/deprecated")
+        #expect(outcome.didMakeMeaningfulWorkspaceProgress)
+        #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
+        #expect(outcome.patchResult.changedFiles.sorted() == ["app/deprecated", "app/legacy", "app/screens"])
         #expect(outcome.executedActions.count == 3)
     }
 

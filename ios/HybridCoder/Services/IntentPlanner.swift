@@ -154,6 +154,37 @@ nonisolated enum IntentPlanner {
                     )
                 )
 
+            case .renameFolder(let from, let to):
+                let key = "renameFolder|\(from.lowercased())|\(to.lowercased())"
+                guard !seenKeys.contains(key) else { continue }
+                seenKeys.insert(key)
+                actions.append(
+                    AgentPlannedAction(
+                        title: "Rename folder \(from) to \(to)",
+                        action: .renameFolder(
+                            from: from,
+                            to: to,
+                            reason: "Requested directly by the goal: \(goal)"
+                        ),
+                        detail: "Goal-derived folder rename action for \(from)"
+                    )
+                )
+
+            case .deleteFolder(let path):
+                let key = "deleteFolder|\(path.lowercased())"
+                guard !seenKeys.contains(key) else { continue }
+                seenKeys.insert(key)
+                actions.append(
+                    AgentPlannedAction(
+                        title: "Delete folder \(path)",
+                        action: .deleteFolder(
+                            path: path,
+                            reason: "Requested directly by the goal: \(goal)"
+                        ),
+                        detail: "Goal-derived folder delete action for \(path)"
+                    )
+                )
+
             case .create(let path):
                 let key = "create|\(path.lowercased())"
                 guard !seenKeys.contains(key) else { continue }
@@ -168,6 +199,23 @@ nonisolated enum IntentPlanner {
                             reason: "Requested directly by the goal: \(goal)"
                         ),
                         detail: "Goal-derived create action for \(path)"
+                    )
+                )
+
+            case .replace(let path):
+                let key = "replace|\(path.lowercased())"
+                guard !seenKeys.contains(key) else { continue }
+                seenKeys.insert(key)
+                let contents = defaultContentsForGoalCreate(path: path)
+                actions.append(
+                    AgentPlannedAction(
+                        title: "Overwrite \(path)",
+                        action: .updateFile(
+                            path: path,
+                            strategy: .direct(contents: contents),
+                            reason: "Explicit overwrite requested by the goal: \(goal)"
+                        ),
+                        detail: "Goal-derived direct overwrite action for \(path)"
                     )
                 )
 
@@ -225,7 +273,10 @@ nonisolated enum IntentPlanner {
 
     private static func goalFileOperationIntents(goal: String) -> [GoalFileOperationIntent] {
         parseCreateFolderIntents(goal)
+        + parseRenameFolderIntents(goal)
+        + parseDeleteFolderIntents(goal)
         + parseCreateIntents(goal)
+        + parseReplaceIntents(goal)
         + parseMoveFileIntents(goal)
         + parseRenameIntents(goal)
         + parseDeleteIntents(goal)
@@ -244,6 +295,34 @@ nonisolated enum IntentPlanner {
         }
     }
 
+    private static func parseRenameFolderIntents(_ goal: String) -> [GoalFileOperationIntent] {
+        let matches = regexCapturePairs(
+            pattern: #"(?i)\b(?:rename|move)\s+(?:the\s+)?(?:folder|directory)\s+[`'"]?([A-Za-z0-9_./\-]+)[`'"]?\s+(?:to|into)\s+[`'"]?([A-Za-z0-9_./\-]+)[`'"]?"#,
+            in: goal,
+            firstGroup: 1,
+            secondGroup: 2
+        )
+        return matches.compactMap { pair in
+            let from = normalizeFolderPath(pair.0)
+            let to = normalizeFolderPath(pair.1)
+            guard !from.isEmpty, !to.isEmpty, from.lowercased() != to.lowercased() else { return nil }
+            return .renameFolder(from: from, to: to)
+        }
+    }
+
+    private static func parseDeleteFolderIntents(_ goal: String) -> [GoalFileOperationIntent] {
+        let paths = regexCaptures(
+            pattern: #"(?i)\b(?:delete|remove)\s+(?:the\s+)?(?:folder|directory)\s+[`'"]?([A-Za-z0-9_./\-]+)[`'"]?"#,
+            in: goal,
+            captureGroup: 1
+        )
+        return paths.compactMap { rawPath in
+            let path = normalizeFolderPath(rawPath)
+            guard !path.isEmpty else { return nil }
+            return .deleteFolder(path: path)
+        }
+    }
+
     private static func parseCreateIntents(_ goal: String) -> [GoalFileOperationIntent] {
         let paths = regexCaptures(
             pattern: #"(?i)\b(?:create|add|make|generate)\s+(?:a\s+)?(?:new\s+)?(?:empty\s+)?(?:file\s+)?[`'"]?((?=[A-Za-z0-9_./\-]*[/.])[A-Za-z0-9_./\-]+)[`'"]?"#,
@@ -254,6 +333,19 @@ nonisolated enum IntentPlanner {
             let path = normalizeWorkspacePath(rawPath)
             guard !path.isEmpty else { return nil }
             return .create(path: path)
+        }
+    }
+
+    private static func parseReplaceIntents(_ goal: String) -> [GoalFileOperationIntent] {
+        let paths = regexCaptures(
+            pattern: #"(?i)\b(?:overwrite|replace)\s+(?:the\s+)?(?:file\s+)?[`'"]?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)[`'"]?(?!\s+(?:to|into)\s+[`'"]?[A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)"#,
+            in: goal,
+            captureGroup: 1
+        )
+        return paths.compactMap { rawPath in
+            let path = normalizeWorkspacePath(rawPath)
+            guard !path.isEmpty else { return nil }
+            return .replace(path: path)
         }
     }
 
@@ -445,7 +537,10 @@ nonisolated enum IntentPlanner {
 
 private enum GoalFileOperationIntent {
     case createFolder(path: String)
+    case renameFolder(from: String, to: String)
+    case deleteFolder(path: String)
     case create(path: String)
+    case replace(path: String)
     case move(from: String, to: String)
     case rename(from: String, to: String)
     case delete(path: String)

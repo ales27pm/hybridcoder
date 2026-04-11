@@ -1467,6 +1467,18 @@ final class AIOrchestrator {
                 }
                 try await self.createWorkspaceFolder(path: path)
             },
+            renameFolder: { [weak self] from, to in
+                guard let self else {
+                    throw OrchestratorError.repoNotLoaded
+                }
+                try await self.renameWorkspaceFolder(from: from, to: to)
+            },
+            deleteFolder: { [weak self] path in
+                guard let self else {
+                    throw OrchestratorError.repoNotLoaded
+                }
+                try await self.deleteWorkspaceFolder(path: path)
+            },
             moveFile: { [weak self] from, to in
                 guard let self else {
                     throw OrchestratorError.repoNotLoaded
@@ -1501,7 +1513,7 @@ final class AIOrchestrator {
                     return true
                 }
                 return false
-            case .inspectFile, .createFolder, .moveFile, .renameFile, .deleteFile, .validateWorkspace:
+            case .inspectFile, .createFolder, .renameFolder, .deleteFolder, .moveFile, .renameFile, .deleteFile, .validateWorkspace:
                 return false
             }
         }
@@ -1562,14 +1574,18 @@ final class AIOrchestrator {
     }
 
     private func moveWorkspaceFile(from sourcePath: String, to destinationPath: String) async throws {
-        guard let root = repoRoot else { throw OrchestratorError.repoNotLoaded }
-        let sourceURL = try resolveWorkspaceURL(for: sourcePath, repoRoot: root)
-        let destinationURL = try resolveWorkspaceURL(for: destinationPath, repoRoot: root)
-        try await repoAccess.moveItem(from: sourceURL, to: destinationURL)
-        await refreshWorkspaceAfterAgentMutation()
+        try await renameWorkspaceItem(from: sourcePath, to: destinationPath)
+    }
+
+    private func renameWorkspaceFolder(from sourcePath: String, to destinationPath: String) async throws {
+        try await renameWorkspaceItem(from: sourcePath, to: destinationPath)
     }
 
     private func renameWorkspaceFile(from sourcePath: String, to destinationPath: String) async throws {
+        try await renameWorkspaceItem(from: sourcePath, to: destinationPath)
+    }
+
+    private func renameWorkspaceItem(from sourcePath: String, to destinationPath: String) async throws {
         guard let root = repoRoot else { throw OrchestratorError.repoNotLoaded }
         let sourceURL = try resolveWorkspaceURL(for: sourcePath, repoRoot: root)
         let destinationURL = try resolveWorkspaceURL(for: destinationPath, repoRoot: root)
@@ -1577,7 +1593,15 @@ final class AIOrchestrator {
         await refreshWorkspaceAfterAgentMutation()
     }
 
+    private func deleteWorkspaceFolder(path: String) async throws {
+        try await deleteWorkspaceItem(path: path)
+    }
+
     private func deleteWorkspaceFile(path: String) async throws {
+        try await deleteWorkspaceItem(path: path)
+    }
+
+    private func deleteWorkspaceItem(path: String) async throws {
         guard let root = repoRoot else { throw OrchestratorError.repoNotLoaded }
         let fileURL = try resolveWorkspaceURL(for: path, repoRoot: root)
         try await repoAccess.removeItem(at: fileURL)

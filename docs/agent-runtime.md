@@ -57,6 +57,8 @@ The runtime should support first-class operations such as:
 - rename file
 - delete file
 - create folder
+- rename folder
+- delete folder
 - move file
 
 ## Design constraints
@@ -121,7 +123,7 @@ The first realistic bytecoding milestone is not full autonomy. It is:
 - surface progress and blockers back into chat
 
 The current implementation now reaches that milestone for guarded patch-plan execution, but it still does not complete the broader create/rename/delete/retry loop for first-class workspace actions.
-The implementation now advances beyond that milestone with goal-derived create/rename/delete plus create-folder/move-file actions and bounded retry orchestration, but it remains partial because patch-backed write strategies are still central for many create/update scenarios and folder action coverage is not yet complete.
+The implementation now advances beyond that milestone with goal-derived create/overwrite/rename/delete plus create/rename/delete-folder and move-file actions, and bounded retry orchestration, but it remains partial because patch-backed write strategies are still central for most update scenarios beyond explicit overwrite requests.
 
 ## Definition of success and Phase 6 exit criteria
 

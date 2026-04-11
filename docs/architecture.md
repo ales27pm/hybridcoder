@@ -41,7 +41,7 @@ Today, the repo does not yet implement a full execution loop for:
 
 - fully autonomous multi-step coding work across all scenarios
 - robust sub-task decomposition beyond goal-derived file intents and patch-backed plans
-- complete first-class workspace coverage across file and folder actions in every execution path (for example, folder rename/delete and non-patch modify generation remain incomplete)
+- complete first-class workspace coverage across file and folder actions in every execution path (for example, goal-derived non-patch modify generation still remains incomplete for most update scenarios)
 - durable validate/replan/retry behavior that can carry a project to completion without patch-centric fallback in most cases
 
 The current codebase now includes planner/coordinator execution with bounded validate -> replan -> retry, but it is still patch-plan centric rather than a finished autonomous runtime.

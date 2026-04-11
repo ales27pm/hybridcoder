@@ -8,6 +8,8 @@ enum ExecutionCoordinator {
         let createFile: @Sendable (String, String) async throws -> Void
         let updateFile: @Sendable (String, String) async throws -> Void
         let createFolder: @Sendable (String) async throws -> Void
+        let renameFolder: @Sendable (String, String) async throws -> Void
+        let deleteFolder: @Sendable (String) async throws -> Void
         let moveFile: @Sendable (String, String) async throws -> Void
         let renameFile: @Sendable (String, String) async throws -> Void
         let deleteFile: @Sendable (String) async throws -> Void
@@ -176,6 +178,93 @@ enum ExecutionCoordinator {
                     )
                 )
                 inspectedFiles[path] = AgentWorkspaceFileSnapshot(path: path, exists: true, content: nil)
+
+            case .renameFolder(let from, let to, _):
+                let sourceSnapshot = await ensureInspection(
+                    for: from,
+                    inspectedFiles: &inspectedFiles,
+                    dependencies: dependencies
+                )
+                if !sourceSnapshot.exists {
+                    let blocker = "\(from): source folder does not exist, so rename folder action was blocked."
+                    blockers.append(blocker)
+                    actionResults.append(
+                        AgentActionExecutionResult(
+                            for: action,
+                            status: .blocked,
+                            detail: "Rename folder action blocked because the source folder was not found.",
+                            blockers: [blocker]
+                        )
+                    )
+                    continue
+                }
+
+                let destinationSnapshot = await ensureInspection(
+                    for: to,
+                    inspectedFiles: &inspectedFiles,
+                    dependencies: dependencies
+                )
+                if destinationSnapshot.exists {
+                    let blocker = "\(to): destination already exists, so rename folder action was blocked."
+                    blockers.append(blocker)
+                    actionResults.append(
+                        AgentActionExecutionResult(
+                            for: action,
+                            status: .blocked,
+                            detail: "Rename folder action blocked because the destination path already exists.",
+                            blockers: [blocker]
+                        )
+                    )
+                    continue
+                }
+
+                try await dependencies.renameFolder(from, to)
+                changedFiles.insert(from)
+                changedFiles.insert(to)
+                didMakeMeaningfulWorkspaceProgress = true
+                actionResults.append(
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .succeeded,
+                        detail: "Renamed folder \(from) to \(to).",
+                        changedFiles: [from, to]
+                    )
+                )
+                inspectedFiles[from] = AgentWorkspaceFileSnapshot(path: from, exists: false, content: nil)
+                inspectedFiles[to] = AgentWorkspaceFileSnapshot(path: to, exists: true, content: nil)
+
+            case .deleteFolder(let path, _):
+                let snapshot = await ensureInspection(
+                    for: path,
+                    inspectedFiles: &inspectedFiles,
+                    dependencies: dependencies
+                )
+                if !snapshot.exists {
+                    let blocker = "\(path): folder does not exist, so delete folder action was blocked."
+                    blockers.append(blocker)
+                    actionResults.append(
+                        AgentActionExecutionResult(
+                            for: action,
+                            status: .blocked,
+                            detail: "Delete folder action blocked because the folder was not found.",
+                            blockers: [blocker]
+                        )
+                    )
+                    continue
+                }
+
+                try await dependencies.deleteFolder(path)
+                changedFiles.insert(path)
+                didMakeMeaningfulWorkspaceProgress = true
+                actionResults.append(
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .succeeded,
+                        detail: "Deleted folder \(path).",
+                        changedFiles: [path]
+                    )
+                )
+                inspectedFiles[path] = AgentWorkspaceFileSnapshot(path: path, exists: false, content: nil)
 
             case .moveFile(let from, let to, _):
                 let sourceSnapshot = await ensureInspection(
