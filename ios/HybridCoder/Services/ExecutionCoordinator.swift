@@ -577,6 +577,159 @@ enum ExecutionCoordinator {
                 updatedContents
             )
 
+        case .insertBefore(let anchor, let text):
+            guard let existingContents = existingSnapshot.content else {
+                let blocker = "\(path): insert-before action requires readable UTF-8 file content."
+                return (
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .blocked,
+                        detail: "Insert-before action blocked because file contents could not be read.",
+                        blockers: [blocker]
+                    ),
+                    true,
+                    nil
+                )
+            }
+
+            guard let anchorRange = existingContents.range(of: anchor) else {
+                let blocker = "\(path): insert-before action could not find the anchor text."
+                return (
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .blocked,
+                        detail: "Insert-before action blocked because the anchor text was not found.",
+                        blockers: [blocker]
+                    ),
+                    true,
+                    nil
+                )
+            }
+
+            var updatedContents = existingContents
+            updatedContents.insert(contentsOf: text, at: anchorRange.lowerBound)
+            try await directWrite(path, updatedContents)
+            changedFiles.insert(path)
+            didMakeMeaningfulWorkspaceProgress = true
+            return (
+                AgentActionExecutionResult(
+                    for: action,
+                    status: .succeeded,
+                    detail: "Executed \(action.action.summary.lowercased()) with a direct insert-before transformation.",
+                    changedFiles: [path]
+                ),
+                false,
+                updatedContents
+            )
+
+        case .insertAfter(let anchor, let text):
+            guard let existingContents = existingSnapshot.content else {
+                let blocker = "\(path): insert-after action requires readable UTF-8 file content."
+                return (
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .blocked,
+                        detail: "Insert-after action blocked because file contents could not be read.",
+                        blockers: [blocker]
+                    ),
+                    true,
+                    nil
+                )
+            }
+
+            guard let anchorRange = existingContents.range(of: anchor) else {
+                let blocker = "\(path): insert-after action could not find the anchor text."
+                return (
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .blocked,
+                        detail: "Insert-after action blocked because the anchor text was not found.",
+                        blockers: [blocker]
+                    ),
+                    true,
+                    nil
+                )
+            }
+
+            var updatedContents = existingContents
+            updatedContents.insert(contentsOf: text, at: anchorRange.upperBound)
+            try await directWrite(path, updatedContents)
+            changedFiles.insert(path)
+            didMakeMeaningfulWorkspaceProgress = true
+            return (
+                AgentActionExecutionResult(
+                    for: action,
+                    status: .succeeded,
+                    detail: "Executed \(action.action.summary.lowercased()) with a direct insert-after transformation.",
+                    changedFiles: [path]
+                ),
+                false,
+                updatedContents
+            )
+
+        case .replaceBetween(let startAnchor, let endAnchor, let replacement):
+            guard let existingContents = existingSnapshot.content else {
+                let blocker = "\(path): replace-between action requires readable UTF-8 file content."
+                return (
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .blocked,
+                        detail: "Replace-between action blocked because file contents could not be read.",
+                        blockers: [blocker]
+                    ),
+                    true,
+                    nil
+                )
+            }
+
+            guard let startRange = existingContents.range(of: startAnchor) else {
+                let blocker = "\(path): replace-between action could not find the start anchor text."
+                return (
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .blocked,
+                        detail: "Replace-between action blocked because the start anchor text was not found.",
+                        blockers: [blocker]
+                    ),
+                    true,
+                    nil
+                )
+            }
+
+            guard let endRange = existingContents.range(
+                of: endAnchor,
+                range: startRange.upperBound..<existingContents.endIndex
+            ) else {
+                let blocker = "\(path): replace-between action could not find the end anchor text after the start anchor."
+                return (
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .blocked,
+                        detail: "Replace-between action blocked because the end anchor text was not found after the start anchor.",
+                        blockers: [blocker]
+                    ),
+                    true,
+                    nil
+                )
+            }
+
+            let prefix = existingContents[..<startRange.upperBound]
+            let suffix = existingContents[endRange.lowerBound...]
+            let updatedContents = String(prefix + replacement + suffix)
+            try await directWrite(path, updatedContents)
+            changedFiles.insert(path)
+            didMakeMeaningfulWorkspaceProgress = true
+            return (
+                AgentActionExecutionResult(
+                    for: action,
+                    status: .succeeded,
+                    detail: "Executed \(action.action.summary.lowercased()) with a direct replace-between transformation.",
+                    changedFiles: [path]
+                ),
+                false,
+                updatedContents
+            )
+
         case .replaceText(let search, let replacement):
             guard let existingContents = existingSnapshot.content else {
                 let blocker = "\(path): replace action requires readable UTF-8 file content."
@@ -618,6 +771,50 @@ enum ExecutionCoordinator {
                     for: action,
                     status: .succeeded,
                     detail: "Executed \(action.action.summary.lowercased()) with a direct replace transformation.",
+                    changedFiles: [path]
+                ),
+                false,
+                updatedContents
+            )
+
+        case .deleteText(let search):
+            guard let existingContents = existingSnapshot.content else {
+                let blocker = "\(path): delete-text action requires readable UTF-8 file content."
+                return (
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .blocked,
+                        detail: "Delete-text action blocked because file contents could not be read.",
+                        blockers: [blocker]
+                    ),
+                    true,
+                    nil
+                )
+            }
+
+            guard existingContents.contains(search) else {
+                let blocker = "\(path): delete-text action could not find the requested text."
+                return (
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .blocked,
+                        detail: "Delete-text action blocked because the target text was not found.",
+                        blockers: [blocker]
+                    ),
+                    true,
+                    nil
+                )
+            }
+
+            let updatedContents = existingContents.replacingOccurrences(of: search, with: "")
+            try await directWrite(path, updatedContents)
+            changedFiles.insert(path)
+            didMakeMeaningfulWorkspaceProgress = true
+            return (
+                AgentActionExecutionResult(
+                    for: action,
+                    status: .succeeded,
+                    detail: "Executed \(action.action.summary.lowercased()) with a direct delete-text transformation.",
                     changedFiles: [path]
                 ),
                 false,
@@ -732,7 +929,7 @@ enum ExecutionCoordinator {
 
     private static func patchPlan(from strategy: AgentWorkspaceAction.WriteStrategy) -> PatchPlan? {
         switch strategy {
-        case .direct, .append, .prepend, .replaceText:
+        case .direct, .append, .prepend, .insertBefore, .insertAfter, .replaceBetween, .replaceText, .deleteText:
             return nil
         case .patchPlan(let patchPlan):
             return patchPlan

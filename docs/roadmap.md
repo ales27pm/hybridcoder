@@ -39,22 +39,23 @@ Phase 6 is done only when both capability and measurement bars are met:
 
 | KPI | Baseline | Target | Acceptance bar |
 | --- | --- | --- | --- |
-| Time to first scaffold output | Session-local runtime KPI snapshot (p50, partial sample coverage) | <= 120s | For a valid chat scaffold request, first coherent multi-file Expo output is produced within target time. |
-| Goal-to-plan latency (p50) | Session-local runtime KPI snapshot (p50) | <= 15s | Runtime emits an ordered action plan within target latency for Phase 6 scenario inputs. |
-| Multi-step task completion without manual file edits | Session-local runtime KPI snapshot (sampled multi-step scenarios) | >= 70% (Phase 6 scenario set) | Scenario finishes with runtime-executed workspace actions and no required manual file intervention. |
-| Preview truthfulness | Not instrumented | 0 false runtime claims in validation suite | Diagnostic/preview surfaces never claim full RN runtime capability where not implemented. |
-| Workspace safety | Session-local runtime KPI counter (escaped-path violations) | 0 out-of-bound file actions | Validation suite records no file create/modify/rename/delete/move escaping workspace boundaries. |
+| Time to first scaffold output | Persisted local runtime KPI snapshot (p50, partial sample coverage) | <= 120s | For a valid chat scaffold request, first coherent multi-file Expo output is produced within target time. |
+| Goal-to-plan latency (p50) | Persisted local runtime KPI snapshot (p50) | <= 15s | Runtime emits an ordered action plan within target latency for Phase 6 scenario inputs. |
+| Multi-step task completion without manual file edits | Persisted local runtime KPI snapshot (sampled multi-step scenarios) | >= 70% (Phase 6 scenario set) | Scenario finishes with runtime-executed workspace actions and no required manual file intervention. |
+| Preview truthfulness | Persisted local preview truthfulness audit counter (validation-time checks) | 0 false runtime claims in validation suite | Diagnostic/preview surfaces never claim full RN runtime capability where not implemented. |
+| Workspace safety | Persisted local runtime KPI counter (escaped-path violations) | 0 out-of-bound file actions | Validation suite records no file create/modify/rename/delete/move escaping workspace boundaries. |
 
 ### Phase 6 current status (as of April 11, 2026)
 
 - classification: advancing but still partial
 - main `.patchPlanning` chat entry now runs a goal-first runtime path (`goal -> action plan -> execute -> validate -> report`)
 - runtime execution now prefers goal-derived workspace actions first and falls back to patch-backed writes only when needed
-- goal-derived workspace actions now include create/overwrite/append/prepend/replace-text/rename/delete file paths plus create/rename/delete folder and move file coverage
+- goal-derived workspace actions now include create/overwrite/append/prepend/insert-before/insert-after/replace-between/replace-text/delete-text/rename/delete file paths plus create/rename/delete folder and move file coverage
 - primary chat flow now receives and stores agent-runtime reports directly
 - bounded validate -> replan -> retry now exists in the goal-first runtime path
 - workspace path resolution now resolves symlinked segments and blocks out-of-repo escapes before runtime file actions execute
-- session-local KPI snapshot instrumentation now tracks goal-to-plan latency, scaffold first output latency, multi-step completion sampling, and workspace safety violations
+- persisted local KPI snapshot instrumentation now tracks goal-to-plan latency, scaffold first output latency, multi-step completion sampling, and workspace safety violations
+- preview validation now records a persisted local truthfulness audit counter, and telemetry export now writes a generated KPI validation report
 - the runtime is still not fully agentic: patch-backed write strategies remain central for many richer update edits, and `PatchResult` is still a first-class output
 
 ## Phase 7

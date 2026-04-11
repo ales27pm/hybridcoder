@@ -351,6 +351,117 @@ struct AgentRuntimeTests {
         #expect(replacement == "Hi")
     }
 
+    @Test func plannerDerivesInsertBeforeAndAfterActionsFromGoalWithoutPatchFallback() {
+        let workspace = AgentWorkspaceContext(
+            kind: .importedExpo,
+            projectName: "expo-app",
+            projectKind: .importedExpo,
+            entryFile: "app/index.tsx",
+            hasExpoRouter: true,
+            dependencies: ["expo", "react-native"]
+        )
+
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Insert '/* before */' before 'Hello' in App.tsx and insert '/* after */' after 'Hello' in App.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        #expect(executionPlan.actions.map(\.title) == [
+            "Insert text before anchor in App.tsx",
+            "Insert text after anchor in App.tsx",
+            "Validate workspace after actions"
+        ])
+
+        guard case .updateFile(_, let insertBeforeStrategy, _) = executionPlan.actions[0].action else {
+            Issue.record("Expected first action to be update file.")
+            return
+        }
+        guard case .insertBefore(let beforeAnchor, let beforeText) = insertBeforeStrategy else {
+            Issue.record("Expected first action to use insertBefore strategy.")
+            return
+        }
+        #expect(beforeAnchor == "Hello")
+        #expect(beforeText == "/* before */")
+
+        guard case .updateFile(_, let insertAfterStrategy, _) = executionPlan.actions[1].action else {
+            Issue.record("Expected second action to be update file.")
+            return
+        }
+        guard case .insertAfter(let afterAnchor, let afterText) = insertAfterStrategy else {
+            Issue.record("Expected second action to use insertAfter strategy.")
+            return
+        }
+        #expect(afterAnchor == "Hello")
+        #expect(afterText == "/* after */")
+    }
+
+    @Test func plannerDerivesReplaceBetweenActionFromGoalWithoutPatchFallback() {
+        let workspace = AgentWorkspaceContext(
+            kind: .importedExpo,
+            projectName: "expo-app",
+            projectKind: .importedExpo,
+            entryFile: "app/index.tsx",
+            hasExpoRouter: true,
+            dependencies: ["expo", "react-native"]
+        )
+
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Replace text between 'start' and 'end' with 'middle' in App.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        #expect(executionPlan.actions.map(\.title) == [
+            "Replace text between anchors in App.tsx",
+            "Validate workspace after actions"
+        ])
+
+        guard case .updateFile(_, let strategy, _) = executionPlan.actions[0].action else {
+            Issue.record("Expected first action to be update file.")
+            return
+        }
+        guard case .replaceBetween(let startAnchor, let endAnchor, let replacement) = strategy else {
+            Issue.record("Expected first action to use replaceBetween strategy.")
+            return
+        }
+        #expect(startAnchor == "start")
+        #expect(endAnchor == "end")
+        #expect(replacement == "middle")
+    }
+
+    @Test func plannerDerivesDeleteTextActionFromGoalWithoutPatchFallback() {
+        let workspace = AgentWorkspaceContext(
+            kind: .importedExpo,
+            projectName: "expo-app",
+            projectKind: .importedExpo,
+            entryFile: "app/index.tsx",
+            hasExpoRouter: true,
+            dependencies: ["expo", "react-native"]
+        )
+
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Remove ' // v2' from App.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        #expect(executionPlan.actions.map(\.title) == [
+            "Remove text from App.tsx",
+            "Validate workspace after actions"
+        ])
+
+        guard case .updateFile(_, let strategy, _) = executionPlan.actions[0].action else {
+            Issue.record("Expected first action to be update file.")
+            return
+        }
+        guard case .deleteText(let search) = strategy else {
+            Issue.record("Expected first action to use deleteText strategy.")
+            return
+        }
+        #expect(search == " // v2")
+    }
+
     @Test func coordinatorExecutesGoalDerivedRenameWithoutPatchPlan() async throws {
         let workspace = AgentWorkspaceContext(
             kind: .prototype,
@@ -530,6 +641,189 @@ struct AgentRuntimeTests {
         #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
         #expect(outcome.patchResult.changedFiles == ["App.tsx"])
         #expect(outcome.executedActions.count == 3)
+    }
+
+    @Test func coordinatorExecutesDeleteTextWithoutPatchPlan() async throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Remove ' // v2' from App.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        let capture = RuntimeActionCapture()
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    AgentWorkspaceFileSnapshot(path: path, exists: path == "App.tsx", content: "Hello // v2")
+                },
+                validatePatchPlan: { _ in
+                    Issue.record("Patch validation should not run for goal-derived delete-text actions without patch fallback.")
+                    return []
+                },
+                applyPatchPlan: { _ in
+                    Issue.record("Patch apply should not run for goal-derived delete-text actions without patch fallback.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: PatchPlan(summary: "unused", operations: []),
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in
+                    Issue.record("Create file should not run for goal-derived delete-text actions.")
+                },
+                updateFile: { path, contents in
+                    await capture.recordUpdate(path: path, contents: contents)
+                },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        let (updatedPath, updatedContents) = await capture.updateSnapshot()
+        #expect(updatedPath == "App.tsx")
+        #expect(updatedContents == "Hello")
+        #expect(outcome.didMakeMeaningfulWorkspaceProgress)
+        #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
+        #expect(outcome.patchResult.changedFiles == ["App.tsx"])
+        #expect(outcome.executedActions.count == 2)
+    }
+
+    @Test func coordinatorExecutesInsertBeforeAndAfterWithoutPatchPlan() async throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Insert '/* before */' before 'Hello' in App.tsx and insert '/* after */' after 'Hello' in App.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        let capture = RuntimeActionCapture()
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    AgentWorkspaceFileSnapshot(path: path, exists: path == "App.tsx", content: "Hello")
+                },
+                validatePatchPlan: { _ in
+                    Issue.record("Patch validation should not run for goal-derived insert actions without patch fallback.")
+                    return []
+                },
+                applyPatchPlan: { _ in
+                    Issue.record("Patch apply should not run for goal-derived insert actions without patch fallback.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: PatchPlan(summary: "unused", operations: []),
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in
+                    Issue.record("Create file should not run for goal-derived insert actions.")
+                },
+                updateFile: { path, contents in
+                    await capture.recordUpdate(path: path, contents: contents)
+                },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        let writes = await capture.updateWritesSnapshot()
+        #expect(writes.count == 2)
+        #expect(writes[0].0 == "App.tsx")
+        #expect(writes[0].1 == "/* before */Hello")
+        #expect(writes[1].0 == "App.tsx")
+        #expect(writes[1].1 == "/* before */Hello/* after */")
+        #expect(outcome.didMakeMeaningfulWorkspaceProgress)
+        #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
+        #expect(outcome.patchResult.changedFiles == ["App.tsx"])
+        #expect(outcome.executedActions.count == 3)
+    }
+
+    @Test func coordinatorExecutesReplaceBetweenWithoutPatchPlan() async throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Replace text between 'start' and 'end' with 'middle' in App.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        let capture = RuntimeActionCapture()
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    AgentWorkspaceFileSnapshot(path: path, exists: path == "App.tsx", content: "startoldend")
+                },
+                validatePatchPlan: { _ in
+                    Issue.record("Patch validation should not run for goal-derived replace-between actions without patch fallback.")
+                    return []
+                },
+                applyPatchPlan: { _ in
+                    Issue.record("Patch apply should not run for goal-derived replace-between actions without patch fallback.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: PatchPlan(summary: "unused", operations: []),
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in
+                    Issue.record("Create file should not run for goal-derived replace-between actions.")
+                },
+                updateFile: { path, contents in
+                    await capture.recordUpdate(path: path, contents: contents)
+                },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        let (updatedPath, updatedContents) = await capture.updateSnapshot()
+        #expect(updatedPath == "App.tsx")
+        #expect(updatedContents == "startmiddleend")
+        #expect(outcome.didMakeMeaningfulWorkspaceProgress)
+        #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
+        #expect(outcome.patchResult.changedFiles == ["App.tsx"])
+        #expect(outcome.executedActions.count == 2)
     }
 
     @Test func coordinatorExecutesGoalDerivedFolderCreateAndMoveWithoutPatchPlan() async throws {

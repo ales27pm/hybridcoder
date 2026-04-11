@@ -174,7 +174,11 @@ nonisolated enum AgentWorkspaceAction: Sendable {
         case direct(contents: String)
         case append(text: String)
         case prepend(text: String)
+        case insertBefore(anchor: String, text: String)
+        case insertAfter(anchor: String, text: String)
+        case replaceBetween(startAnchor: String, endAnchor: String, replacement: String)
         case replaceText(search: String, replacement: String)
+        case deleteText(search: String)
         case patchPlan(PatchPlan)
 
         var isPatchBacked: Bool {

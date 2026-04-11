@@ -195,11 +195,23 @@ struct ImportedExpoWorkspaceView: View {
     }
 
     private var diagnosticsView: some View {
-        ScrollView {
+        let truthfulness = viewModel.previewCoordinator.truthfulnessSnapshot
+        return ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 Text("WORKSPACE DIAGNOSTICS")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(Theme.dimText)
+
+                HStack(spacing: 12) {
+                    truthStat(label: "Checks", value: "\(truthfulness.validationChecks)")
+                    truthStat(label: "False Claims", value: "\(truthfulness.falseClaimCount)")
+                    if let lastChecked = truthfulness.lastCheckedAt {
+                        truthStat(label: "Last Check", value: lastChecked.formatted(.relative(presentation: .named)))
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.cardBg, in: .rect(cornerRadius: 10))
 
                 if viewModel.diagnostics.isEmpty {
                     Text("No diagnostics yet. Refresh preview to inspect workspace readiness.")
@@ -233,6 +245,17 @@ struct ImportedExpoWorkspaceView: View {
             .padding(16)
         }
         .background(Theme.surfaceBg)
+    }
+
+    private func truthStat(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(Theme.dimText)
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.85))
+        }
     }
 
     private func metadataChip(icon: String, text: String) -> some View {

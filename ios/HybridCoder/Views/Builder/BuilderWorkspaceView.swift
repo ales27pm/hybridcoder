@@ -274,7 +274,8 @@ struct BuilderWorkspaceView: View {
     }
 
     private var diagnosticsView: some View {
-        ScrollView {
+        let truthfulness = previewCoordinator.truthfulnessSnapshot
+        return ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
                     Image(systemName: previewCoordinator.isReady ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
@@ -284,6 +285,14 @@ struct BuilderWorkspaceView: View {
                         .foregroundStyle(.white)
                 }
                 .padding(.bottom, 4)
+
+                HStack(spacing: 16) {
+                    structStat(label: "Truth Checks", value: "\(truthfulness.validationChecks)")
+                    structStat(label: "False Claims", value: "\(truthfulness.falseClaimCount)")
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.cardBg, in: .rect(cornerRadius: 12))
 
                 if let snapshot = previewCoordinator.structuralSnapshot {
                     VStack(alignment: .leading, spacing: 6) {

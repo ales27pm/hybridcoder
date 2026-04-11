@@ -251,6 +251,58 @@ nonisolated enum IntentPlanner {
                     )
                 )
 
+            case .insertBeforeText(let path, let anchor, let text):
+                let key = "insertBefore|\(path.lowercased())|\(anchor.lowercased())|\(text.lowercased())"
+                guard !seenKeys.contains(key) else { continue }
+                seenKeys.insert(key)
+                actions.append(
+                    AgentPlannedAction(
+                        title: "Insert text before anchor in \(path)",
+                        action: .updateFile(
+                            path: path,
+                            strategy: .insertBefore(anchor: anchor, text: text),
+                            reason: "Explicit insert-before requested by the goal: \(goal)"
+                        ),
+                        detail: "Goal-derived direct insert-before action for \(path)"
+                    )
+                )
+
+            case .insertAfterText(let path, let anchor, let text):
+                let key = "insertAfter|\(path.lowercased())|\(anchor.lowercased())|\(text.lowercased())"
+                guard !seenKeys.contains(key) else { continue }
+                seenKeys.insert(key)
+                actions.append(
+                    AgentPlannedAction(
+                        title: "Insert text after anchor in \(path)",
+                        action: .updateFile(
+                            path: path,
+                            strategy: .insertAfter(anchor: anchor, text: text),
+                            reason: "Explicit insert-after requested by the goal: \(goal)"
+                        ),
+                        detail: "Goal-derived direct insert-after action for \(path)"
+                    )
+                )
+
+            case .replaceBetweenText(let path, let startAnchor, let endAnchor, let replacement):
+                let key = "replaceBetween|\(path.lowercased())|\(startAnchor.lowercased())|\(endAnchor.lowercased())|\(replacement.lowercased())"
+                guard !seenKeys.contains(key) else { continue }
+                seenKeys.insert(key)
+                actions.append(
+                    AgentPlannedAction(
+                        title: "Replace text between anchors in \(path)",
+                        action: .updateFile(
+                            path: path,
+                            strategy: .replaceBetween(
+                                startAnchor: startAnchor,
+                                endAnchor: endAnchor,
+                                replacement: replacement
+                            ),
+                            reason: "Explicit replace-between requested by the goal: \(goal)"
+                        ),
+                        detail: "Goal-derived direct replace-between action for \(path)"
+                    )
+                )
+
             case .replaceText(let path, let search, let replacement):
                 let key = "replaceText|\(path.lowercased())|\(search.lowercased())|\(replacement.lowercased())"
                 guard !seenKeys.contains(key) else { continue }
@@ -264,6 +316,22 @@ nonisolated enum IntentPlanner {
                             reason: "Explicit in-file replace requested by the goal: \(goal)"
                         ),
                         detail: "Goal-derived direct replace action for \(path)"
+                    )
+                )
+
+            case .deleteText(let path, let search):
+                let key = "deleteText|\(path.lowercased())|\(search.lowercased())"
+                guard !seenKeys.contains(key) else { continue }
+                seenKeys.insert(key)
+                actions.append(
+                    AgentPlannedAction(
+                        title: "Remove text from \(path)",
+                        action: .updateFile(
+                            path: path,
+                            strategy: .deleteText(search: search),
+                            reason: "Explicit in-file delete-text requested by the goal: \(goal)"
+                        ),
+                        detail: "Goal-derived direct delete-text action for \(path)"
                     )
                 )
 
@@ -327,7 +395,11 @@ nonisolated enum IntentPlanner {
         + parseReplaceIntents(goal)
         + parseAppendIntents(goal)
         + parsePrependIntents(goal)
+        + parseInsertBeforeIntents(goal)
+        + parseInsertAfterIntents(goal)
+        + parseReplaceBetweenIntents(goal)
         + parseReplaceTextIntents(goal)
+        + parseDeleteTextIntents(goal)
         + parseMoveFileIntents(goal)
         + parseRenameIntents(goal)
         + parseDeleteIntents(goal)
@@ -428,6 +500,63 @@ nonisolated enum IntentPlanner {
         }
     }
 
+    private static func parseInsertBeforeIntents(_ goal: String) -> [GoalFileOperationIntent] {
+        let captures = regexCaptureTriples(
+            pattern: #"(?i)\binsert\s+[`'"]([^`'"]+)[`'"]\s+before\s+[`'"]([^`'"]+)[`'"]\s+(?:in|inside)\s+(?:the\s+)?(?:file\s+)?[`'"]?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)[`'"]?"#,
+            in: goal,
+            firstGroup: 1,
+            secondGroup: 2,
+            thirdGroup: 3
+        )
+        return captures.compactMap { text, anchor, rawPath in
+            let path = normalizeWorkspacePath(rawPath)
+            guard !path.isEmpty else { return nil }
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            guard !anchor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return .insertBeforeText(path: path, anchor: anchor, text: text)
+        }
+    }
+
+    private static func parseInsertAfterIntents(_ goal: String) -> [GoalFileOperationIntent] {
+        let captures = regexCaptureTriples(
+            pattern: #"(?i)\binsert\s+[`'"]([^`'"]+)[`'"]\s+after\s+[`'"]([^`'"]+)[`'"]\s+(?:in|inside)\s+(?:the\s+)?(?:file\s+)?[`'"]?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)[`'"]?"#,
+            in: goal,
+            firstGroup: 1,
+            secondGroup: 2,
+            thirdGroup: 3
+        )
+        return captures.compactMap { text, anchor, rawPath in
+            let path = normalizeWorkspacePath(rawPath)
+            guard !path.isEmpty else { return nil }
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            guard !anchor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return .insertAfterText(path: path, anchor: anchor, text: text)
+        }
+    }
+
+    private static func parseReplaceBetweenIntents(_ goal: String) -> [GoalFileOperationIntent] {
+        let captures = regexCaptureQuads(
+            pattern: #"(?i)\breplace\s+text\s+between\s+[`'"]([^`'"]+)[`'"]\s+and\s+[`'"]([^`'"]+)[`'"]\s+with\s+[`'"]([^`'"]*)[`'"]\s+(?:in|inside)\s+(?:the\s+)?(?:file\s+)?[`'"]?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)[`'"]?"#,
+            in: goal,
+            firstGroup: 1,
+            secondGroup: 2,
+            thirdGroup: 3,
+            fourthGroup: 4
+        )
+        return captures.compactMap { startAnchor, endAnchor, replacement, rawPath in
+            let path = normalizeWorkspacePath(rawPath)
+            guard !path.isEmpty else { return nil }
+            guard !startAnchor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            guard !endAnchor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return .replaceBetweenText(
+                path: path,
+                startAnchor: startAnchor,
+                endAnchor: endAnchor,
+                replacement: replacement
+            )
+        }
+    }
+
     private static func parseReplaceTextIntents(_ goal: String) -> [GoalFileOperationIntent] {
         let captures = regexCaptureTriples(
             pattern: #"(?i)\breplace\s+[`'"]([^`'"]+)[`'"]\s+with\s+[`'"]([^`'"]*)[`'"]\s+(?:in|inside)\s+(?:the\s+)?(?:file\s+)?[`'"]?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)[`'"]?"#,
@@ -440,6 +569,20 @@ nonisolated enum IntentPlanner {
             let path = normalizeWorkspacePath(rawPath)
             guard !path.isEmpty, !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             return .replaceText(path: path, search: search, replacement: replacement)
+        }
+    }
+
+    private static func parseDeleteTextIntents(_ goal: String) -> [GoalFileOperationIntent] {
+        let captures = regexCapturePairs(
+            pattern: #"(?i)\b(?:remove|delete)\s+[`'"]([^`'"]+)[`'"]\s+(?:from|in)\s+(?:the\s+)?(?:file\s+)?[`'"]?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)[`'"]?"#,
+            in: goal,
+            firstGroup: 1,
+            secondGroup: 2
+        )
+        return captures.compactMap { search, rawPath in
+            let path = normalizeWorkspacePath(rawPath)
+            guard !path.isEmpty, !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return .deleteText(path: path, search: search)
         }
     }
 
@@ -640,6 +783,36 @@ nonisolated enum IntentPlanner {
         }
     }
 
+    private static func regexCaptureQuads(
+        pattern: String,
+        in text: String,
+        firstGroup: Int,
+        secondGroup: Int,
+        thirdGroup: Int,
+        fourthGroup: Int
+    ) -> [(String, String, String, String)] {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let nsText = text as NSString
+        let range = NSRange(location: 0, length: nsText.length)
+        return regex.matches(in: text, range: range).compactMap { match in
+            guard match.numberOfRanges > max(firstGroup, max(secondGroup, max(thirdGroup, fourthGroup))) else { return nil }
+            let firstRange = match.range(at: firstGroup)
+            let secondRange = match.range(at: secondGroup)
+            let thirdRange = match.range(at: thirdGroup)
+            let fourthRange = match.range(at: fourthGroup)
+            guard firstRange.location != NSNotFound,
+                  secondRange.location != NSNotFound,
+                  thirdRange.location != NSNotFound,
+                  fourthRange.location != NSNotFound else { return nil }
+            return (
+                nsText.substring(with: firstRange),
+                nsText.substring(with: secondRange),
+                nsText.substring(with: thirdRange),
+                nsText.substring(with: fourthRange)
+            )
+        }
+    }
+
     private static func groupedOperations(_ operations: [PatchOperation]) -> [(filePath: String, operations: [PatchOperation])] {
         var orderedGroups: [(filePath: String, operations: [PatchOperation])] = []
 
@@ -663,7 +836,11 @@ private enum GoalFileOperationIntent {
     case replace(path: String)
     case appendText(path: String, text: String)
     case prependText(path: String, text: String)
+    case insertBeforeText(path: String, anchor: String, text: String)
+    case insertAfterText(path: String, anchor: String, text: String)
+    case replaceBetweenText(path: String, startAnchor: String, endAnchor: String, replacement: String)
     case replaceText(path: String, search: String, replacement: String)
+    case deleteText(path: String, search: String)
     case move(from: String, to: String)
     case rename(from: String, to: String)
     case delete(path: String)

@@ -1,6 +1,6 @@
 import Foundation
 
-nonisolated struct AgentRuntimeKPISnapshot: Sendable {
+nonisolated struct AgentRuntimeKPISnapshot: Sendable, Codable, Equatable, Hashable {
     let goalToPlanLatencyP50Milliseconds: Int?
     let scaffoldTimeToFirstOutputP50Milliseconds: Int?
     let multiStepCompletionRate: Double?
@@ -18,7 +18,7 @@ nonisolated struct AgentRuntimeKPISnapshot: Sendable {
     )
 }
 
-nonisolated struct AgentRuntimeKPIStore: Sendable {
+nonisolated struct AgentRuntimeKPIStore: Sendable, Codable {
     private static let sampleLimit = 200
 
     private var goalToPlanLatencySamplesMilliseconds: [Double] = []

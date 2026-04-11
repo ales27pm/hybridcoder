@@ -135,4 +135,52 @@ struct ImportedWorkspaceFlowTests {
         #expect(!readiness.isBlocked)
         #expect(readiness.headline == "Diagnostics Only")
     }
+
+    @Test func previewTruthfulnessAuditAcceptsStructuralOutsideRuntimeLanguage() {
+        let readiness = PreviewErrorClassifier.Readiness(
+            state: .structuralReady,
+            headline: "Structural Preview Ready",
+            detail: "Structural preview is ready. Live Expo runtime still runs outside HybridCoder."
+        )
+        let diagnostics = [
+            ProjectDiagnostic(
+                severity: .info,
+                message: "HybridCoder preview is structural and diagnostic. Run `npx expo start` on your Mac for a live runtime.",
+                filePath: nil
+            )
+        ]
+
+        let audit = PreviewTruthfulnessAuditor.audit(
+            readiness: readiness,
+            diagnostics: diagnostics,
+            workspaceNotes: ["Preview remains structural and diagnostic."]
+        )
+
+        #expect(audit.checkedMessages == 4)
+        #expect(audit.violations.isEmpty)
+    }
+
+    @Test func previewTruthfulnessAuditFlagsPotentialRuntimeOverclaims() {
+        let readiness = PreviewErrorClassifier.Readiness(
+            state: .structuralReady,
+            headline: "Runtime Ready",
+            detail: "Full React Native runtime is running in HybridCoder."
+        )
+        let diagnostics = [
+            ProjectDiagnostic(
+                severity: .info,
+                message: "Live runtime is available directly in HybridCoder.",
+                filePath: nil
+            )
+        ]
+
+        let audit = PreviewTruthfulnessAuditor.audit(
+            readiness: readiness,
+            diagnostics: diagnostics,
+            workspaceNotes: []
+        )
+
+        #expect(!audit.violations.isEmpty)
+        #expect(audit.violations.contains { $0.contains("Runtime Ready") || $0.contains("Full React Native runtime") })
+    }
 }

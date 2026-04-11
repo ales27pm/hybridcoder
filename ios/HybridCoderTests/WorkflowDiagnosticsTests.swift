@@ -116,6 +116,166 @@ struct WorkflowDiagnosticsTests {
         #expect(snapshot.lastUpdatedAt != nil)
     }
 
+    @Test func runtimeTelemetryStorePersistsKPIStore() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory
+            .appendingPathComponent("HybridCoderRuntimeTelemetry-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let runtimeKPIURL = root.appendingPathComponent("runtime-kpi.json", isDirectory: false)
+        var store = AgentRuntimeKPIStore()
+        store.recordGoalToPlanLatency(milliseconds: 20)
+        store.recordGoalToPlanLatency(milliseconds: 10)
+        store.recordScaffoldTimeToFirstOutput(milliseconds: 95_000)
+        store.recordMultiStepScenario(completedWithoutManualEdits: true)
+        store.recordWorkspaceSafetyViolation()
+
+        #expect(RuntimeTelemetryStore.saveRuntimeKPIStore(store, to: runtimeKPIURL, fileManager: fm))
+        let loadedStore = try #require(
+            RuntimeTelemetryStore.loadRuntimeKPIStore(from: runtimeKPIURL, fileManager: fm)
+        )
+        let loadedSnapshot = loadedStore.snapshot(now: Date(timeIntervalSince1970: 1_700_001_000))
+
+        #expect(loadedSnapshot.goalToPlanLatencyP50Milliseconds == 15)
+        #expect(loadedSnapshot.scaffoldTimeToFirstOutputP50Milliseconds == 95_000)
+        #expect(loadedSnapshot.multiStepScenarioCount == 1)
+        #expect(loadedSnapshot.multiStepCompletionRate == 1.0)
+        #expect(loadedSnapshot.workspaceSafetyViolationCount == 1)
+    }
+
+    @Test func runtimeTelemetryStorePersistsPreviewTruthfulnessAndExportsCombinedSnapshot() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory
+            .appendingPathComponent("HybridCoderRuntimeTelemetry-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let truthfulnessURL = root.appendingPathComponent("preview-truthfulness.json", isDirectory: false)
+        let exportURL = root.appendingPathComponent("telemetry-export.json", isDirectory: false)
+
+        let truthfulness = PreviewTruthfulnessSnapshot(
+            validationChecks: 5,
+            falseClaimCount: 1,
+            lastCheckedAt: Date(timeIntervalSince1970: 1_700_002_000),
+            recentViolations: ["full react native runtime"]
+        )
+        #expect(RuntimeTelemetryStore.savePreviewTruthfulnessSnapshot(truthfulness, to: truthfulnessURL, fileManager: fm))
+
+        let loadedTruthfulness = try #require(
+            RuntimeTelemetryStore.loadPreviewTruthfulnessSnapshot(from: truthfulnessURL, fileManager: fm)
+        )
+        #expect(loadedTruthfulness == truthfulness)
+
+        let runtimeKPI = AgentRuntimeKPISnapshot(
+            goalToPlanLatencyP50Milliseconds: 12,
+            scaffoldTimeToFirstOutputP50Milliseconds: 101_000,
+            multiStepCompletionRate: 0.8,
+            multiStepScenarioCount: 10,
+            workspaceSafetyViolationCount: 0,
+            lastUpdatedAt: Date(timeIntervalSince1970: 1_700_002_500)
+        )
+        #expect(
+            RuntimeTelemetryStore.exportSnapshot(
+                runtimeKPI: runtimeKPI,
+                previewTruthfulness: truthfulness,
+                to: exportURL,
+                fileManager: fm
+            )
+        )
+
+        let exportSnapshot = try #require(
+            RuntimeTelemetryStore.loadExportSnapshot(from: exportURL, fileManager: fm)
+        )
+        #expect(exportSnapshot.runtimeKPI == runtimeKPI)
+        #expect(exportSnapshot.previewTruthfulness == truthfulness)
+    }
+
+    @Test func runtimeKPIValidationServiceReportsPassingWhenTargetsAreMet() {
+        let runtimeKPI = AgentRuntimeKPISnapshot(
+            goalToPlanLatencyP50Milliseconds: 11_000,
+            scaffoldTimeToFirstOutputP50Milliseconds: 95_000,
+            multiStepCompletionRate: 0.8,
+            multiStepScenarioCount: 20,
+            workspaceSafetyViolationCount: 0,
+            lastUpdatedAt: Date(timeIntervalSince1970: 1_700_003_000)
+        )
+        let truthfulness = PreviewTruthfulnessSnapshot(
+            validationChecks: 6,
+            falseClaimCount: 0,
+            lastCheckedAt: Date(timeIntervalSince1970: 1_700_003_050),
+            recentViolations: []
+        )
+
+        let report = RuntimeKPIValidationService.evaluate(
+            runtimeKPI: runtimeKPI,
+            previewTruthfulness: truthfulness,
+            sourceTelemetryExportedAt: Date(timeIntervalSince1970: 1_700_003_100),
+            now: Date(timeIntervalSince1970: 1_700_003_200)
+        )
+
+        #expect(report.overallStatus == .passing)
+        #expect(report.checks.count == 5)
+        #expect(report.checks.allSatisfy { $0.status == .passing })
+    }
+
+    @Test func runtimeKPIValidationServiceReportsFailureAndInsufficientData() {
+        let runtimeKPI = AgentRuntimeKPISnapshot(
+            goalToPlanLatencyP50Milliseconds: 19_000,
+            scaffoldTimeToFirstOutputP50Milliseconds: nil,
+            multiStepCompletionRate: 0.9,
+            multiStepScenarioCount: 2,
+            workspaceSafetyViolationCount: 2,
+            lastUpdatedAt: Date(timeIntervalSince1970: 1_700_004_000)
+        )
+        let truthfulness = PreviewTruthfulnessSnapshot(
+            validationChecks: 4,
+            falseClaimCount: 1,
+            lastCheckedAt: Date(timeIntervalSince1970: 1_700_004_050),
+            recentViolations: ["complete runtime preview"]
+        )
+
+        let report = RuntimeKPIValidationService.evaluate(
+            runtimeKPI: runtimeKPI,
+            previewTruthfulness: truthfulness
+        )
+
+        #expect(report.overallStatus == .failing)
+        #expect(report.checks.contains { $0.metric == .goalToPlanLatency && $0.status == .failing })
+        #expect(report.checks.contains { $0.metric == .scaffoldTimeToFirstOutput && $0.status == .insufficientData })
+        #expect(report.checks.contains { $0.metric == .multiStepCompletion && $0.status == .insufficientData })
+        #expect(report.checks.contains { $0.metric == .previewTruthfulness && $0.status == .failing })
+        #expect(report.checks.contains { $0.metric == .workspaceSafety && $0.status == .failing })
+    }
+
+    @Test func runtimeTelemetryStorePersistsValidationReport() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory
+            .appendingPathComponent("HybridCoderRuntimeTelemetry-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let reportURL = root.appendingPathComponent("validation-report.json", isDirectory: false)
+        let report = RuntimeKPIValidationReport(
+            generatedAt: Date(timeIntervalSince1970: 1_700_005_000),
+            sourceTelemetryExportedAt: Date(timeIntervalSince1970: 1_700_004_999),
+            overallStatus: .incomplete,
+            checks: [
+                RuntimeKPIValidationCheck(
+                    metric: .goalToPlanLatency,
+                    status: .insufficientData,
+                    measuredValue: "n/a",
+                    targetValue: "<= 15000ms",
+                    detail: "No goal-to-plan runtime sample has been recorded yet."
+                )
+            ]
+        )
+
+        #expect(RuntimeTelemetryStore.saveValidationReport(report, to: reportURL, fileManager: fm))
+        let loaded = try #require(RuntimeTelemetryStore.loadValidationReport(from: reportURL, fileManager: fm))
+        #expect(loaded == report)
+    }
+
     @Test func scaffoldGoalHeuristicPrefersExpoAndReactNativeBuildRequests() {
         #expect(AIOrchestrator.goalLooksLikeScaffoldRequest("Create a new Expo app with tabs and TypeScript"))
         #expect(AIOrchestrator.goalLooksLikeScaffoldRequest("Scaffold a React Native starter workspace"))

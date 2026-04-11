@@ -114,6 +114,10 @@ final class AIOrchestrator {
         self.globalPolicyDirectory = globalPolicyDirectory
         self.sessionManager = sessionManager
         self.documentationRAG = DocumentationRAGService(embeddingService: embeddingService)
+        if let persistedKPIStore = RuntimeTelemetryStore.loadRuntimeKPIStore() {
+            self.agentRuntimeKPIStore = persistedKPIStore
+            self.agentRuntimeKPISnapshot = persistedKPIStore.snapshot()
+        }
         Task { [weak self] in
             await self?.refreshRegistryInstallState()
         }
@@ -2319,7 +2323,7 @@ final class AIOrchestrator {
     private func recordGoalToPlanLatency(startedAt: Date) {
         let latencyMilliseconds = Date().timeIntervalSince(startedAt) * 1000
         agentRuntimeKPIStore.recordGoalToPlanLatency(milliseconds: latencyMilliseconds)
-        agentRuntimeKPISnapshot = agentRuntimeKPIStore.snapshot()
+        refreshAgentRuntimeKPISnapshotAndPersist()
     }
 
     private func recordGoalRuntimeKPIs(
@@ -2353,13 +2357,23 @@ final class AIOrchestrator {
             agentRuntimeKPIStore.recordMultiStepScenario(completedWithoutManualEdits: completed)
         }
 
-        agentRuntimeKPISnapshot = agentRuntimeKPIStore.snapshot()
+        refreshAgentRuntimeKPISnapshotAndPersist()
     }
 
     private func recordWorkspaceSafetyViolationIfNeeded(_ error: Error) {
         guard Self.isWorkspaceSafetyViolation(error) else { return }
         agentRuntimeKPIStore.recordWorkspaceSafetyViolation()
+        refreshAgentRuntimeKPISnapshotAndPersist()
+    }
+
+    private func refreshAgentRuntimeKPISnapshotAndPersist() {
         agentRuntimeKPISnapshot = agentRuntimeKPIStore.snapshot()
+        RuntimeTelemetryStore.saveRuntimeKPIStore(agentRuntimeKPIStore)
+        let previewTruthfulness = RuntimeTelemetryStore.loadPreviewTruthfulnessSnapshot() ?? .empty
+        _ = RuntimeTelemetryStore.exportSnapshot(
+            runtimeKPI: agentRuntimeKPISnapshot,
+            previewTruthfulness: previewTruthfulness
+        )
     }
 
     nonisolated private static func runtimeChangedPaths(from report: AgentRuntimeReport) -> [String] {

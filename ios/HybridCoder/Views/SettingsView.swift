@@ -146,8 +146,37 @@ struct SettingsView: View {
 
     private var runtimeMetricsSection: some View {
         let snapshot = orchestrator.agentRuntimeKPISnapshot
+        let truthfulness = RuntimeTelemetryStore.loadPreviewTruthfulnessSnapshot() ?? .empty
+        let exportSnapshot = RuntimeTelemetryStore.loadExportSnapshot()
+        let validationReport = RuntimeTelemetryStore.loadValidationReport()
+            ?? RuntimeKPIValidationService.evaluate(
+                runtimeKPI: snapshot,
+                previewTruthfulness: truthfulness,
+                sourceTelemetryExportedAt: exportSnapshot?.exportedAt
+            )
+        let passingChecks = validationReport.checks.filter { $0.status == .passing }.count
+        let failingChecks = validationReport.checks.filter { $0.status == .failing }.count
+        let pendingChecks = validationReport.checks.filter { $0.status == .insufficientData }.count
 
         return Section {
+            HStack {
+                Text("Phase 6 Validation")
+                    .font(.subheadline)
+                Spacer()
+                Text(formattedValidationStatus(validationReport.overallStatus))
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(validationStatusColor(validationReport.overallStatus))
+            }
+
+            HStack {
+                Text("Validation Checks")
+                    .font(.subheadline)
+                Spacer()
+                Text("\(passingChecks) pass · \(failingChecks) fail · \(pendingChecks) pending")
+                    .font(.caption)
+                    .foregroundStyle(Theme.dimText)
+            }
+
             HStack {
                 Text("Goal -> Plan p50")
                     .font(.subheadline)
@@ -193,6 +222,24 @@ struct SettingsView: View {
                     .foregroundStyle(snapshot.workspaceSafetyViolationCount == 0 ? Theme.accent : .orange)
             }
 
+            HStack {
+                Text("Preview Truth Checks")
+                    .font(.subheadline)
+                Spacer()
+                Text("\(truthfulness.validationChecks)")
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
+            }
+
+            HStack {
+                Text("Preview False Claims")
+                    .font(.subheadline)
+                Spacer()
+                Text("\(truthfulness.falseClaimCount)")
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(truthfulness.falseClaimCount == 0 ? Theme.accent : .orange)
+            }
+
             if let lastUpdatedAt = snapshot.lastUpdatedAt {
                 HStack {
                     Text("Last Updated")
@@ -203,10 +250,41 @@ struct SettingsView: View {
                         .foregroundStyle(Theme.dimText)
                 }
             }
+
+            if let lastTruthfulnessCheck = truthfulness.lastCheckedAt {
+                HStack {
+                    Text("Last Truthfulness Check")
+                        .font(.subheadline)
+                    Spacer()
+                    Text(lastTruthfulnessCheck.formatted(.relative(presentation: .named)))
+                        .font(.caption)
+                        .foregroundStyle(Theme.dimText)
+                }
+            }
+
+            if let exportSnapshot {
+                HStack {
+                    Text("Telemetry Export")
+                        .font(.subheadline)
+                    Spacer()
+                    Text(exportSnapshot.exportedAt.formatted(.relative(presentation: .named)))
+                        .font(.caption)
+                        .foregroundStyle(Theme.dimText)
+                }
+            }
+
+            HStack {
+                Text("Validation Report")
+                    .font(.subheadline)
+                Spacer()
+                Text(validationReport.generatedAt.formatted(.relative(presentation: .named)))
+                    .font(.caption)
+                    .foregroundStyle(Theme.dimText)
+            }
         } header: {
             Text("Runtime KPIs")
         } footer: {
-            Text("Session-local runtime instrumentation for Phase 6. Values update after agent-runtime executions.")
+            Text("Persisted local runtime instrumentation for Phase 6. Telemetry snapshots and KPI validation reports are exported in Application Support after runtime and preview audits.")
         }
     }
 
@@ -233,6 +311,28 @@ struct SettingsView: View {
         guard let value else { return "No sample" }
         let percent = Int((value * 100).rounded())
         return "\(percent)%"
+    }
+
+    private func formattedValidationStatus(_ status: RuntimeKPIValidationOverallStatus) -> String {
+        switch status {
+        case .passing:
+            return "PASS"
+        case .failing:
+            return "FAIL"
+        case .incomplete:
+            return "INCOMPLETE"
+        }
+    }
+
+    private func validationStatusColor(_ status: RuntimeKPIValidationOverallStatus) -> Color {
+        switch status {
+        case .passing:
+            return Theme.accent
+        case .failing:
+            return .orange
+        case .incomplete:
+            return Theme.dimText
+        }
     }
 
     private func privacySection(_ service: PrivacyPolicyService) -> some View {
