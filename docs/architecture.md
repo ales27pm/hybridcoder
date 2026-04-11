@@ -14,6 +14,7 @@ HybridCoder is currently a SwiftUI iOS app with:
 - a builder-oriented `StudioProject` model bridged to the legacy sandbox store
 - manifest-driven Expo scaffolds for new multi-file projects
 - structural preview coordination and diagnostics
+- session-local agent-runtime KPI snapshots for planning latency, scaffold latency, multi-step completion sampling, and workspace safety violations
 - a transitional prototype-oriented editing flow that still remains in compatibility seams
 
 ## What is already implemented in the LLM coding core
@@ -41,7 +42,7 @@ Today, the repo does not yet implement a full execution loop for:
 
 - fully autonomous multi-step coding work across all scenarios
 - robust sub-task decomposition beyond goal-derived file intents and patch-backed plans
-- complete first-class workspace coverage across file and folder actions in every execution path (for example, goal-derived non-patch modify generation still remains incomplete for most update scenarios)
+- complete first-class workspace coverage across file and folder actions in every execution path (for example, goal-derived non-patch modify generation still remains incomplete for most update scenarios outside explicit overwrite/append/prepend/replace-text intents)
 - durable validate/replan/retry behavior that can carry a project to completion without patch-centric fallback in most cases
 
 The current codebase now includes planner/coordinator execution with bounded validate -> replan -> retry, but it is still patch-plan centric rather than a finished autonomous runtime.

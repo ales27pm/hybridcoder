@@ -63,19 +63,19 @@ HybridCoder should behave like:
 | Capability | Current state (as of April 11, 2026) | Target state |
 | --- | --- | --- |
 | Orchestration | Local route selection, retrieval, generation, and guarded patch application are real and integrated. | Goal-first orchestration with stable multi-step execution as the default path for coding tasks. |
-| Bytecoding runtime | Partial milestone plus bounded runtime loop: planner/coordinator plus validate -> replan -> retry exist, but execution is still patch-centric for many writes and not yet fully autonomous. | Full agent-runtime loop with intent decomposition, first-class actions, iterative validation, and retry. |
-| Workspace actions | Goal-derived create/overwrite/rename/delete plus create/rename/delete-folder and move-file paths are real, and patch-backed modify is integrated, but direct modify generation is still limited outside explicit overwrite-style intents. | First-class create/modify/rename/delete/move actions available consistently in runtime execution. |
+| Bytecoding runtime | Partial milestone plus bounded runtime loop: planner/coordinator plus validate -> replan -> retry exist, execution is still patch-centric for many writes, and KPI instrumentation is currently session-local rather than full-suite. | Full agent-runtime loop with intent decomposition, first-class actions, iterative validation, and retry. |
+| Workspace actions | Goal-derived create/overwrite/append/prepend/replace-text/rename/delete plus create/rename/delete-folder and move-file paths are real, and patch-backed modify is integrated, but direct modify generation is still limited for richer update scenarios. | First-class create/modify/rename/delete/move actions available consistently in runtime execution. |
 | Preview | Structural preview and diagnostics are real; not a full in-app RN runtime. | Stronger runtime bridge while preserving truthful diagnostics and clear capability boundaries. |
 
 ## Success metrics and acceptance bars
 
 | KPI | Baseline | Target | Acceptance bar |
 | --- | --- | --- | --- |
-| Time to first scaffold output | Not instrumented | <= 120s | For a valid chat scaffold request, first coherent multi-file Expo output is produced within target time. |
-| Goal-to-plan latency (p50) | Not instrumented | <= 15s | Runtime emits an ordered action plan within target latency for Phase 6 scenario inputs. |
-| Multi-step task completion without manual file edits | Not instrumented | >= 70% (Phase 6 scenario set) | Scenario finishes with runtime-executed workspace actions and no required manual file intervention. |
+| Time to first scaffold output | Session-local runtime KPI snapshot (p50, partial sample coverage) | <= 120s | For a valid chat scaffold request, first coherent multi-file Expo output is produced within target time. |
+| Goal-to-plan latency (p50) | Session-local runtime KPI snapshot (p50) | <= 15s | Runtime emits an ordered action plan within target latency for Phase 6 scenario inputs. |
+| Multi-step task completion without manual file edits | Session-local runtime KPI snapshot (sampled multi-step scenarios) | >= 70% (Phase 6 scenario set) | Scenario finishes with runtime-executed workspace actions and no required manual file intervention. |
 | Preview truthfulness | Not instrumented | 0 false runtime claims in validation suite | Diagnostic/preview surfaces never claim full RN runtime capability where not implemented. |
-| Workspace safety | Not instrumented | 0 out-of-bound file actions | Validation suite records no file create/modify/rename/delete/move escaping workspace boundaries. |
+| Workspace safety | Session-local runtime KPI counter (escaped-path violations) | 0 out-of-bound file actions | Validation suite records no file create/modify/rename/delete/move escaping workspace boundaries. |
 
 ## Workflow to KPI traceability
 

@@ -29,6 +29,8 @@ The current repository now also has a first agent-runtime milestone:
 - execution coordination around validation, apply, workspace diagnostics, and blocker-aware continuation
 - visible runtime reports back into chat
 - bounded validate -> replan -> retry loops in the goal-first runtime path
+- hardened workspace path resolution that blocks parent-path and symlink escapes before runtime file actions execute
+- session-local KPI snapshots for goal-to-plan latency, scaffold first output latency, multi-step completion, and workspace safety violations
 
 That is meaningful groundwork, but it is not yet a full bytecoding system.
 
@@ -123,7 +125,7 @@ The first realistic bytecoding milestone is not full autonomy. It is:
 - surface progress and blockers back into chat
 
 The current implementation now reaches that milestone for guarded patch-plan execution, but it still does not complete the broader create/rename/delete/retry loop for first-class workspace actions.
-The implementation now advances beyond that milestone with goal-derived create/overwrite/rename/delete plus create/rename/delete-folder and move-file actions, and bounded retry orchestration, but it remains partial because patch-backed write strategies are still central for most update scenarios beyond explicit overwrite requests.
+The implementation now advances beyond that milestone with goal-derived create/overwrite/append/prepend/replace-text/rename/delete plus create/rename/delete-folder and move-file actions, and bounded retry orchestration, but it remains partial because patch-backed write strategies are still central for many richer update scenarios.
 
 ## Definition of success and Phase 6 exit criteria
 
@@ -138,10 +140,10 @@ Phase 6 is complete only when those functional requirements are paired with the 
 
 | KPI | Baseline | Target | Acceptance bar |
 | --- | --- | --- | --- |
-| Time to first scaffold output | Not instrumented | <= 120s | For a valid chat scaffold request, first coherent multi-file Expo output is produced within target time. |
-| Goal-to-plan latency (p50) | Not instrumented | <= 15s | Runtime emits an ordered action plan within target latency for Phase 6 scenario inputs. |
-| Multi-step task completion without manual file edits | Not instrumented | >= 70% (Phase 6 scenario set) | Scenario finishes with runtime-executed workspace actions and no required manual file intervention. |
+| Time to first scaffold output | Session-local runtime KPI snapshot (p50, partial sample coverage) | <= 120s | For a valid chat scaffold request, first coherent multi-file Expo output is produced within target time. |
+| Goal-to-plan latency (p50) | Session-local runtime KPI snapshot (p50) | <= 15s | Runtime emits an ordered action plan within target latency for Phase 6 scenario inputs. |
+| Multi-step task completion without manual file edits | Session-local runtime KPI snapshot (sampled multi-step scenarios) | >= 70% (Phase 6 scenario set) | Scenario finishes with runtime-executed workspace actions and no required manual file intervention. |
 | Preview truthfulness | Not instrumented | 0 false runtime claims in validation suite | Diagnostic/preview surfaces never claim full RN runtime capability where not implemented. |
-| Workspace safety | Not instrumented | 0 out-of-bound file actions | Validation suite records no file create/modify/rename/delete/move escaping workspace boundaries. |
+| Workspace safety | Session-local runtime KPI counter (escaped-path violations) | 0 out-of-bound file actions | Validation suite records no file create/modify/rename/delete/move escaping workspace boundaries. |
 
-As of April 11, 2026, implementation remains partial as described above; these criteria define the completion bar, not current achievement.
+As of April 11, 2026, implementation remains partial as described above; these criteria define the completion bar, not current achievement. KPI snapshots are currently session-local and not yet persisted/exported as a formal validation suite.

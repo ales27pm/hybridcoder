@@ -14,6 +14,7 @@ struct SettingsView: View {
             List {
                 repositoriesSection
                 indexSection
+                runtimeMetricsSection
                 if let privacyService {
                     privacySection(privacyService)
                 }
@@ -143,6 +144,72 @@ struct SettingsView: View {
         }
     }
 
+    private var runtimeMetricsSection: some View {
+        let snapshot = orchestrator.agentRuntimeKPISnapshot
+
+        return Section {
+            HStack {
+                Text("Goal -> Plan p50")
+                    .font(.subheadline)
+                Spacer()
+                Text(formattedMilliseconds(snapshot.goalToPlanLatencyP50Milliseconds))
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
+            }
+
+            HStack {
+                Text("Scaffold First Output p50")
+                    .font(.subheadline)
+                Spacer()
+                Text(formattedMilliseconds(snapshot.scaffoldTimeToFirstOutputP50Milliseconds))
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
+            }
+
+            HStack {
+                Text("Multi-Step Completion")
+                    .font(.subheadline)
+                Spacer()
+                Text(formattedCompletionRate(snapshot.multiStepCompletionRate))
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
+            }
+
+            HStack {
+                Text("Multi-Step Samples")
+                    .font(.subheadline)
+                Spacer()
+                Text("\(snapshot.multiStepScenarioCount)")
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
+            }
+
+            HStack {
+                Text("Workspace Safety Violations")
+                    .font(.subheadline)
+                Spacer()
+                Text("\(snapshot.workspaceSafetyViolationCount)")
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(snapshot.workspaceSafetyViolationCount == 0 ? Theme.accent : .orange)
+            }
+
+            if let lastUpdatedAt = snapshot.lastUpdatedAt {
+                HStack {
+                    Text("Last Updated")
+                        .font(.subheadline)
+                    Spacer()
+                    Text(lastUpdatedAt.formatted(.relative(presentation: .named)))
+                        .font(.caption)
+                        .foregroundStyle(Theme.dimText)
+                }
+            }
+        } header: {
+            Text("Runtime KPIs")
+        } footer: {
+            Text("Session-local runtime instrumentation for Phase 6. Values update after agent-runtime executions.")
+        }
+    }
+
     private func languageColor(_ language: String) -> Color {
         switch language.lowercased() {
         case "javascript": return .yellow
@@ -155,6 +222,17 @@ struct SettingsView: View {
         case "markdown": return .gray
         default: return Theme.accent
         }
+    }
+
+    private func formattedMilliseconds(_ value: Int?) -> String {
+        guard let value else { return "No sample" }
+        return "\(value) ms"
+    }
+
+    private func formattedCompletionRate(_ value: Double?) -> String {
+        guard let value else { return "No sample" }
+        let percent = Int((value * 100).rounded())
+        return "\(percent)%"
     }
 
     private func privacySection(_ service: PrivacyPolicyService) -> some View {

@@ -82,10 +82,7 @@ nonisolated enum AgentRuntime {
         let goalDerivedWriteActions = plannedActions.filter { action in
             switch action.action {
             case .createFile(_, let strategy, _), .updateFile(_, let strategy, _):
-                if case .direct = strategy {
-                    return true
-                }
-                return false
+                return !strategy.isPatchBacked
             case .createFolder, .renameFolder, .deleteFolder, .moveFile, .renameFile, .deleteFile:
                 return true
             case .inspectFile, .validateWorkspace:

@@ -93,7 +93,11 @@ enum ExecutionCoordinator {
                 actionResults.append(execution.result)
                 blockers.append(contentsOf: execution.result.blockers)
                 if !execution.didBlock {
-                    inspectedFiles[path] = AgentWorkspaceFileSnapshot(path: path, exists: true, content: nil)
+                    inspectedFiles[path] = AgentWorkspaceFileSnapshot(
+                        path: path,
+                        exists: true,
+                        content: execution.updatedFileContents
+                    )
                 }
 
             case .updateFile(let path, let strategy, _):
@@ -143,7 +147,11 @@ enum ExecutionCoordinator {
                 actionResults.append(execution.result)
                 blockers.append(contentsOf: execution.result.blockers)
                 if !execution.didBlock {
-                    inspectedFiles[path] = AgentWorkspaceFileSnapshot(path: path, exists: true, content: nil)
+                    inspectedFiles[path] = AgentWorkspaceFileSnapshot(
+                        path: path,
+                        exists: true,
+                        content: execution.updatedFileContents
+                    )
                 }
 
             case .createFolder(let path, _):
@@ -478,7 +486,7 @@ enum ExecutionCoordinator {
         allowMissingInspectedFile: Bool,
         existingSnapshot: AgentWorkspaceFileSnapshot,
         dependencies: Dependencies
-    ) async throws -> (result: AgentActionExecutionResult, didBlock: Bool) {
+    ) async throws -> (result: AgentActionExecutionResult, didBlock: Bool, updatedFileContents: String?) {
         switch strategy {
         case .direct(let contents):
             if !allowMissingInspectedFile && !existingSnapshot.exists {
@@ -490,7 +498,8 @@ enum ExecutionCoordinator {
                         detail: "Write action blocked because the inspected file was missing.",
                         blockers: [blocker]
                     ),
-                    true
+                    true,
+                    nil
                 )
             }
 
@@ -504,7 +513,115 @@ enum ExecutionCoordinator {
                     detail: "Executed \(action.action.summary.lowercased()).",
                     changedFiles: [path]
                 ),
-                false
+                false,
+                contents
+            )
+
+        case .append(let text):
+            guard let existingContents = existingSnapshot.content else {
+                let blocker = "\(path): append action requires readable UTF-8 file content."
+                return (
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .blocked,
+                        detail: "Append action blocked because file contents could not be read.",
+                        blockers: [blocker]
+                    ),
+                    true,
+                    nil
+                )
+            }
+
+            let updatedContents = existingContents + text
+            try await directWrite(path, updatedContents)
+            changedFiles.insert(path)
+            didMakeMeaningfulWorkspaceProgress = true
+            return (
+                AgentActionExecutionResult(
+                    for: action,
+                    status: .succeeded,
+                    detail: "Executed \(action.action.summary.lowercased()) with a direct append transformation.",
+                    changedFiles: [path]
+                ),
+                false,
+                updatedContents
+            )
+
+        case .prepend(let text):
+            guard let existingContents = existingSnapshot.content else {
+                let blocker = "\(path): prepend action requires readable UTF-8 file content."
+                return (
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .blocked,
+                        detail: "Prepend action blocked because file contents could not be read.",
+                        blockers: [blocker]
+                    ),
+                    true,
+                    nil
+                )
+            }
+
+            let updatedContents = text + existingContents
+            try await directWrite(path, updatedContents)
+            changedFiles.insert(path)
+            didMakeMeaningfulWorkspaceProgress = true
+            return (
+                AgentActionExecutionResult(
+                    for: action,
+                    status: .succeeded,
+                    detail: "Executed \(action.action.summary.lowercased()) with a direct prepend transformation.",
+                    changedFiles: [path]
+                ),
+                false,
+                updatedContents
+            )
+
+        case .replaceText(let search, let replacement):
+            guard let existingContents = existingSnapshot.content else {
+                let blocker = "\(path): replace action requires readable UTF-8 file content."
+                return (
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .blocked,
+                        detail: "Replace action blocked because file contents could not be read.",
+                        blockers: [blocker]
+                    ),
+                    true,
+                    nil
+                )
+            }
+
+            guard existingContents.contains(search) else {
+                let blocker = "\(path): replace action could not find the requested text to replace."
+                return (
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .blocked,
+                        detail: "Replace action blocked because the target text was not found.",
+                        blockers: [blocker]
+                    ),
+                    true,
+                    nil
+                )
+            }
+
+            let updatedContents = existingContents.replacingOccurrences(
+                of: search,
+                with: replacement
+            )
+            try await directWrite(path, updatedContents)
+            changedFiles.insert(path)
+            didMakeMeaningfulWorkspaceProgress = true
+            return (
+                AgentActionExecutionResult(
+                    for: action,
+                    status: .succeeded,
+                    detail: "Executed \(action.action.summary.lowercased()) with a direct replace transformation.",
+                    changedFiles: [path]
+                ),
+                false,
+                updatedContents
             )
 
         case .patchPlan(let patchPlan):
@@ -520,7 +637,8 @@ enum ExecutionCoordinator {
                         detail: "Write action blocked during patch preflight validation.",
                         blockers: blockerMessages
                     ),
-                    true
+                    true,
+                    nil
                 )
             }
 
@@ -543,7 +661,8 @@ enum ExecutionCoordinator {
                         changedFiles: patchResult.changedFiles,
                         blockers: blockerMessages
                     ),
-                    true
+                    true,
+                    nil
                 )
             }
 
@@ -554,7 +673,8 @@ enum ExecutionCoordinator {
                     detail: "Executed \(action.action.summary.lowercased()) through the guarded patch fallback.",
                     changedFiles: patchResult.changedFiles
                 ),
-                false
+                false,
+                nil
             )
         }
     }
@@ -612,7 +732,7 @@ enum ExecutionCoordinator {
 
     private static func patchPlan(from strategy: AgentWorkspaceAction.WriteStrategy) -> PatchPlan? {
         switch strategy {
-        case .direct:
+        case .direct, .append, .prepend, .replaceText:
             return nil
         case .patchPlan(let patchPlan):
             return patchPlan

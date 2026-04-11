@@ -7,6 +7,7 @@ private actor RuntimeActionCapture {
     private var renamedTo: String?
     private var updatedFilePath: String?
     private var updatedFileContents: String?
+    private var updateWrites: [(String, String)] = []
     private var createdFolder: String?
     private var renamedFolderFrom: String?
     private var renamedFolderTo: String?
@@ -26,10 +27,15 @@ private actor RuntimeActionCapture {
     func recordUpdate(path: String, contents: String) {
         updatedFilePath = path
         updatedFileContents = contents
+        updateWrites.append((path, contents))
     }
 
     func updateSnapshot() -> (String?, String?) {
         (updatedFilePath, updatedFileContents)
+    }
+
+    func updateWritesSnapshot() -> [(String, String)] {
+        updateWrites
     }
 
     func recordCreatedFolder(_ path: String) {
@@ -301,6 +307,50 @@ struct AgentRuntimeTests {
         #expect(contents.contains("export default function Settings()"))
     }
 
+    @Test func plannerDerivesAppendAndReplaceTextActionsFromGoalWithoutPatchFallback() {
+        let workspace = AgentWorkspaceContext(
+            kind: .importedExpo,
+            projectName: "expo-app",
+            projectKind: .importedExpo,
+            entryFile: "app/index.tsx",
+            hasExpoRouter: true,
+            dependencies: ["expo", "react-native"]
+        )
+
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Append ' // v2' to App.tsx and replace 'Hello' with 'Hi' in App.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        #expect(executionPlan.actions.map(\.title) == [
+            "Append text to App.tsx",
+            "Replace text in App.tsx",
+            "Validate workspace after actions"
+        ])
+
+        guard case .updateFile(_, let appendStrategy, _) = executionPlan.actions[0].action else {
+            Issue.record("Expected first action to be update file.")
+            return
+        }
+        guard case .append(let appendText) = appendStrategy else {
+            Issue.record("Expected first action to use append strategy.")
+            return
+        }
+        #expect(appendText == " // v2")
+
+        guard case .updateFile(_, let replaceStrategy, _) = executionPlan.actions[1].action else {
+            Issue.record("Expected second action to be update file.")
+            return
+        }
+        guard case .replaceText(let search, let replacement) = replaceStrategy else {
+            Issue.record("Expected second action to use replaceText strategy.")
+            return
+        }
+        #expect(search == "Hello")
+        #expect(replacement == "Hi")
+    }
+
     @Test func coordinatorExecutesGoalDerivedRenameWithoutPatchPlan() async throws {
         let workspace = AgentWorkspaceContext(
             kind: .prototype,
@@ -417,6 +467,69 @@ struct AgentRuntimeTests {
         #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
         #expect(outcome.patchResult.changedFiles == ["App.tsx"])
         #expect(outcome.executedActions.count == 2)
+    }
+
+    @Test func coordinatorExecutesSequentialAppendAndReplaceWithoutPatchPlan() async throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Append ' // v2' to App.tsx and replace 'Hello' with 'Hi' in App.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        let capture = RuntimeActionCapture()
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    AgentWorkspaceFileSnapshot(path: path, exists: path == "App.tsx", content: "Hello")
+                },
+                validatePatchPlan: { _ in
+                    Issue.record("Patch validation should not run for goal-derived append/replace actions without patch fallback.")
+                    return []
+                },
+                applyPatchPlan: { _ in
+                    Issue.record("Patch apply should not run for goal-derived append/replace actions without patch fallback.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: PatchPlan(summary: "unused", operations: []),
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in
+                    Issue.record("Create file should not run for goal-derived append/replace actions.")
+                },
+                updateFile: { path, contents in
+                    await capture.recordUpdate(path: path, contents: contents)
+                },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        let writes = await capture.updateWritesSnapshot()
+        #expect(writes.count == 2)
+        #expect(writes[0].0 == "App.tsx")
+        #expect(writes[0].1 == "Hello // v2")
+        #expect(writes[1].0 == "App.tsx")
+        #expect(writes[1].1 == "Hi // v2")
+        #expect(outcome.didMakeMeaningfulWorkspaceProgress)
+        #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
+        #expect(outcome.patchResult.changedFiles == ["App.tsx"])
+        #expect(outcome.executedActions.count == 3)
     }
 
     @Test func coordinatorExecutesGoalDerivedFolderCreateAndMoveWithoutPatchPlan() async throws {

@@ -79,6 +79,7 @@ final class AIOrchestrator {
     private(set) var activePrototypeProject: SandboxProject?
     private(set) var lastResolvedRoute: Route?
     private(set) var lastExecutionProviders: [ExecutionProvider] = []
+    private(set) var agentRuntimeKPISnapshot: AgentRuntimeKPISnapshot = .empty
 
     private(set) var isWarmingUp: Bool = false
     private(set) var isIndexing: Bool = false
@@ -94,6 +95,7 @@ final class AIOrchestrator {
     private var prototypeRebuildRequestedGeneration: UInt64 = 0
     private var prototypeRebuildCompletedGeneration: UInt64 = 0
     private var prototypeRebuildQueuedWhileIndexing: Bool = false
+    private var agentRuntimeKPIStore = AgentRuntimeKPIStore()
 
     var isRepoLoaded: Bool { repoRoot != nil }
     var isPrototypeLoaded: Bool { activePrototypeProject != nil }
@@ -908,6 +910,67 @@ final class AIOrchestrator {
         return .foundationModel
     }
 
+    nonisolated static func goalLooksLikeScaffoldRequest(_ goal: String) -> Bool {
+        let normalized = goal.lowercased()
+        let hasScaffoldVerb = ["create", "generate", "build", "scaffold", "bootstrap", "start"]
+            .contains(where: normalized.contains)
+        let hasExpoSignal = ["expo", "react native", "rn"]
+            .contains(where: normalized.contains)
+        let hasAppSignal = [" app", "application", "workspace", "project"]
+            .contains(where: normalized.contains)
+
+        if normalized.contains("scaffold") || normalized.contains("starter") || normalized.contains("bootstrap") {
+            return true
+        }
+
+        return hasScaffoldVerb && hasExpoSignal && hasAppSignal
+    }
+
+    nonisolated static func isCoherentExpoScaffoldOutput(
+        changedPaths: [String],
+        didMakeMeaningfulWorkspaceProgress: Bool
+    ) -> Bool {
+        guard didMakeMeaningfulWorkspaceProgress else { return false }
+
+        let normalizedPaths = Set(changedPaths.map(normalizedWorkspacePath))
+        guard normalizedPaths.count >= 3 else { return false }
+
+        let configCandidates = [
+            "package.json",
+            "app.json",
+            "app.config.js",
+            "app.config.ts"
+        ]
+        let entryCandidates = [
+            "app.tsx",
+            "app.js",
+            "app/index.tsx",
+            "app/index.js",
+            "app/_layout.tsx",
+            "index.js",
+            "index.ts"
+        ]
+
+        let hasConfig = configCandidates.contains(where: normalizedPaths.contains)
+        let hasEntry = entryCandidates.contains(where: normalizedPaths.contains)
+        return hasConfig && hasEntry
+    }
+
+    nonisolated static func isSuccessfulMultiStepRuntimeCompletion(
+        plannedWriteActionCount: Int,
+        succeededWriteActionCount: Int,
+        hasBlockedActions: Bool,
+        validationStatus: AgentActionStatus,
+        didMakeMeaningfulWorkspaceProgress: Bool
+    ) -> Bool {
+        guard plannedWriteActionCount > 1 else { return false }
+        guard didMakeMeaningfulWorkspaceProgress else { return false }
+        guard succeededWriteActionCount >= 2 else { return false }
+        guard !hasBlockedActions else { return false }
+        guard validationStatus != .blocked else { return false }
+        return true
+    }
+
     func processQuery(_ query: String, memory: ConversationMemoryContext? = nil) async throws -> AssistantResponse {
         isProcessing = true
         defer { isProcessing = false }
@@ -1233,18 +1296,27 @@ final class AIOrchestrator {
         let trimmedGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         let safeGoal = trimmedGoal.isEmpty ? "Improve the active workspace" : trimmedGoal
         let workspace = await agentWorkspaceContext(repoRoot: root)
+        let runtimeStart = Date()
+        let planningStart = Date()
         var executionPlan = try await initialAgentRuntimeExecutionPlan(
             goal: safeGoal,
             workspace: workspace,
             patchPlanningContext: patchPlanningContext
         )
+        recordGoalToPlanLatency(startedAt: planningStart)
         var reports: [AgentRuntimeReport] = []
 
         for attempt in 1...Self.agentRuntimeMaximumAttempts {
-            let report = try await executeAgentRuntimePlan(
-                executionPlan,
-                repoRoot: root
-            )
+            let report: AgentRuntimeReport
+            do {
+                report = try await executeAgentRuntimePlan(
+                    executionPlan,
+                    repoRoot: root
+                )
+            } catch {
+                recordWorkspaceSafetyViolationIfNeeded(error)
+                throw error
+            }
             reports.append(report)
 
             let shouldRetry = attempt < Self.agentRuntimeMaximumAttempts
@@ -1270,6 +1342,7 @@ final class AIOrchestrator {
         }
 
         let report = AgentRuntime.mergeReports(reports)
+        recordGoalRuntimeKPIs(goal: safeGoal, runtimeStartedAt: runtimeStart, report: report)
 
         recordExecutionTrace(
             route: .patchPlanning,
@@ -1300,10 +1373,16 @@ final class AIOrchestrator {
             executionMode: .patchApproval
         )
 
-        let report = try await executeAgentRuntimePlan(
-            executionPlan,
-            repoRoot: root
-        )
+        let report: AgentRuntimeReport
+        do {
+            report = try await executeAgentRuntimePlan(
+                executionPlan,
+                repoRoot: root
+            )
+        } catch {
+            recordWorkspaceSafetyViolationIfNeeded(error)
+            throw error
+        }
         recordExecutionTrace(
             route: .patchPlanning,
             executesPatch: Self.didExecutePatchBackedWriteActions(in: report),
@@ -1509,10 +1588,7 @@ final class AIOrchestrator {
             guard result.status == .succeeded else { return false }
             switch result.action {
             case .createFile(_, let strategy, _), .updateFile(_, let strategy, _):
-                if case .patchPlan = strategy {
-                    return true
-                }
-                return false
+                return strategy.isPatchBacked
             case .inspectFile, .createFolder, .renameFolder, .deleteFolder, .moveFile, .renameFile, .deleteFile, .validateWorkspace:
                 return false
             }
@@ -1702,21 +1778,45 @@ final class AIOrchestrator {
     }
 
     private func resolveWorkspaceURL(for relativePath: String, repoRoot root: URL) throws -> URL {
+        try Self.safeResolvedWorkspaceURL(for: relativePath, repoRoot: root)
+    }
+
+    nonisolated static func safeResolvedWorkspaceURL(for relativePath: String, repoRoot: URL) throws -> URL {
         let trimmed = relativePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw OrchestratorError.patchApplicationFailed("Workspace path cannot be empty.")
         }
 
-        let resolvedRoot = root.standardizedFileURL
-        let candidate = resolvedRoot.appending(path: trimmed).standardizedFileURL
-        let rootPath = resolvedRoot.path(percentEncoded: false)
-        let candidatePath = candidate.path(percentEncoded: false)
+        let resolvedRoot = repoRoot.standardizedFileURL.resolvingSymlinksInPath()
+        let fm = FileManager.default
+        var candidate = resolvedRoot
+        for component in trimmed.split(separator: "/", omittingEmptySubsequences: true) {
+            candidate = candidate.appendingPathComponent(String(component), isDirectory: false)
+            let candidatePath = candidate.path(percentEncoded: false)
+            if fm.fileExists(atPath: candidatePath) {
+                candidate = candidate.resolvingSymlinksInPath()
+            }
+        }
+
+        candidate = candidate
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let rootPath = normalizedFilesystemPath(resolvedRoot.path(percentEncoded: false))
+        let candidatePath = normalizedFilesystemPath(candidate.path(percentEncoded: false))
 
         guard candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/") else {
             throw OrchestratorError.patchApplicationFailed("Workspace path escaped the active repo: \(trimmed)")
         }
 
         return candidate
+    }
+
+    nonisolated private static func normalizedFilesystemPath(_ path: String) -> String {
+        var normalized = path
+        while normalized.count > 1 && normalized.hasSuffix("/") {
+            normalized.removeLast()
+        }
+        return normalized
     }
 
     private func resolveRoute(for query: String) async throws -> RouteResolution {
@@ -2214,6 +2314,73 @@ final class AIOrchestrator {
             includesRouteClassifier: includesRouteClassifier,
             explanationProvider: explanationProvider
         )
+    }
+
+    private func recordGoalToPlanLatency(startedAt: Date) {
+        let latencyMilliseconds = Date().timeIntervalSince(startedAt) * 1000
+        agentRuntimeKPIStore.recordGoalToPlanLatency(milliseconds: latencyMilliseconds)
+        agentRuntimeKPISnapshot = agentRuntimeKPIStore.snapshot()
+    }
+
+    private func recordGoalRuntimeKPIs(
+        goal: String,
+        runtimeStartedAt: Date,
+        report: AgentRuntimeReport
+    ) {
+        let changedPaths = Self.runtimeChangedPaths(from: report)
+        if Self.goalLooksLikeScaffoldRequest(goal),
+           Self.isCoherentExpoScaffoldOutput(
+               changedPaths: changedPaths,
+               didMakeMeaningfulWorkspaceProgress: report.didMakeMeaningfulWorkspaceProgress
+           ) {
+            let latencyMilliseconds = Date().timeIntervalSince(runtimeStartedAt) * 1000
+            agentRuntimeKPIStore.recordScaffoldTimeToFirstOutput(milliseconds: latencyMilliseconds)
+        }
+
+        let plannedWriteActionCount = report.plannedActions.filter { $0.action.isWriteAction }.count
+        let succeededWriteActionCount = report.executedActions.filter { result in
+            result.status == .succeeded && result.action.isWriteAction
+        }.count
+
+        if plannedWriteActionCount > 1 {
+            let completed = Self.isSuccessfulMultiStepRuntimeCompletion(
+                plannedWriteActionCount: plannedWriteActionCount,
+                succeededWriteActionCount: succeededWriteActionCount,
+                hasBlockedActions: !report.blockedActions.isEmpty,
+                validationStatus: report.validationOutcome.status,
+                didMakeMeaningfulWorkspaceProgress: report.didMakeMeaningfulWorkspaceProgress
+            )
+            agentRuntimeKPIStore.recordMultiStepScenario(completedWithoutManualEdits: completed)
+        }
+
+        agentRuntimeKPISnapshot = agentRuntimeKPIStore.snapshot()
+    }
+
+    private func recordWorkspaceSafetyViolationIfNeeded(_ error: Error) {
+        guard Self.isWorkspaceSafetyViolation(error) else { return }
+        agentRuntimeKPIStore.recordWorkspaceSafetyViolation()
+        agentRuntimeKPISnapshot = agentRuntimeKPIStore.snapshot()
+    }
+
+    nonisolated private static func runtimeChangedPaths(from report: AgentRuntimeReport) -> [String] {
+        var paths = Set(report.patchResult.changedFiles)
+        for action in report.executedActions {
+            paths.formUnion(action.changedFiles)
+        }
+        return Array(paths)
+    }
+
+    nonisolated private static func normalizedWorkspacePath(_ path: String) -> String {
+        path
+            .replacingOccurrences(of: "\\", with: "/")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
+    nonisolated private static func isWorkspaceSafetyViolation(_ error: Error) -> Bool {
+        guard let orchestratorError = error as? OrchestratorError else { return false }
+        guard case .patchApplicationFailed(let reason) = orchestratorError else { return false }
+        return reason.lowercased().contains("escaped the active repo")
     }
 
     private func workspaceFileContent(for file: RepoFile) async -> String? {

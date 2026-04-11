@@ -172,7 +172,17 @@ nonisolated enum AgentWorkspaceAction: Sendable {
 
     nonisolated enum WriteStrategy: Sendable {
         case direct(contents: String)
+        case append(text: String)
+        case prepend(text: String)
+        case replaceText(search: String, replacement: String)
         case patchPlan(PatchPlan)
+
+        var isPatchBacked: Bool {
+            if case .patchPlan = self {
+                return true
+            }
+            return false
+        }
     }
 
     var targetPaths: [String] {
