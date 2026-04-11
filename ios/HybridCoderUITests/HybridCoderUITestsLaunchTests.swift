@@ -29,6 +29,10 @@ final class HybridCoderUITestsLaunchTests: XCTestCase {
     func testLaunch() throws {
         let app = makeLaunchApp()
         app.launch()
+        XCTAssertTrue(
+            app.wait(for: .runningForeground, timeout: 30),
+            "HybridCoder failed to reach foreground state for launch screenshot."
+        )
 
         // Insert steps here to perform after app launch but before taking a screenshot,
         // such as logging into a test account or navigating somewhere in the app

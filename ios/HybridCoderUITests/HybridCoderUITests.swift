@@ -8,6 +8,8 @@
 import XCTest
 
 final class HybridCoderUITests: XCTestCase {
+    private var app: XCUIApplication?
+
     private func makeLaunchApp() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["HYBRIDCODER_UI_TEST"] = "1"
@@ -17,33 +19,45 @@ final class HybridCoderUITests: XCTestCase {
     }
 
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
-        // In UI tests it is usually best to stop immediately when a failure occurs.
         continueAfterFailure = false
-
-        // In UI tests it's important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
+        app = makeLaunchApp()
     }
 
     override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
+        if let app, app.state != .notRunning {
+            app.terminate()
+        }
+        app = nil
     }
 
     @MainActor
     func testExample() throws {
-        // UI tests must launch the application that they test.
-        let app = makeLaunchApp()
-        app.launch()
+        guard let app else {
+            XCTFail("Failed to initialize XCUIApplication for UI test")
+            return
+        }
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
+        app.launch()
+        XCTAssertTrue(
+            app.wait(for: .runningForeground, timeout: 30),
+            "HybridCoder failed to reach foreground state after launch."
+        )
     }
 
     @MainActor
     func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
+        guard ProcessInfo.processInfo.environment["HYBRIDCODER_ENABLE_UI_PERF_TESTS"] == "1" else {
+            throw XCTSkip("Launch performance UI test is opt-in via HYBRIDCODER_ENABLE_UI_PERF_TESTS=1.")
+        }
+
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             let app = makeLaunchApp()
             app.launch()
+            XCTAssertTrue(
+                app.wait(for: .runningForeground, timeout: 30),
+                "HybridCoder failed to reach foreground state during launch metric run."
+            )
+            app.terminate()
         }
     }
 }
