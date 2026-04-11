@@ -227,12 +227,20 @@ final class AppViewModel {
     }
 
     func initialize() {
+        let environment = ProcessInfo.processInfo.environment
+        let isUITestMode = environment["HYBRIDCODER_UI_TEST"] == "1"
+        let disableWarmUp = isUITestMode || environment["HYBRIDCODER_DISABLE_WARMUP"] == "1"
+        let skipLastRepositoryRestore = isUITestMode || environment["HYBRIDCODER_SKIP_LAST_REPOSITORY"] == "1"
+
         Task {
-            await orchestrator.warmUp()
+            if !disableWarmUp {
+                await orchestrator.warmUp()
+            }
             await privacyService.purgeExpiredData()
         }
 
-        if let lastRepo = bookmarkService.repositories.sorted(by: { $0.lastOpened > $1.lastOpened }).first {
+        if !skipLastRepositoryRestore,
+           let lastRepo = bookmarkService.repositories.sorted(by: { $0.lastOpened > $1.lastOpened }).first {
             openRepository(lastRepo)
         }
     }

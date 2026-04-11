@@ -4,14 +4,14 @@ import OSLog
 
 nonisolated enum PromptContextBudget {
     static let foundationContextCap = 2000
-    static let qwenContextCap = 4_000
+    static let qwenContextCap = 32_000
     static let downstreamContextCap = foundationContextCap
     static let minimumCodeContextBudget = 1100
     static let maximumPolicyContextBudget = 350
     static let maximumConversationContextBudget = 400
-    static let qwenMinimumCodeContextBudget = 2_500
-    static let qwenMaximumPolicyContextBudget = 500
-    static let qwenMaximumConversationContextBudget = 500
+    static let qwenMinimumCodeContextBudget = 26_000
+    static let qwenMaximumPolicyContextBudget = 2_000
+    static let qwenMaximumConversationContextBudget = 2_000
 }
 
 nonisolated struct RouteResolution: Sendable, Equatable {

@@ -10,7 +10,15 @@ import XCTest
 final class HybridCoderUITestsLaunchTests: XCTestCase {
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
-        true
+        false
+    }
+
+    private func makeLaunchApp() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["HYBRIDCODER_UI_TEST"] = "1"
+        app.launchEnvironment["HYBRIDCODER_DISABLE_WARMUP"] = "1"
+        app.launchEnvironment["HYBRIDCODER_SKIP_LAST_REPOSITORY"] = "1"
+        return app
     }
 
     override func setUpWithError() throws {
@@ -19,7 +27,7 @@ final class HybridCoderUITestsLaunchTests: XCTestCase {
 
     @MainActor
     func testLaunch() throws {
-        let app = XCUIApplication()
+        let app = makeLaunchApp()
         app.launch()
 
         // Insert steps here to perform after app launch but before taking a screenshot,

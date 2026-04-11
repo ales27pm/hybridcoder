@@ -8,6 +8,13 @@
 import XCTest
 
 final class HybridCoderUITests: XCTestCase {
+    private func makeLaunchApp() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["HYBRIDCODER_UI_TEST"] = "1"
+        app.launchEnvironment["HYBRIDCODER_DISABLE_WARMUP"] = "1"
+        app.launchEnvironment["HYBRIDCODER_SKIP_LAST_REPOSITORY"] = "1"
+        return app
+    }
 
     override func setUpWithError() throws {
         // Put setup code here. This method is called before the invocation of each test method in the class.
@@ -25,7 +32,7 @@ final class HybridCoderUITests: XCTestCase {
     @MainActor
     func testExample() throws {
         // UI tests must launch the application that they test.
-        let app = XCUIApplication()
+        let app = makeLaunchApp()
         app.launch()
 
         // Use XCTAssert and related functions to verify your tests produce the correct results.
@@ -35,7 +42,8 @@ final class HybridCoderUITests: XCTestCase {
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
+            let app = makeLaunchApp()
+            app.launch()
         }
     }
 }

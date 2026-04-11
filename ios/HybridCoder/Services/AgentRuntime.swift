@@ -51,7 +51,7 @@ nonisolated struct AgentRuntimeReport: Sendable {
         }
 
         lines.append("Workspace focus: \(executionPlan.workspace.displayName).")
-        lines.append("Planned actions: \(plannedActions.count). Succeeded: \(succeededActions.count). Blocked: \(blockedActions.count).")
+        lines.append("Planned actions: \(plannedActions.count). Executed actions: \(executedActions.count). Blocked actions: \(blockedActions.count).")
         lines.append("Planner: \(plannerSummary.strategy).")
         lines.append("Coordinator: \(coordinatorSummary.phase).")
         lines.append("Validation: \(validationOutcome.detail)")
