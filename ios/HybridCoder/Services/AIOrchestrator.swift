@@ -1461,6 +1461,18 @@ final class AIOrchestrator {
                 }
                 try await self.updateWorkspaceFile(path: path, contents: contents)
             },
+            createFolder: { [weak self] path in
+                guard let self else {
+                    throw OrchestratorError.repoNotLoaded
+                }
+                try await self.createWorkspaceFolder(path: path)
+            },
+            moveFile: { [weak self] from, to in
+                guard let self else {
+                    throw OrchestratorError.repoNotLoaded
+                }
+                try await self.moveWorkspaceFile(from: from, to: to)
+            },
             renameFile: { [weak self] from, to in
                 guard let self else {
                     throw OrchestratorError.repoNotLoaded
@@ -1489,7 +1501,7 @@ final class AIOrchestrator {
                     return true
                 }
                 return false
-            case .inspectFile, .renameFile, .deleteFile, .validateWorkspace:
+            case .inspectFile, .createFolder, .moveFile, .renameFile, .deleteFile, .validateWorkspace:
                 return false
             }
         }
@@ -1539,6 +1551,21 @@ final class AIOrchestrator {
         guard let root = repoRoot else { throw OrchestratorError.repoNotLoaded }
         let fileURL = try resolveWorkspaceURL(for: path, repoRoot: root)
         try await repoAccess.writeUTF8(contents, to: fileURL)
+        await refreshWorkspaceAfterAgentMutation()
+    }
+
+    private func createWorkspaceFolder(path: String) async throws {
+        guard let root = repoRoot else { throw OrchestratorError.repoNotLoaded }
+        let folderURL = try resolveWorkspaceURL(for: path, repoRoot: root)
+        try await repoAccess.createDirectory(at: folderURL)
+        await refreshWorkspaceAfterAgentMutation()
+    }
+
+    private func moveWorkspaceFile(from sourcePath: String, to destinationPath: String) async throws {
+        guard let root = repoRoot else { throw OrchestratorError.repoNotLoaded }
+        let sourceURL = try resolveWorkspaceURL(for: sourcePath, repoRoot: root)
+        let destinationURL = try resolveWorkspaceURL(for: destinationPath, repoRoot: root)
+        try await repoAccess.moveItem(from: sourceURL, to: destinationURL)
         await refreshWorkspaceAfterAgentMutation()
     }
 

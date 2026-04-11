@@ -139,6 +139,21 @@ nonisolated enum IntentPlanner {
 
         for intent in goalFileOperationIntents(goal: goal) {
             switch intent {
+            case .createFolder(let path):
+                let key = "createFolder|\(path.lowercased())"
+                guard !seenKeys.contains(key) else { continue }
+                seenKeys.insert(key)
+                actions.append(
+                    AgentPlannedAction(
+                        title: "Create folder \(path)",
+                        action: .createFolder(
+                            path: path,
+                            reason: "Requested directly by the goal: \(goal)"
+                        ),
+                        detail: "Goal-derived folder create action for \(path)"
+                    )
+                )
+
             case .create(let path):
                 let key = "create|\(path.lowercased())"
                 guard !seenKeys.contains(key) else { continue }
@@ -172,6 +187,22 @@ nonisolated enum IntentPlanner {
                     )
                 )
 
+            case .move(let from, let to):
+                let key = "move|\(from.lowercased())|\(to.lowercased())"
+                guard !seenKeys.contains(key) else { continue }
+                seenKeys.insert(key)
+                actions.append(
+                    AgentPlannedAction(
+                        title: "Move \(from) to \(to)",
+                        action: .moveFile(
+                            from: from,
+                            to: to,
+                            reason: "Requested directly by the goal: \(goal)"
+                        ),
+                        detail: "Goal-derived move action for \(from)"
+                    )
+                )
+
             case .delete(let path):
                 let key = "delete|\(path.lowercased())"
                 guard !seenKeys.contains(key) else { continue }
@@ -193,7 +224,24 @@ nonisolated enum IntentPlanner {
     }
 
     private static func goalFileOperationIntents(goal: String) -> [GoalFileOperationIntent] {
-        parseCreateIntents(goal) + parseRenameIntents(goal) + parseDeleteIntents(goal)
+        parseCreateFolderIntents(goal)
+        + parseCreateIntents(goal)
+        + parseMoveFileIntents(goal)
+        + parseRenameIntents(goal)
+        + parseDeleteIntents(goal)
+    }
+
+    private static func parseCreateFolderIntents(_ goal: String) -> [GoalFileOperationIntent] {
+        let paths = regexCaptures(
+            pattern: #"(?i)\b(?:create|add|make|generate)\s+(?:a\s+)?(?:new\s+)?(?:folder|directory)\s+[`'"]?([A-Za-z0-9_./\-]+)[`'"]?"#,
+            in: goal,
+            captureGroup: 1
+        )
+        return paths.compactMap { rawPath in
+            let path = normalizeFolderPath(rawPath)
+            guard !path.isEmpty else { return nil }
+            return .createFolder(path: path)
+        }
     }
 
     private static func parseCreateIntents(_ goal: String) -> [GoalFileOperationIntent] {
@@ -211,7 +259,7 @@ nonisolated enum IntentPlanner {
 
     private static func parseRenameIntents(_ goal: String) -> [GoalFileOperationIntent] {
         let matches = regexCapturePairs(
-            pattern: #"(?i)\b(?:rename|move)\s+(?:the\s+)?(?:file\s+)?[`'"]?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)[`'"]?\s+(?:to|into)\s+[`'"]?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)[`'"]?"#,
+            pattern: #"(?i)\brename\s+(?:the\s+)?(?:file\s+)?[`'"]?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)[`'"]?\s+(?:to|into)\s+[`'"]?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)[`'"]?"#,
             in: goal,
             firstGroup: 1,
             secondGroup: 2
@@ -221,6 +269,21 @@ nonisolated enum IntentPlanner {
             let to = normalizeWorkspacePath(pair.1)
             guard !from.isEmpty, !to.isEmpty, from.lowercased() != to.lowercased() else { return nil }
             return .rename(from: from, to: to)
+        }
+    }
+
+    private static func parseMoveFileIntents(_ goal: String) -> [GoalFileOperationIntent] {
+        let matches = regexCapturePairs(
+            pattern: #"(?i)\bmove\s+(?:the\s+)?(?:file\s+)?[`'"]?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)[`'"]?\s+(?:to|into)\s+[`'"]?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)[`'"]?"#,
+            in: goal,
+            firstGroup: 1,
+            secondGroup: 2
+        )
+        return matches.compactMap { pair in
+            let from = normalizeWorkspacePath(pair.0)
+            let to = normalizeWorkspacePath(pair.1)
+            guard !from.isEmpty, !to.isEmpty, from.lowercased() != to.lowercased() else { return nil }
+            return .move(from: from, to: to)
         }
     }
 
@@ -245,6 +308,14 @@ nonisolated enum IntentPlanner {
         }
         while path.hasPrefix("/") {
             path.removeFirst()
+        }
+        return path
+    }
+
+    private static func normalizeFolderPath(_ rawPath: String) -> String {
+        var path = normalizeWorkspacePath(rawPath)
+        while path.hasSuffix("/") {
+            path.removeLast()
         }
         return path
     }
@@ -373,7 +444,9 @@ nonisolated enum IntentPlanner {
 }
 
 private enum GoalFileOperationIntent {
+    case createFolder(path: String)
     case create(path: String)
+    case move(from: String, to: String)
     case rename(from: String, to: String)
     case delete(path: String)
 }

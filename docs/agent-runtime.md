@@ -121,7 +121,7 @@ The first realistic bytecoding milestone is not full autonomy. It is:
 - surface progress and blockers back into chat
 
 The current implementation now reaches that milestone for guarded patch-plan execution, but it still does not complete the broader create/rename/delete/retry loop for first-class workspace actions.
-The implementation now advances beyond that milestone with goal-derived create/rename/delete actions and bounded retry orchestration, but it remains partial because patch-backed write strategies are still central for many create/update scenarios.
+The implementation now advances beyond that milestone with goal-derived create/rename/delete plus create-folder/move-file actions and bounded retry orchestration, but it remains partial because patch-backed write strategies are still central for many create/update scenarios and folder action coverage is not yet complete.
 
 ## Definition of success and Phase 6 exit criteria
 

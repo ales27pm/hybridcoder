@@ -37,7 +37,7 @@ nonisolated struct AgentRuntimeReport: Sendable {
         let succeededWriteActions = executedActions.filter { result in
             guard result.status == .succeeded else { return false }
             switch result.action {
-            case .createFile, .updateFile, .renameFile, .deleteFile:
+            case .createFile, .updateFile, .createFolder, .moveFile, .renameFile, .deleteFile:
                 return true
             case .inspectFile, .validateWorkspace:
                 return false
@@ -86,7 +86,7 @@ nonisolated enum AgentRuntime {
                     return true
                 }
                 return false
-            case .renameFile, .deleteFile:
+            case .createFolder, .moveFile, .renameFile, .deleteFile:
                 return true
             case .inspectFile, .validateWorkspace:
                 return false

@@ -162,6 +162,8 @@ nonisolated enum AgentWorkspaceAction: Sendable {
     case inspectFile(path: String, reason: String)
     case createFile(path: String, strategy: WriteStrategy, reason: String)
     case updateFile(path: String, strategy: WriteStrategy, reason: String)
+    case createFolder(path: String, reason: String)
+    case moveFile(from: String, to: String, reason: String)
     case renameFile(from: String, to: String, reason: String)
     case deleteFile(path: String, reason: String)
     case validateWorkspace(reason: String)
@@ -179,6 +181,10 @@ nonisolated enum AgentWorkspaceAction: Sendable {
             return [path]
         case .updateFile(let path, _, _):
             return [path]
+        case .createFolder(let path, _):
+            return [path]
+        case .moveFile(let from, let to, _):
+            return [from, to]
         case .renameFile(let from, let to, _):
             return [from, to]
         case .deleteFile(let path, _):
@@ -190,7 +196,7 @@ nonisolated enum AgentWorkspaceAction: Sendable {
 
     var isWriteAction: Bool {
         switch self {
-        case .createFile, .updateFile, .renameFile, .deleteFile:
+        case .createFile, .updateFile, .createFolder, .moveFile, .renameFile, .deleteFile:
             return true
         case .inspectFile, .validateWorkspace:
             return false
@@ -205,6 +211,10 @@ nonisolated enum AgentWorkspaceAction: Sendable {
             return "Create \(path)"
         case .updateFile(let path, _, _):
             return "Update \(path)"
+        case .createFolder(let path, _):
+            return "Create folder \(path)"
+        case .moveFile(let from, let to, _):
+            return "Move \(from) to \(to)"
         case .renameFile(let from, let to, _):
             return "Rename \(from) to \(to)"
         case .deleteFile(let path, _):

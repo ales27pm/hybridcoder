@@ -7,6 +7,8 @@ enum ExecutionCoordinator {
         let applyPatchPlan: @Sendable (PatchPlan) async throws -> PatchEngine.PatchResult
         let createFile: @Sendable (String, String) async throws -> Void
         let updateFile: @Sendable (String, String) async throws -> Void
+        let createFolder: @Sendable (String) async throws -> Void
+        let moveFile: @Sendable (String, String) async throws -> Void
         let renameFile: @Sendable (String, String) async throws -> Void
         let deleteFile: @Sendable (String) async throws -> Void
         let validateWorkspace: @Sendable () async -> [ProjectDiagnostic]
@@ -141,6 +143,93 @@ enum ExecutionCoordinator {
                 if !execution.didBlock {
                     inspectedFiles[path] = AgentWorkspaceFileSnapshot(path: path, exists: true, content: nil)
                 }
+
+            case .createFolder(let path, _):
+                let snapshot = await ensureInspection(
+                    for: path,
+                    inspectedFiles: &inspectedFiles,
+                    dependencies: dependencies
+                )
+                if snapshot.exists {
+                    let blocker = "\(path): path already exists, so folder create action was blocked."
+                    blockers.append(blocker)
+                    actionResults.append(
+                        AgentActionExecutionResult(
+                            for: action,
+                            status: .blocked,
+                            detail: "Create folder action blocked because \(path) already exists.",
+                            blockers: [blocker]
+                        )
+                    )
+                    continue
+                }
+
+                try await dependencies.createFolder(path)
+                changedFiles.insert(path)
+                didMakeMeaningfulWorkspaceProgress = true
+                actionResults.append(
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .succeeded,
+                        detail: "Created folder \(path).",
+                        changedFiles: [path]
+                    )
+                )
+                inspectedFiles[path] = AgentWorkspaceFileSnapshot(path: path, exists: true, content: nil)
+
+            case .moveFile(let from, let to, _):
+                let sourceSnapshot = await ensureInspection(
+                    for: from,
+                    inspectedFiles: &inspectedFiles,
+                    dependencies: dependencies
+                )
+                if !sourceSnapshot.exists {
+                    let blocker = "\(from): source file does not exist, so move action was blocked."
+                    blockers.append(blocker)
+                    actionResults.append(
+                        AgentActionExecutionResult(
+                            for: action,
+                            status: .blocked,
+                            detail: "Move action blocked because the source file was not found.",
+                            blockers: [blocker]
+                        )
+                    )
+                    continue
+                }
+
+                let destinationSnapshot = await ensureInspection(
+                    for: to,
+                    inspectedFiles: &inspectedFiles,
+                    dependencies: dependencies
+                )
+                if destinationSnapshot.exists {
+                    let blocker = "\(to): destination already exists, so move action was blocked."
+                    blockers.append(blocker)
+                    actionResults.append(
+                        AgentActionExecutionResult(
+                            for: action,
+                            status: .blocked,
+                            detail: "Move action blocked because the destination path already exists.",
+                            blockers: [blocker]
+                        )
+                    )
+                    continue
+                }
+
+                try await dependencies.moveFile(from, to)
+                changedFiles.insert(from)
+                changedFiles.insert(to)
+                didMakeMeaningfulWorkspaceProgress = true
+                actionResults.append(
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .succeeded,
+                        detail: "Moved \(from) to \(to).",
+                        changedFiles: [from, to]
+                    )
+                )
+                inspectedFiles[from] = AgentWorkspaceFileSnapshot(path: from, exists: false, content: nil)
+                inspectedFiles[to] = AgentWorkspaceFileSnapshot(path: to, exists: true, content: nil)
 
             case .renameFile(let from, let to, _):
                 let sourceSnapshot = await ensureInspection(

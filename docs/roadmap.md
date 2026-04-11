@@ -22,7 +22,7 @@ Implement the bytecoding runtime: introduce an agent layer that can turn user in
 
 - intent decomposition
 - execution planning
-- first-class file actions
+- first-class workspace actions (file + folder)
 - iterative apply, validate, and retry loops
 - transition from chat request to real workspace progress
 
@@ -50,6 +50,7 @@ Phase 6 is done only when both capability and measurement bars are met:
 - classification: advancing but still partial
 - main `.patchPlanning` chat entry now runs a goal-first runtime path (`goal -> action plan -> execute -> validate -> report`)
 - runtime execution now prefers goal-derived workspace actions first and falls back to patch-backed writes only when needed
+- goal-derived workspace actions now include create folder and move file alongside create/rename/delete paths
 - primary chat flow now receives and stores agent-runtime reports directly
 - bounded validate -> replan -> retry now exists in the goal-first runtime path
 - the runtime is still not fully agentic: patch-backed write strategies remain central for many create/update edits and `PatchResult` is still a first-class output
@@ -74,4 +75,4 @@ The repository now has partial progress inside several phases:
 - Phase 5 is underway through an Expo-first imported workspace path with generic repo fallback
 - Phase 6 is underway through goal-first runtime entry in the main chat path, action-sequenced execution, and guarded patch fallback
 
-Those phase starts should not be mistaken for completion. The remaining gaps are still the full builder project migration, richer scaffold breadth, stronger preview/runtime truthfulness in every screen, direct create/update action generation beyond patch fallback, and a validate -> replan -> retry loop for the bytecoding runtime.
+Those phase starts should not be mistaken for completion. The remaining gaps are still the full builder project migration, richer scaffold breadth, stronger preview/runtime truthfulness in every screen, direct create/update action generation beyond patch fallback, and deeper validate -> replan -> retry coverage across broader action families.
