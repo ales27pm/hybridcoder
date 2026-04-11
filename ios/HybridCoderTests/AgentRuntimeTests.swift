@@ -43,7 +43,7 @@ struct AgentRuntimeTests {
         ])
     }
 
-    @Test func coordinatorStopsOnBlockedActionAndReportCentersActions() async throws {
+    @Test func coordinatorContinuesAfterBlockedActionAndReportCentersActions() async throws {
         let operation = PatchOperation(
             filePath: "App.tsx",
             searchText: "missing",
@@ -100,9 +100,10 @@ struct AgentRuntimeTests {
         #expect(report.preflightFailures.count == 1)
         #expect(report.patchResult.updatedPlan.operations.map(\.status) == [.failed])
         #expect(report.plannedActions.count == 3)
-        #expect(report.executedActions.count == 2)
+        #expect(report.executedActions.count == 3)
         #expect(report.chatSummary.contains("blocked on update app.tsx"))
-        #expect(report.chatSummary.contains("Planned actions: 3. Executed actions: 2. Blocked actions: 1."))
+        #expect(report.chatSummary.contains("Runtime attempts: 1. Replans: 0."))
+        #expect(report.chatSummary.contains("Planned actions: 3. Executed actions: 3. Blocked actions: 1."))
         #expect(report.chatSummary.contains("Validation: Validation found 1 warning."))
     }
 
@@ -127,6 +128,38 @@ struct AgentRuntimeTests {
             "Delete app/unused.tsx",
             "Validate workspace after actions"
         ])
+    }
+
+    @Test func plannerDerivesCreateActionFromGoalWithoutPatchFallback() {
+        let workspace = AgentWorkspaceContext(
+            kind: .importedExpo,
+            projectName: "expo-app",
+            projectKind: .importedExpo,
+            entryFile: "app/index.tsx",
+            hasExpoRouter: true,
+            dependencies: ["expo", "react-native"]
+        )
+
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Create file app/settings.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        #expect(executionPlan.actions.map(\.title) == [
+            "Create app/settings.tsx",
+            "Validate workspace after actions"
+        ])
+
+        guard case .createFile(_, let strategy, _) = executionPlan.actions[0].action else {
+            Issue.record("Expected first action to be create file.")
+            return
+        }
+        guard case .direct(let contents) = strategy else {
+            Issue.record("Expected create file action to use direct write strategy.")
+            return
+        }
+        #expect(contents.contains("export default function Settings()"))
     }
 
     @Test func coordinatorExecutesGoalDerivedRenameWithoutPatchPlan() async throws {
@@ -182,5 +215,128 @@ struct AgentRuntimeTests {
         #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
         #expect(outcome.patchResult.changedFiles.sorted() == ["App.tsx", "app/AppScreen.tsx"])
         #expect(outcome.executedActions.count == 2)
+    }
+
+    @Test func runtimeMergeCombinesAttemptsAndRetryMetadata() {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Rename App.tsx to app/Home.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+        let renameAction = executionPlan.actions[0]
+        let validateAction = executionPlan.actions[1]
+
+        let firstAttempt = AgentRuntimeReport(
+            executionPlan: executionPlan,
+            plannedActions: executionPlan.actions,
+            executedActions: [
+                AgentActionExecutionResult(
+                    for: renameAction,
+                    status: .blocked,
+                    detail: "Rename action blocked.",
+                    blockers: ["App.tsx: source file missing"]
+                ),
+                AgentActionExecutionResult(
+                    for: validateAction,
+                    status: .blocked,
+                    detail: "Validation found 1 error."
+                )
+            ],
+            succeededActions: [],
+            blockedActions: [
+                AgentActionExecutionResult(
+                    for: renameAction,
+                    status: .blocked,
+                    detail: "Rename action blocked.",
+                    blockers: ["App.tsx: source file missing"]
+                )
+            ],
+            validationOutcome: AgentValidationOutcome(
+                status: .blocked,
+                diagnostics: [ProjectDiagnostic(severity: .error, message: "Missing entry file.", filePath: "App.tsx")],
+                detail: "Validation found 1 error."
+            ),
+            patchResult: PatchEngine.PatchResult(
+                updatedPlan: PatchPlan(summary: "retry", operations: []),
+                changedFiles: ["App.tsx"],
+                failures: []
+            ),
+            preflightFailures: [],
+            workspaceDiagnostics: [ProjectDiagnostic(severity: .error, message: "Missing entry file.", filePath: "App.tsx")],
+            didMakeMeaningfulWorkspaceProgress: false,
+            blockers: ["App.tsx: source file missing"],
+            plannerSummary: .init(strategy: "Action-oriented workspace planning with patch fallback", detail: "Attempt 1"),
+            coordinatorSummary: .init(phase: "Completed action pass with blockers", detail: "Attempt 1"),
+            attemptCount: 1,
+            retryCount: 0
+        )
+
+        let secondAttempt = AgentRuntimeReport(
+            executionPlan: executionPlan,
+            plannedActions: executionPlan.actions,
+            executedActions: [
+                AgentActionExecutionResult(
+                    for: renameAction,
+                    status: .succeeded,
+                    detail: "Renamed App.tsx to app/Home.tsx.",
+                    changedFiles: ["App.tsx", "app/Home.tsx"]
+                ),
+                AgentActionExecutionResult(
+                    for: validateAction,
+                    status: .succeeded,
+                    detail: "Validation completed without diagnostics."
+                )
+            ],
+            succeededActions: [
+                AgentActionExecutionResult(
+                    for: renameAction,
+                    status: .succeeded,
+                    detail: "Renamed App.tsx to app/Home.tsx.",
+                    changedFiles: ["App.tsx", "app/Home.tsx"]
+                ),
+                AgentActionExecutionResult(
+                    for: validateAction,
+                    status: .succeeded,
+                    detail: "Validation completed without diagnostics."
+                )
+            ],
+            blockedActions: [],
+            validationOutcome: AgentValidationOutcome(
+                status: .succeeded,
+                diagnostics: [],
+                detail: "Validation completed without diagnostics."
+            ),
+            patchResult: PatchEngine.PatchResult(
+                updatedPlan: PatchPlan(summary: "retry", operations: []),
+                changedFiles: ["app/Home.tsx"],
+                failures: []
+            ),
+            preflightFailures: [],
+            workspaceDiagnostics: [],
+            didMakeMeaningfulWorkspaceProgress: true,
+            blockers: [],
+            plannerSummary: .init(strategy: "Action-oriented workspace planning with patch fallback", detail: "Attempt 2"),
+            coordinatorSummary: .init(phase: "Executed ordered workspace actions and validated", detail: "Attempt 2"),
+            attemptCount: 1,
+            retryCount: 0
+        )
+
+        let merged = AgentRuntime.mergeReports([firstAttempt, secondAttempt])
+
+        #expect(merged.attemptCount == 2)
+        #expect(merged.retryCount == 1)
+        #expect(merged.didMakeMeaningfulWorkspaceProgress)
+        #expect(merged.blockers == ["App.tsx: source file missing"])
+        #expect(merged.patchResult.changedFiles == ["App.tsx", "app/Home.tsx"])
+        #expect(merged.executedActions.count == 4)
+        #expect(merged.chatSummary.contains("Runtime attempts: 2. Replans: 1."))
     }
 }

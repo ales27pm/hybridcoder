@@ -26,8 +26,9 @@ The current repository now also has a first agent-runtime milestone:
 
 - workspace context detection
 - structured execution plans for guarded patch work
-- execution coordination around validation, apply, and workspace diagnostics
+- execution coordination around validation, apply, workspace diagnostics, and blocker-aware continuation
 - visible runtime reports back into chat
+- bounded validate -> replan -> retry loops in the goal-first runtime path
 
 That is meaningful groundwork, but it is not yet a full bytecoding system.
 
@@ -120,6 +121,7 @@ The first realistic bytecoding milestone is not full autonomy. It is:
 - surface progress and blockers back into chat
 
 The current implementation now reaches that milestone for guarded patch-plan execution, but it still does not complete the broader create/rename/delete/retry loop for first-class workspace actions.
+The implementation now advances beyond that milestone with goal-derived create/rename/delete actions and bounded retry orchestration, but it remains partial because patch-backed write strategies are still central for many create/update scenarios.
 
 ## Definition of success and Phase 6 exit criteria
 

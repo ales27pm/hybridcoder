@@ -48,6 +48,7 @@ final class AIOrchestrator {
     private static let qwenMinimumCodeContextBudget = PromptContextBudget.qwenMinimumCodeContextBudget
     private static let qwenMaximumPolicyContextBudget = PromptContextBudget.qwenMaximumPolicyContextBudget
     private static let qwenMaximumConversationContextBudget = PromptContextBudget.qwenMaximumConversationContextBudget
+    private static let agentRuntimeMaximumAttempts = 3
     // Keep this equal to ConversationMemoryContext.renderForPrompt(maxCharacters:) input.
     // We intentionally enforce the same budget here as a second guardrail during final packing.
     private static let conversationMemoryRenderBudget = max(maximumConversationContextBudget, qwenMaximumConversationContextBudget)
@@ -1232,31 +1233,43 @@ final class AIOrchestrator {
         let trimmedGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         let safeGoal = trimmedGoal.isEmpty ? "Improve the active workspace" : trimmedGoal
         let workspace = await agentWorkspaceContext(repoRoot: root)
-
-        let goalFirstPlan = IntentPlanner.planActions(
+        var executionPlan = try await initialAgentRuntimeExecutionPlan(
             goal: safeGoal,
             workspace: workspace,
-            patchPlan: nil
+            patchPlanningContext: patchPlanningContext
         )
-        let hasGoalWriteActions = goalFirstPlan.actions.contains { $0.action.isWriteAction }
+        var reports: [AgentRuntimeReport] = []
 
-        let executionPlan: AgentExecutionPlan
-        if hasGoalWriteActions {
-            executionPlan = goalFirstPlan
-        } else {
-            let patchPlan = try await generatePatchPlan(query: safeGoal, context: patchPlanningContext)
+        for attempt in 1...Self.agentRuntimeMaximumAttempts {
+            let report = try await executeAgentRuntimePlan(
+                executionPlan,
+                repoRoot: root
+            )
+            reports.append(report)
+
+            let shouldRetry = attempt < Self.agentRuntimeMaximumAttempts
+                && shouldRetryAgentRuntime(after: report)
+
+            guard shouldRetry else { break }
+
+            guard let retryPatchPlan = try await replanPatchForAgentRuntimeRetry(
+                goal: safeGoal,
+                patchPlanningContext: patchPlanningContext,
+                previousReport: report,
+                nextAttempt: attempt + 1
+            ) else {
+                break
+            }
+
             executionPlan = IntentPlanner.planActions(
                 goal: safeGoal,
                 workspace: workspace,
-                patchPlan: patchPlan,
-                executionMode: .goalDriven
+                patchPlan: retryPatchPlan,
+                executionMode: .patchApproval
             )
         }
 
-        let report = try await executeAgentRuntimePlan(
-            executionPlan,
-            repoRoot: root
-        )
+        let report = AgentRuntime.mergeReports(reports)
 
         recordExecutionTrace(
             route: .patchPlanning,
@@ -1303,6 +1316,108 @@ final class AIOrchestrator {
     private func pendingPatchPlan(from report: AgentRuntimeReport) -> PatchPlan? {
         let updatedPlan = report.patchResult.updatedPlan
         return updatedPlan.pendingCount > 0 ? updatedPlan : nil
+    }
+
+    private func initialAgentRuntimeExecutionPlan(
+        goal: String,
+        workspace: AgentWorkspaceContext,
+        patchPlanningContext: String
+    ) async throws -> AgentExecutionPlan {
+        let goalFirstPlan = IntentPlanner.planActions(
+            goal: goal,
+            workspace: workspace,
+            patchPlan: nil
+        )
+        let hasGoalWriteActions = goalFirstPlan.actions.contains { $0.action.isWriteAction }
+        if hasGoalWriteActions {
+            return goalFirstPlan
+        }
+
+        let patchPlan = try await generatePatchPlan(query: goal, context: patchPlanningContext)
+        return IntentPlanner.planActions(
+            goal: goal,
+            workspace: workspace,
+            patchPlan: patchPlan,
+            executionMode: .goalDriven
+        )
+    }
+
+    private func shouldRetryAgentRuntime(after report: AgentRuntimeReport) -> Bool {
+        if report.patchResult.updatedPlan.pendingCount > 0 {
+            return true
+        }
+
+        if !report.blockedActions.isEmpty {
+            return true
+        }
+
+        if report.validationOutcome.status == .blocked {
+            return true
+        }
+
+        if !report.patchResult.failures.isEmpty || !report.preflightFailures.isEmpty {
+            return true
+        }
+
+        return false
+    }
+
+    private func replanPatchForAgentRuntimeRetry(
+        goal: String,
+        patchPlanningContext: String,
+        previousReport: AgentRuntimeReport,
+        nextAttempt: Int
+    ) async throws -> PatchPlan? {
+        if let pending = pendingPatchPlan(from: previousReport), pending.pendingCount > 0 {
+            return pending
+        }
+
+        let retryQuery = Self.retryQueryForAgentRuntime(
+            goal: goal,
+            report: previousReport,
+            attempt: nextAttempt
+        )
+        let retryContext = Self.retryContextForAgentRuntime(
+            patchPlanningContext: patchPlanningContext,
+            report: previousReport
+        )
+        let replanned = try await generatePatchPlan(query: retryQuery, context: retryContext)
+        return replanned.operations.isEmpty ? nil : replanned
+    }
+
+    nonisolated private static func retryQueryForAgentRuntime(
+        goal: String,
+        report: AgentRuntimeReport,
+        attempt: Int
+    ) -> String {
+        var lines: [String] = [
+            goal,
+            "Retry attempt \(attempt): produce a concrete patch plan that resolves blockers and validation diagnostics from the previous attempt."
+        ]
+
+        if !report.blockers.isEmpty {
+            lines.append("Blockers:")
+            lines.append(contentsOf: report.blockers.prefix(5).map { "- \($0)" })
+        }
+
+        lines.append("Validation: \(report.validationOutcome.detail)")
+        return lines.joined(separator: "\n")
+    }
+
+    nonisolated private static func retryContextForAgentRuntime(
+        patchPlanningContext: String,
+        report: AgentRuntimeReport
+    ) -> String {
+        let blockerSummary = report.blockers.prefix(5).joined(separator: " | ")
+        let executionSummary = [
+            "Previous attempt summary:",
+            "Planned actions: \(report.plannedActions.count)",
+            "Executed actions: \(report.executedActions.count)",
+            "Blocked actions: \(report.blockedActions.count)",
+            "Validation: \(report.validationOutcome.detail)",
+            "Blockers: \(blockerSummary.isEmpty ? "none" : blockerSummary)"
+        ].joined(separator: "\n")
+        return patchPlanningContext + "\n\n" + executionSummary
     }
 
     private func executeAgentRuntimePlan(

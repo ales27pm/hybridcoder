@@ -47,11 +47,12 @@ Phase 6 is done only when both capability and measurement bars are met:
 
 ### Phase 6 current status (as of April 11, 2026)
 
-- classification: less patch-centric but still partial
+- classification: advancing but still partial
 - main `.patchPlanning` chat entry now runs a goal-first runtime path (`goal -> action plan -> execute -> validate -> report`)
 - runtime execution now prefers goal-derived workspace actions first and falls back to patch-backed writes only when needed
 - primary chat flow now receives and stores agent-runtime reports directly
-- the runtime is still not fully agentic: patch-backed write strategies remain central for many create/update edits, `PatchResult` is still a first-class output, and no iterative validate -> replan -> retry loop exists yet
+- bounded validate -> replan -> retry now exists in the goal-first runtime path
+- the runtime is still not fully agentic: patch-backed write strategies remain central for many create/update edits and `PatchResult` is still a first-class output
 
 ## Phase 7
 Delete obsolete files and finish the documentation and code alignment.

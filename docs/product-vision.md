@@ -63,8 +63,8 @@ HybridCoder should behave like:
 | Capability | Current state (as of April 11, 2026) | Target state |
 | --- | --- | --- |
 | Orchestration | Local route selection, retrieval, generation, and guarded patch application are real and integrated. | Goal-first orchestration with stable multi-step execution as the default path for coding tasks. |
-| Bytecoding runtime | Partial milestone only: planner/coordinator exists, still patch-centric, no full validate -> replan -> retry loop. | Full agent-runtime loop with intent decomposition, first-class actions, iterative validation, and retry. |
-| Workspace actions | Modify flow is strongest; create/rename/delete/move are not yet uniformly first-class across all execution paths. | First-class create/modify/rename/delete/move actions available consistently in runtime execution. |
+| Bytecoding runtime | Partial milestone plus bounded runtime loop: planner/coordinator plus validate -> replan -> retry exist, but execution is still patch-centric for many writes and not yet fully autonomous. | Full agent-runtime loop with intent decomposition, first-class actions, iterative validation, and retry. |
+| Workspace actions | Goal-derived create/rename/delete and patch-backed modify paths are real, but coverage is not yet uniform for every action family and folder-level operations. | First-class create/modify/rename/delete/move actions available consistently in runtime execution. |
 | Preview | Structural preview and diagnostics are real; not a full in-app RN runtime. | Stronger runtime bridge while preserving truthful diagnostics and clear capability boundaries. |
 
 ## Success metrics and acceptance bars

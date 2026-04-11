@@ -24,6 +24,8 @@ nonisolated struct AgentRuntimeReport: Sendable {
     let blockers: [String]
     let plannerSummary: AgentPlannerLayerSummary
     let coordinatorSummary: AgentCoordinatorLayerSummary
+    let attemptCount: Int
+    let retryCount: Int
 
     var didExecuteWorkspaceActions: Bool {
         didMakeMeaningfulWorkspaceProgress
@@ -50,6 +52,7 @@ nonisolated struct AgentRuntimeReport: Sendable {
             lines.append("Agent runtime finished its action pass without meaningful workspace changes.")
         }
 
+        lines.append("Runtime attempts: \(attemptCount). Replans: \(retryCount).")
         lines.append("Workspace focus: \(executionPlan.workspace.displayName).")
         lines.append("Planned actions: \(plannedActions.count). Executed actions: \(executedActions.count). Blocked actions: \(blockedActions.count).")
         lines.append("Planner: \(plannerSummary.strategy).")
@@ -105,7 +108,7 @@ nonisolated enum AgentRuntime {
 
         let coordinatorPhase: String
         if !blockedActions.isEmpty {
-            coordinatorPhase = "Stopped on blocked workspace action"
+            coordinatorPhase = "Completed action pass with blockers"
         } else if outcome.didMakeMeaningfulWorkspaceProgress {
             coordinatorPhase = "Executed ordered workspace actions and validated"
         } else {
@@ -130,8 +133,61 @@ nonisolated enum AgentRuntime {
             ),
             coordinatorSummary: .init(
                 phase: coordinatorPhase,
-                detail: "Coordinator inspected files before writes, executed actions in order, stopped on blockers, and collected validation output."
-            )
+                detail: "Coordinator inspected files before writes, executed actions in order, collected blockers, and produced validation output."
+            ),
+            attemptCount: max(1, outcome.attemptCount),
+            retryCount: max(0, outcome.retryCount)
         )
+    }
+
+    static func mergeReports(_ reports: [AgentRuntimeReport]) -> AgentRuntimeReport {
+        guard let last = reports.last else {
+            preconditionFailure("mergeReports requires at least one report.")
+        }
+        guard reports.count > 1 else { return last }
+
+        let mergedExecutedActions = reports.flatMap(\.executedActions)
+        let mergedChangedFiles = Array(Set(reports.flatMap { $0.patchResult.changedFiles })).sorted()
+        let mergedPatchFailures = reports.flatMap { $0.patchResult.failures }
+        let mergedPreflightFailures = reports.flatMap(\.preflightFailures)
+        let mergedBlockers = uniquePreservingOrder(reports.flatMap(\.blockers))
+        let didMakeProgress = reports.contains { $0.didMakeMeaningfulWorkspaceProgress }
+
+        return AgentRuntimeReport(
+            executionPlan: last.executionPlan,
+            plannedActions: reports.flatMap(\.plannedActions),
+            executedActions: mergedExecutedActions,
+            succeededActions: mergedExecutedActions.filter { $0.status == .succeeded },
+            blockedActions: mergedExecutedActions.filter { $0.status == .blocked },
+            validationOutcome: last.validationOutcome,
+            patchResult: PatchEngine.PatchResult(
+                updatedPlan: last.patchResult.updatedPlan,
+                changedFiles: mergedChangedFiles,
+                failures: mergedPatchFailures
+            ),
+            preflightFailures: mergedPreflightFailures,
+            workspaceDiagnostics: last.workspaceDiagnostics,
+            didMakeMeaningfulWorkspaceProgress: didMakeProgress,
+            blockers: mergedBlockers,
+            plannerSummary: last.plannerSummary,
+            coordinatorSummary: .init(
+                phase: last.coordinatorSummary.phase,
+                detail: "Coordinator executed \(reports.count) attempt(s) with \(reports.count - 1) replan iteration(s). \(last.coordinatorSummary.detail)"
+            ),
+            attemptCount: reports.count,
+            retryCount: reports.count - 1
+        )
+    }
+
+    private static func uniquePreservingOrder(_ values: [String]) -> [String] {
+        var seen: Set<String> = []
+        var ordered: [String] = []
+        ordered.reserveCapacity(values.count)
+        for value in values {
+            guard !seen.contains(value) else { continue }
+            seen.insert(value)
+            ordered.append(value)
+        }
+        return ordered
     }
 }

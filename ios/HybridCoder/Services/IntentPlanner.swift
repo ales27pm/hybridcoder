@@ -139,6 +139,23 @@ nonisolated enum IntentPlanner {
 
         for intent in goalFileOperationIntents(goal: goal) {
             switch intent {
+            case .create(let path):
+                let key = "create|\(path.lowercased())"
+                guard !seenKeys.contains(key) else { continue }
+                seenKeys.insert(key)
+                let contents = defaultContentsForGoalCreate(path: path)
+                actions.append(
+                    AgentPlannedAction(
+                        title: "Create \(path)",
+                        action: .createFile(
+                            path: path,
+                            strategy: .direct(contents: contents),
+                            reason: "Requested directly by the goal: \(goal)"
+                        ),
+                        detail: "Goal-derived create action for \(path)"
+                    )
+                )
+
             case .rename(let from, let to):
                 let key = "rename|\(from.lowercased())|\(to.lowercased())"
                 guard !seenKeys.contains(key) else { continue }
@@ -176,7 +193,20 @@ nonisolated enum IntentPlanner {
     }
 
     private static func goalFileOperationIntents(goal: String) -> [GoalFileOperationIntent] {
-        parseRenameIntents(goal) + parseDeleteIntents(goal)
+        parseCreateIntents(goal) + parseRenameIntents(goal) + parseDeleteIntents(goal)
+    }
+
+    private static func parseCreateIntents(_ goal: String) -> [GoalFileOperationIntent] {
+        let paths = regexCaptures(
+            pattern: #"(?i)\b(?:create|add|make|generate)\s+(?:a\s+)?(?:new\s+)?(?:empty\s+)?(?:file\s+)?[`'"]?((?=[A-Za-z0-9_./\-]*[/.])[A-Za-z0-9_./\-]+)[`'"]?"#,
+            in: goal,
+            captureGroup: 1
+        )
+        return paths.compactMap { rawPath in
+            let path = normalizeWorkspacePath(rawPath)
+            guard !path.isEmpty else { return nil }
+            return .create(path: path)
+        }
     }
 
     private static func parseRenameIntents(_ goal: String) -> [GoalFileOperationIntent] {
@@ -217,6 +247,80 @@ nonisolated enum IntentPlanner {
             path.removeFirst()
         }
         return path
+    }
+
+    private static func defaultContentsForGoalCreate(path: String) -> String {
+        let componentName = componentName(for: path)
+        let componentTitle = titleForComponent(from: componentName)
+        let extensionName = (path as NSString).pathExtension.lowercased()
+
+        switch extensionName {
+        case "tsx":
+            return """
+            import { Text, View } from "react-native";
+
+            export default function \(componentName)() {
+              return (
+                <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+                  <Text>\(componentTitle)</Text>
+                </View>
+              );
+            }
+            """
+
+        case "jsx":
+            return """
+            import { Text, View } from "react-native";
+
+            export default function \(componentName)() {
+              return (
+                <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+                  <Text>\(componentTitle)</Text>
+                </View>
+              );
+            }
+            """
+
+        case "ts":
+            return "export {};\n"
+
+        case "js":
+            return "export {};\n"
+
+        case "json":
+            return "{}\n"
+
+        default:
+            return ""
+        }
+    }
+
+    private static func componentName(for path: String) -> String {
+        let baseName = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
+        let sanitized = baseName.replacingOccurrences(of: "[^A-Za-z0-9]+", with: " ", options: .regularExpression)
+        let tokens = sanitized
+            .split(separator: " ")
+            .map { fragment in
+                let text = String(fragment)
+                guard let first = text.first else { return "" }
+                return String(first).uppercased() + text.dropFirst().lowercased()
+            }
+            .joined()
+
+        let fallback = tokens.isEmpty ? "Screen" : tokens
+        if let first = fallback.first, first.isNumber {
+            return "Screen\(fallback)"
+        }
+        return fallback
+    }
+
+    private static func titleForComponent(from componentName: String) -> String {
+        let spaced = componentName.replacingOccurrences(
+            of: "([a-z0-9])([A-Z])",
+            with: "$1 $2",
+            options: .regularExpression
+        )
+        return spaced.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func regexCapturePairs(
@@ -269,6 +373,7 @@ nonisolated enum IntentPlanner {
 }
 
 private enum GoalFileOperationIntent {
+    case create(path: String)
     case rename(from: String, to: String)
     case delete(path: String)
 }

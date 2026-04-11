@@ -39,12 +39,12 @@ In this repository, those two terms mean the same target subsystem:
 
 Today, the repo does not yet implement a full execution loop for:
 
-- planning multi-step coding work
-- selecting sub-tasks and execution order
-- creating, renaming, deleting, and restructuring files as first-class actions
-- validating progress and iterating until the requested feature is actually brought to life
+- fully autonomous multi-step coding work across all scenarios
+- robust sub-task decomposition beyond goal-derived file intents and patch-backed plans
+- complete first-class workspace coverage for create/rename/delete/move plus folder operations in every execution path
+- durable validate/replan/retry behavior that can carry a project to completion without patch-centric fallback in most cases
 
-The current codebase now includes an initial planner/coordinator layer around guarded patch execution, but it is still patch-plan centric rather than a finished autonomous execution loop.
+The current codebase now includes planner/coordinator execution with bounded validate -> replan -> retry, but it is still patch-plan centric rather than a finished autonomous runtime.
 
 ## Target architecture
 

@@ -142,6 +142,8 @@ nonisolated struct AgentExecutionOutcome: Sendable {
     let preflightFailures: [PatchEngine.OperationFailure]
     let blockers: [String]
     let didMakeMeaningfulWorkspaceProgress: Bool
+    let attemptCount: Int
+    let retryCount: Int
 
     var executedActions: [AgentActionExecutionResult] {
         actionResults.filter { $0.status != .skipped }

@@ -24,21 +24,9 @@ enum ExecutionCoordinator {
         var aggregatedPlan = plan.fallbackPatchPlan ?? PatchPlan(summary: plan.goal, operations: [])
         var patchFailures: [PatchEngine.OperationFailure] = []
         var didMakeMeaningfulWorkspaceProgress = false
-        var didBlock = false
         var validationOutcome: AgentValidationOutcome?
 
         for action in plan.actions {
-            if didBlock {
-                actionResults.append(
-                    AgentActionExecutionResult(
-                        for: action,
-                        status: .skipped,
-                        detail: "Skipped because an earlier workspace action was blocked."
-                    )
-                )
-                continue
-            }
-
             switch action.action {
             case .inspectFile(let path, _):
                 let snapshot = await dependencies.inspectFile(path)
@@ -81,7 +69,6 @@ enum ExecutionCoordinator {
                             blockers: [blocker]
                         )
                     )
-                    didBlock = true
                     continue
                 }
 
@@ -101,9 +88,7 @@ enum ExecutionCoordinator {
                 )
                 actionResults.append(execution.result)
                 blockers.append(contentsOf: execution.result.blockers)
-                if execution.didBlock {
-                    didBlock = true
-                } else {
+                if !execution.didBlock {
                     inspectedFiles[path] = AgentWorkspaceFileSnapshot(path: path, exists: true, content: nil)
                 }
 
@@ -134,7 +119,6 @@ enum ExecutionCoordinator {
                             blockers: [blocker]
                         )
                     )
-                    didBlock = true
                     continue
                 }
 
@@ -154,9 +138,7 @@ enum ExecutionCoordinator {
                 )
                 actionResults.append(execution.result)
                 blockers.append(contentsOf: execution.result.blockers)
-                if execution.didBlock {
-                    didBlock = true
-                } else {
+                if !execution.didBlock {
                     inspectedFiles[path] = AgentWorkspaceFileSnapshot(path: path, exists: true, content: nil)
                 }
 
@@ -177,7 +159,6 @@ enum ExecutionCoordinator {
                             blockers: [blocker]
                         )
                     )
-                    didBlock = true
                     continue
                 }
 
@@ -197,7 +178,6 @@ enum ExecutionCoordinator {
                             blockers: [blocker]
                         )
                     )
-                    didBlock = true
                     continue
                 }
 
@@ -233,7 +213,6 @@ enum ExecutionCoordinator {
                             blockers: [blocker]
                         )
                     )
-                    didBlock = true
                     continue
                 }
 
@@ -288,7 +267,9 @@ enum ExecutionCoordinator {
             patchResult: finalPatchResult,
             preflightFailures: preflightFailures,
             blockers: blockers,
-            didMakeMeaningfulWorkspaceProgress: didMakeMeaningfulWorkspaceProgress
+            didMakeMeaningfulWorkspaceProgress: didMakeMeaningfulWorkspaceProgress,
+            attemptCount: 1,
+            retryCount: 0
         )
     }
 
