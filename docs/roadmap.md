@@ -26,7 +26,26 @@ Implement the bytecoding runtime: introduce an agent layer that can turn user in
 - iterative apply, validate, and retry loops
 - transition from chat request to real workspace progress
 
-### Phase 6 current status (April 8, 2026)
+### Phase 6 exit criteria (shared contract)
+
+Phase 6 is done only when both capability and measurement bars are met:
+
+- functional bars:
+  - runtime executes ordered multi-step workspace actions as the default path for goal-oriented tasks
+  - first-class create/modify/rename/delete/move actions are available in runtime execution
+  - validate -> replan -> retry is implemented for incomplete or blocked goals
+  - runtime reporting is visible and debuggable for each execution step
+- KPI and acceptance bars:
+
+| KPI | Baseline | Target | Acceptance bar |
+| --- | --- | --- | --- |
+| Time to first scaffold output | Not instrumented | <= 120s | For a valid chat scaffold request, first coherent multi-file Expo output is produced within target time. |
+| Goal-to-plan latency (p50) | Not instrumented | <= 15s | Runtime emits an ordered action plan within target latency for Phase 6 scenario inputs. |
+| Multi-step task completion without manual file edits | Not instrumented | >= 70% (Phase 6 scenario set) | Scenario finishes with runtime-executed workspace actions and no required manual file intervention. |
+| Preview truthfulness | Not instrumented | 0 false runtime claims in validation suite | Diagnostic/preview surfaces never claim full RN runtime capability where not implemented. |
+| Workspace safety | Not instrumented | 0 out-of-bound file actions | Validation suite records no file create/modify/rename/delete/move escaping workspace boundaries. |
+
+### Phase 6 current status (as of April 11, 2026)
 
 - classification: less patch-centric but still partial
 - main `.patchPlanning` chat entry now runs a goal-first runtime path (`goal -> action plan -> execute -> validate -> report`)

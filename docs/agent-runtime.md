@@ -121,11 +121,23 @@ The first realistic bytecoding milestone is not full autonomy. It is:
 
 The current implementation now reaches that milestone for guarded patch-plan execution, but it still does not complete the broader create/rename/delete/retry loop for first-class workspace actions.
 
-## Definition of success
+## Definition of success and Phase 6 exit criteria
 
 The bytecoding runtime is considered real when a user can describe a feature or app change in chat and the system can:
 
-- plan the work
-- carry out multiple concrete workspace actions
-- keep state across those actions
-- make visible progress without requiring every single file edit to be manually orchestrated by the user
+- decompose intent into an ordered execution plan
+- carry out multiple concrete workspace actions, including first-class create/modify/rename/delete/move operations
+- validate each milestone and run a real validate -> replan -> retry loop when needed
+- keep state and report progress or blockers clearly without requiring every file edit to be manually orchestrated
+
+Phase 6 is complete only when those functional requirements are paired with the shared KPI contract below.
+
+| KPI | Baseline | Target | Acceptance bar |
+| --- | --- | --- | --- |
+| Time to first scaffold output | Not instrumented | <= 120s | For a valid chat scaffold request, first coherent multi-file Expo output is produced within target time. |
+| Goal-to-plan latency (p50) | Not instrumented | <= 15s | Runtime emits an ordered action plan within target latency for Phase 6 scenario inputs. |
+| Multi-step task completion without manual file edits | Not instrumented | >= 70% (Phase 6 scenario set) | Scenario finishes with runtime-executed workspace actions and no required manual file intervention. |
+| Preview truthfulness | Not instrumented | 0 false runtime claims in validation suite | Diagnostic/preview surfaces never claim full RN runtime capability where not implemented. |
+| Workspace safety | Not instrumented | 0 out-of-bound file actions | Validation suite records no file create/modify/rename/delete/move escaping workspace boundaries. |
+
+As of April 11, 2026, implementation remains partial as described above; these criteria define the completion bar, not current achievement.

@@ -101,6 +101,16 @@ To avoid product drift, strategy and implementation should keep these rules visi
 
 Read this file first, then use the linked docs to go deeper into each subsystem.
 
+## Execution contract source
+
+`docs/product-vision.md` is the canonical execution contract for:
+
+- target users and primary jobs
+- must-win workflows
+- KPI targets and acceptance bars
+
+This extends planning precision but does not change the current-state capability claims in this architecture document.
+
 ## Documentation rule
 
 Preview should not be described as solved until the runtime story is genuinely strong enough to support that claim.
