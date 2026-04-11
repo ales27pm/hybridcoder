@@ -187,6 +187,33 @@ nonisolated enum AgentWorkspaceAction: Sendable {
             }
             return false
         }
+
+        var retryActionSignature: String? {
+            switch self {
+            case .direct(let contents):
+                return "direct|\(Self.sanitizeSignatureComponent(contents))"
+            case .append(let text):
+                return "append|\(Self.sanitizeSignatureComponent(text))"
+            case .prepend(let text):
+                return "prepend|\(Self.sanitizeSignatureComponent(text))"
+            case .insertBefore(let anchor, let text):
+                return "insertBefore|\(Self.sanitizeSignatureComponent(anchor))|\(Self.sanitizeSignatureComponent(text))"
+            case .insertAfter(let anchor, let text):
+                return "insertAfter|\(Self.sanitizeSignatureComponent(anchor))|\(Self.sanitizeSignatureComponent(text))"
+            case .replaceBetween(let startAnchor, let endAnchor, let replacement):
+                return "replaceBetween|\(Self.sanitizeSignatureComponent(startAnchor))|\(Self.sanitizeSignatureComponent(endAnchor))|\(Self.sanitizeSignatureComponent(replacement))"
+            case .replaceText(let search, let replacement):
+                return "replaceText|\(Self.sanitizeSignatureComponent(search))|\(Self.sanitizeSignatureComponent(replacement))"
+            case .deleteText(let search):
+                return "deleteText|\(Self.sanitizeSignatureComponent(search))"
+            case .patchPlan:
+                return nil
+            }
+        }
+
+        private static func sanitizeSignatureComponent(_ value: String) -> String {
+            value.replacingOccurrences(of: "|", with: "\\|")
+        }
     }
 
     var targetPaths: [String] {
@@ -246,5 +273,36 @@ nonisolated enum AgentWorkspaceAction: Sendable {
         case .validateWorkspace:
             return "Validate workspace"
         }
+    }
+
+    var retryActionSignature: String? {
+        switch self {
+        case .inspectFile, .validateWorkspace:
+            return nil
+        case .createFile(let path, let strategy, _):
+            guard let strategySignature = strategy.retryActionSignature else { return nil }
+            return "createFile|\(normalizedSignaturePath(path))|\(strategySignature)"
+        case .updateFile(let path, let strategy, _):
+            guard let strategySignature = strategy.retryActionSignature else { return nil }
+            return "updateFile|\(normalizedSignaturePath(path))|\(strategySignature)"
+        case .createFolder(let path, _):
+            return "createFolder|\(normalizedSignaturePath(path))"
+        case .renameFolder(let from, let to, _):
+            return "renameFolder|\(normalizedSignaturePath(from))|\(normalizedSignaturePath(to))"
+        case .deleteFolder(let path, _):
+            return "deleteFolder|\(normalizedSignaturePath(path))"
+        case .moveFile(let from, let to, _):
+            return "moveFile|\(normalizedSignaturePath(from))|\(normalizedSignaturePath(to))"
+        case .renameFile(let from, let to, _):
+            return "renameFile|\(normalizedSignaturePath(from))|\(normalizedSignaturePath(to))"
+        case .deleteFile(let path, _):
+            return "deleteFile|\(normalizedSignaturePath(path))"
+        }
+    }
+
+    private func normalizedSignaturePath(_ path: String) -> String {
+        path.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\", with: "/")
+            .lowercased()
     }
 }

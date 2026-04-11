@@ -1309,6 +1309,7 @@ final class AIOrchestrator {
         )
         recordGoalToPlanLatency(startedAt: planningStart)
         var reports: [AgentRuntimeReport] = []
+        var completedWriteActionSignatures: Set<String> = []
 
         for attempt in 1...Self.agentRuntimeMaximumAttempts {
             let report: AgentRuntimeReport
@@ -1322,27 +1323,32 @@ final class AIOrchestrator {
                 throw error
             }
             reports.append(report)
+            completedWriteActionSignatures.formUnion(
+                report.succeededActions.compactMap(\.action.retryActionSignature)
+            )
 
             let shouldRetry = attempt < Self.agentRuntimeMaximumAttempts
                 && shouldRetryAgentRuntime(after: report)
 
             guard shouldRetry else { break }
 
-            guard let retryPatchPlan = try await replanPatchForAgentRuntimeRetry(
+            let retryPatchPlan = try await replanPatchForAgentRuntimeRetry(
                 goal: safeGoal,
                 patchPlanningContext: patchPlanningContext,
                 previousReport: report,
                 nextAttempt: attempt + 1
+            )
+
+            guard let retryExecutionPlan = Self.retryExecutionPlan(
+                goal: safeGoal,
+                workspace: workspace,
+                retryPatchPlan: retryPatchPlan,
+                completedWriteActionSignatures: completedWriteActionSignatures
             ) else {
                 break
             }
 
-            executionPlan = IntentPlanner.planActions(
-                goal: safeGoal,
-                workspace: workspace,
-                patchPlan: retryPatchPlan,
-                executionMode: .patchApproval
-            )
+            executionPlan = retryExecutionPlan
         }
 
         let report = AgentRuntime.mergeReports(reports)
@@ -1466,6 +1472,70 @@ final class AIOrchestrator {
         )
         let replanned = try await generatePatchPlan(query: retryQuery, context: retryContext)
         return replanned.operations.isEmpty ? nil : replanned
+    }
+
+    nonisolated static func retryExecutionPlan(
+        goal: String,
+        workspace: AgentWorkspaceContext,
+        retryPatchPlan: PatchPlan?,
+        completedWriteActionSignatures: Set<String>
+    ) -> AgentExecutionPlan? {
+        let planned = IntentPlanner.planActions(
+            goal: goal,
+            workspace: workspace,
+            patchPlan: retryPatchPlan,
+            executionMode: .goalDriven
+        )
+        let filteredActions = filterRetryActions(
+            planned.actions,
+            completedWriteActionSignatures: completedWriteActionSignatures
+        )
+        guard filteredActions.contains(where: { $0.action.isWriteAction }) else {
+            return nil
+        }
+
+        return AgentExecutionPlan(
+            goal: planned.goal,
+            workspace: planned.workspace,
+            actions: filteredActions,
+            fallbackPatchPlan: planned.fallbackPatchPlan,
+            executionMode: planned.executionMode
+        )
+    }
+
+    nonisolated private static func filterRetryActions(
+        _ actions: [AgentPlannedAction],
+        completedWriteActionSignatures: Set<String>
+    ) -> [AgentPlannedAction] {
+        guard !completedWriteActionSignatures.isEmpty else { return actions }
+
+        func shouldSkip(_ action: AgentPlannedAction) -> Bool {
+            guard action.action.isWriteAction else { return false }
+            guard let signature = action.action.retryActionSignature else { return false }
+            return completedWriteActionSignatures.contains(signature)
+        }
+
+        var filtered: [AgentPlannedAction] = []
+        filtered.reserveCapacity(actions.count)
+
+        for index in actions.indices {
+            let action = actions[index]
+            if shouldSkip(action) {
+                continue
+            }
+
+            if case .inspectFile(let path, _) = action.action,
+               let nextIndex = actions.index(index, offsetBy: 1, limitedBy: actions.index(before: actions.endIndex)) {
+                let nextAction = actions[nextIndex]
+                if nextAction.action.targetPaths.contains(path), shouldSkip(nextAction) {
+                    continue
+                }
+            }
+
+            filtered.append(action)
+        }
+
+        return filtered
     }
 
     nonisolated private static func retryQueryForAgentRuntime(

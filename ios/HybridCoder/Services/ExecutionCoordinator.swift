@@ -107,6 +107,26 @@ enum ExecutionCoordinator {
                     dependencies: dependencies
                 )
                 if !snapshot.exists {
+                    if let bootstrapContents = bootstrapContentsForMissingUpdate(strategy: strategy) {
+                        try await dependencies.createFile(path, bootstrapContents)
+                        changedFiles.insert(path)
+                        didMakeMeaningfulWorkspaceProgress = true
+                        actionResults.append(
+                            AgentActionExecutionResult(
+                                for: action,
+                                status: .succeeded,
+                                detail: "Update target \(path) was missing, so runtime bootstrapped the file and executed \(action.action.summary.lowercased()) with a direct create transformation.",
+                                changedFiles: [path]
+                            )
+                        )
+                        inspectedFiles[path] = AgentWorkspaceFileSnapshot(
+                            path: path,
+                            exists: true,
+                            content: bootstrapContents
+                        )
+                        continue
+                    }
+
                     let blocker = "\(path): file does not exist, so update action was blocked."
                     let failures = patchBackedFailures(
                         for: strategy,
@@ -194,17 +214,33 @@ enum ExecutionCoordinator {
                     dependencies: dependencies
                 )
                 if !sourceSnapshot.exists {
-                    let blocker = "\(from): source folder does not exist, so rename folder action was blocked."
-                    blockers.append(blocker)
-                    actionResults.append(
-                        AgentActionExecutionResult(
-                            for: action,
-                            status: .blocked,
-                            detail: "Rename folder action blocked because the source folder was not found.",
-                            blockers: [blocker]
-                        )
+                    let destinationSnapshot = await ensureInspection(
+                        for: to,
+                        inspectedFiles: &inspectedFiles,
+                        dependencies: dependencies
                     )
-                    continue
+                    if destinationSnapshot.exists {
+                        actionResults.append(
+                            AgentActionExecutionResult(
+                                for: action,
+                                status: .succeeded,
+                                detail: "Rename folder action treated as already applied because \(from) is missing and \(to) already exists."
+                            )
+                        )
+                        continue
+                    } else {
+                        let blocker = "\(from): source folder does not exist, so rename folder action was blocked."
+                        blockers.append(blocker)
+                        actionResults.append(
+                            AgentActionExecutionResult(
+                                for: action,
+                                status: .blocked,
+                                detail: "Rename folder action blocked because the source folder was not found.",
+                                blockers: [blocker]
+                            )
+                        )
+                        continue
+                    }
                 }
 
                 let destinationSnapshot = await ensureInspection(
@@ -248,14 +284,11 @@ enum ExecutionCoordinator {
                     dependencies: dependencies
                 )
                 if !snapshot.exists {
-                    let blocker = "\(path): folder does not exist, so delete folder action was blocked."
-                    blockers.append(blocker)
                     actionResults.append(
                         AgentActionExecutionResult(
                             for: action,
-                            status: .blocked,
-                            detail: "Delete folder action blocked because the folder was not found.",
-                            blockers: [blocker]
+                            status: .succeeded,
+                            detail: "Delete folder action treated as already applied because \(path) does not exist."
                         )
                     )
                     continue
@@ -281,17 +314,33 @@ enum ExecutionCoordinator {
                     dependencies: dependencies
                 )
                 if !sourceSnapshot.exists {
-                    let blocker = "\(from): source file does not exist, so move action was blocked."
-                    blockers.append(blocker)
-                    actionResults.append(
-                        AgentActionExecutionResult(
-                            for: action,
-                            status: .blocked,
-                            detail: "Move action blocked because the source file was not found.",
-                            blockers: [blocker]
-                        )
+                    let destinationSnapshot = await ensureInspection(
+                        for: to,
+                        inspectedFiles: &inspectedFiles,
+                        dependencies: dependencies
                     )
-                    continue
+                    if destinationSnapshot.exists {
+                        actionResults.append(
+                            AgentActionExecutionResult(
+                                for: action,
+                                status: .succeeded,
+                                detail: "Move action treated as already applied because \(from) is missing and \(to) already exists."
+                            )
+                        )
+                        continue
+                    } else {
+                        let blocker = "\(from): source file does not exist, so move action was blocked."
+                        blockers.append(blocker)
+                        actionResults.append(
+                            AgentActionExecutionResult(
+                                for: action,
+                                status: .blocked,
+                                detail: "Move action blocked because the source file was not found.",
+                                blockers: [blocker]
+                            )
+                        )
+                        continue
+                    }
                 }
 
                 let destinationSnapshot = await ensureInspection(
@@ -335,17 +384,33 @@ enum ExecutionCoordinator {
                     dependencies: dependencies
                 )
                 if !sourceSnapshot.exists {
-                    let blocker = "\(from): source file does not exist, so rename action was blocked."
-                    blockers.append(blocker)
-                    actionResults.append(
-                        AgentActionExecutionResult(
-                            for: action,
-                            status: .blocked,
-                            detail: "Rename action blocked because the source file was not found.",
-                            blockers: [blocker]
-                        )
+                    let destinationSnapshot = await ensureInspection(
+                        for: to,
+                        inspectedFiles: &inspectedFiles,
+                        dependencies: dependencies
                     )
-                    continue
+                    if destinationSnapshot.exists {
+                        actionResults.append(
+                            AgentActionExecutionResult(
+                                for: action,
+                                status: .succeeded,
+                                detail: "Rename action treated as already applied because \(from) is missing and \(to) already exists."
+                            )
+                        )
+                        continue
+                    } else {
+                        let blocker = "\(from): source file does not exist, so rename action was blocked."
+                        blockers.append(blocker)
+                        actionResults.append(
+                            AgentActionExecutionResult(
+                                for: action,
+                                status: .blocked,
+                                detail: "Rename action blocked because the source file was not found.",
+                                blockers: [blocker]
+                            )
+                        )
+                        continue
+                    }
                 }
 
                 let destinationSnapshot = await ensureInspection(
@@ -389,14 +454,11 @@ enum ExecutionCoordinator {
                     dependencies: dependencies
                 )
                 if !snapshot.exists {
-                    let blocker = "\(path): file does not exist, so delete action was blocked."
-                    blockers.append(blocker)
                     actionResults.append(
                         AgentActionExecutionResult(
                             for: action,
-                            status: .blocked,
-                            detail: "Delete action blocked because the file was not found.",
-                            blockers: [blocker]
+                            status: .succeeded,
+                            detail: "Delete action treated as already applied because \(path) does not exist."
                         )
                     )
                     continue
@@ -947,6 +1009,26 @@ enum ExecutionCoordinator {
                 filePath: operation.filePath,
                 reason: reason
             )
+        }
+    }
+
+    private static func bootstrapContentsForMissingUpdate(
+        strategy: AgentWorkspaceAction.WriteStrategy
+    ) -> String? {
+        switch strategy {
+        case .direct(let contents):
+            return contents
+        case .append(let text):
+            return text
+        case .prepend(let text):
+            return text
+        case .insertBefore,
+             .insertAfter,
+             .replaceBetween,
+             .replaceText,
+             .deleteText,
+             .patchPlan:
+            return nil
         }
     }
 

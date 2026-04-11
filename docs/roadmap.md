@@ -51,8 +51,11 @@ Phase 6 is done only when both capability and measurement bars are met:
 - main `.patchPlanning` chat entry now runs a goal-first runtime path (`goal -> action plan -> execute -> validate -> report`)
 - runtime execution now prefers goal-derived workspace actions first and falls back to patch-backed writes only when needed
 - goal-derived workspace actions now include create/overwrite/append/prepend/insert-before/insert-after/replace-between/replace-text/delete-text/rename/delete file paths plus create/rename/delete folder and move file coverage
+- runtime now bootstraps missing-file direct/append/prepend update actions into guarded create writes instead of hard-blocking
 - primary chat flow now receives and stores agent-runtime reports directly
 - bounded validate -> replan -> retry now exists in the goal-first runtime path
+- retry replans now stay goal-aware (instead of patch-only) and skip already-completed non-patch write actions to keep follow-up attempts focused on remaining work
+- delete/rename/move actions now treat already-applied target state as idempotent success instead of re-blocking retries
 - workspace path resolution now resolves symlinked segments and blocks out-of-repo escapes before runtime file actions execute
 - persisted local KPI snapshot instrumentation now tracks goal-to-plan latency, scaffold first output latency, multi-step completion sampling, and workspace safety violations
 - preview validation now records a persisted local truthfulness audit counter, and telemetry export now writes a generated KPI validation report

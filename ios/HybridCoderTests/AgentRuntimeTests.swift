@@ -5,6 +5,8 @@ import Testing
 private actor RuntimeActionCapture {
     private var renamedFrom: String?
     private var renamedTo: String?
+    private var createdFilePath: String?
+    private var createdFileContents: String?
     private var updatedFilePath: String?
     private var updatedFileContents: String?
     private var updateWrites: [(String, String)] = []
@@ -22,6 +24,15 @@ private actor RuntimeActionCapture {
 
     func renameSnapshot() -> (String?, String?) {
         (renamedFrom, renamedTo)
+    }
+
+    func recordCreate(path: String, contents: String) {
+        createdFilePath = path
+        createdFileContents = contents
+    }
+
+    func createSnapshot() -> (String?, String?) {
+        (createdFilePath, createdFileContents)
     }
 
     func recordUpdate(path: String, contents: String) {
@@ -520,6 +531,167 @@ struct AgentRuntimeTests {
         #expect(outcome.executedActions.count == 2)
     }
 
+    @Test func coordinatorTreatsMissingRenameSourceWithExistingDestinationAsAlreadyApplied() async throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Rename App.tsx to app/AppScreen.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    AgentWorkspaceFileSnapshot(
+                        path: path,
+                        exists: path == "app/AppScreen.tsx",
+                        content: nil
+                    )
+                },
+                validatePatchPlan: { _ in [] },
+                applyPatchPlan: { _ in
+                    Issue.record("Patch apply should not run for goal-derived rename actions without patch fallback.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: PatchPlan(summary: "unused", operations: []),
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in },
+                updateFile: { _, _ in },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in
+                    Issue.record("Rename file should not run when action is already applied.")
+                },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        #expect(outcome.executedActions.first?.status == .succeeded)
+        #expect(outcome.blockedActions.isEmpty)
+        #expect(outcome.blockers.isEmpty)
+        #expect(!outcome.didMakeMeaningfulWorkspaceProgress)
+        #expect(outcome.patchResult.changedFiles.isEmpty)
+    }
+
+    @Test func coordinatorTreatsMissingDeleteTargetAsAlreadyApplied() async throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Delete app/unused.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    AgentWorkspaceFileSnapshot(path: path, exists: false, content: nil)
+                },
+                validatePatchPlan: { _ in [] },
+                applyPatchPlan: { _ in
+                    Issue.record("Patch apply should not run for goal-derived delete actions without patch fallback.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: PatchPlan(summary: "unused", operations: []),
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in },
+                updateFile: { _, _ in },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in
+                    Issue.record("Delete file should not run when action is already applied.")
+                },
+                validateWorkspace: { [] }
+            )
+        )
+
+        #expect(outcome.executedActions.first?.status == .succeeded)
+        #expect(outcome.blockedActions.isEmpty)
+        #expect(outcome.blockers.isEmpty)
+        #expect(!outcome.didMakeMeaningfulWorkspaceProgress)
+        #expect(outcome.patchResult.changedFiles.isEmpty)
+    }
+
+    @Test func coordinatorTreatsMissingMoveSourceWithExistingDestinationAsAlreadyApplied() async throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Move app/legacy.tsx to app/screens/home.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    AgentWorkspaceFileSnapshot(
+                        path: path,
+                        exists: path == "app/screens/home.tsx",
+                        content: nil
+                    )
+                },
+                validatePatchPlan: { _ in [] },
+                applyPatchPlan: { _ in
+                    Issue.record("Patch apply should not run for goal-derived move actions without patch fallback.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: PatchPlan(summary: "unused", operations: []),
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in },
+                updateFile: { _, _ in },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in
+                    Issue.record("Move file should not run when action is already applied.")
+                },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        #expect(outcome.executedActions.first?.status == .succeeded)
+        #expect(outcome.blockedActions.isEmpty)
+        #expect(outcome.blockers.isEmpty)
+        #expect(!outcome.didMakeMeaningfulWorkspaceProgress)
+        #expect(outcome.patchResult.changedFiles.isEmpty)
+    }
+
     @Test func coordinatorExecutesGoalDerivedOverwriteWithoutPatchPlan() async throws {
         let workspace = AgentWorkspaceContext(
             kind: .prototype,
@@ -577,6 +749,126 @@ struct AgentRuntimeTests {
         #expect(outcome.didMakeMeaningfulWorkspaceProgress)
         #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
         #expect(outcome.patchResult.changedFiles == ["App.tsx"])
+        #expect(outcome.executedActions.count == 2)
+    }
+
+    @Test func coordinatorBootstrapsMissingOverwriteTargetWithoutPatchPlan() async throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Overwrite file app/new-screen.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        let capture = RuntimeActionCapture()
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    AgentWorkspaceFileSnapshot(path: path, exists: false, content: nil)
+                },
+                validatePatchPlan: { _ in
+                    Issue.record("Patch validation should not run for goal-derived overwrite actions without patch fallback.")
+                    return []
+                },
+                applyPatchPlan: { _ in
+                    Issue.record("Patch apply should not run for goal-derived overwrite actions without patch fallback.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: PatchPlan(summary: "unused", operations: []),
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { path, contents in
+                    await capture.recordCreate(path: path, contents: contents)
+                },
+                updateFile: { _, _ in
+                    Issue.record("Update file should not run when runtime bootstraps a missing overwrite target.")
+                },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        let (createdPath, createdContents) = await capture.createSnapshot()
+        #expect(createdPath == "app/new-screen.tsx")
+        #expect(createdContents?.contains("export default function NewScreen()") == true)
+        #expect(outcome.didMakeMeaningfulWorkspaceProgress)
+        #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
+        #expect(outcome.patchResult.changedFiles == ["app/new-screen.tsx"])
+        #expect(outcome.executedActions.count == 2)
+    }
+
+    @Test func coordinatorBootstrapsMissingAppendTargetWithoutPatchPlan() async throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Append 'hello' to app/new-log.txt",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        let capture = RuntimeActionCapture()
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    AgentWorkspaceFileSnapshot(path: path, exists: false, content: nil)
+                },
+                validatePatchPlan: { _ in
+                    Issue.record("Patch validation should not run for goal-derived append actions without patch fallback.")
+                    return []
+                },
+                applyPatchPlan: { _ in
+                    Issue.record("Patch apply should not run for goal-derived append actions without patch fallback.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: PatchPlan(summary: "unused", operations: []),
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { path, contents in
+                    await capture.recordCreate(path: path, contents: contents)
+                },
+                updateFile: { _, _ in
+                    Issue.record("Update file should not run when runtime bootstraps a missing append target.")
+                },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        let (createdPath, createdContents) = await capture.createSnapshot()
+        #expect(createdPath == "app/new-log.txt")
+        #expect(createdContents == "hello")
+        #expect(outcome.didMakeMeaningfulWorkspaceProgress)
+        #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
+        #expect(outcome.patchResult.changedFiles == ["app/new-log.txt"])
         #expect(outcome.executedActions.count == 2)
     }
 
@@ -701,6 +993,60 @@ struct AgentRuntimeTests {
         #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
         #expect(outcome.patchResult.changedFiles == ["App.tsx"])
         #expect(outcome.executedActions.count == 2)
+    }
+
+    @Test func coordinatorBlocksMissingReplaceTextTargetWithoutPatchPlan() async throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Replace 'Hello' with 'Hi' in app/missing.tsx",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    AgentWorkspaceFileSnapshot(path: path, exists: false, content: nil)
+                },
+                validatePatchPlan: { _ in [] },
+                applyPatchPlan: { _ in
+                    Issue.record("Patch apply should not run for goal-derived replace-text actions without patch fallback.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: PatchPlan(summary: "unused", operations: []),
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in
+                    Issue.record("Create file should not run for missing replace-text targets.")
+                },
+                updateFile: { _, _ in
+                    Issue.record("Update file should not run for missing replace-text targets.")
+                },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        #expect(!outcome.didMakeMeaningfulWorkspaceProgress)
+        #expect(outcome.blockers.contains { $0.contains("app/missing.tsx: file does not exist") })
+        #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
+        #expect(outcome.patchResult.changedFiles.isEmpty)
+        #expect(outcome.executedActions.count == 2)
+        #expect(outcome.executedActions.first?.status == .blocked)
     }
 
     @Test func coordinatorExecutesInsertBeforeAndAfterWithoutPatchPlan() async throws {
@@ -964,6 +1310,166 @@ struct AgentRuntimeTests {
         #expect(outcome.patchResult.updatedPlan.operations.isEmpty)
         #expect(outcome.patchResult.changedFiles.sorted() == ["app/deprecated", "app/legacy", "app/screens"])
         #expect(outcome.executedActions.count == 3)
+    }
+
+    @Test func coordinatorTreatsMissingDeleteFolderTargetAsAlreadyApplied() async throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Delete folder app/deprecated",
+            workspace: workspace,
+            patchPlan: nil
+        )
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    AgentWorkspaceFileSnapshot(path: path, exists: false, content: nil)
+                },
+                validatePatchPlan: { _ in [] },
+                applyPatchPlan: { _ in
+                    Issue.record("Patch apply should not run for goal-derived folder delete actions without patch fallback.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: PatchPlan(summary: "unused", operations: []),
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in },
+                updateFile: { _, _ in },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in
+                    Issue.record("Delete folder should not run when action is already applied.")
+                },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        #expect(outcome.executedActions.first?.status == .succeeded)
+        #expect(outcome.blockedActions.isEmpty)
+        #expect(outcome.blockers.isEmpty)
+        #expect(!outcome.didMakeMeaningfulWorkspaceProgress)
+        #expect(outcome.patchResult.changedFiles.isEmpty)
+    }
+
+    @Test func retryExecutionPlanSkipsCompletedGoalWritesAndKeepsRemainingActions() throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let goal = "Append ' // v2' to App.tsx and replace 'Hello' with 'Hi' in App.tsx"
+        let initialPlan = IntentPlanner.planActions(
+            goal: goal,
+            workspace: workspace,
+            patchPlan: nil
+        )
+        let completedSignature = try #require(initialPlan.actions.first?.action.retryActionSignature)
+
+        let retryPlan = AIOrchestrator.retryExecutionPlan(
+            goal: goal,
+            workspace: workspace,
+            retryPatchPlan: nil,
+            completedWriteActionSignatures: [completedSignature]
+        )
+
+        #expect(retryPlan != nil)
+        #expect(retryPlan?.actions.map(\.title) == [
+            "Replace text in App.tsx",
+            "Validate workspace after actions"
+        ])
+    }
+
+    @Test func retryExecutionPlanKeepsPatchWritesWhileSkippingCompletedGoalWrites() throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let goal = "Create file app/settings.tsx"
+        let patchPlan = PatchPlan(
+            summary: "Update app copy",
+            operations: [
+                PatchOperation(
+                    filePath: "App.tsx",
+                    searchText: "Hello",
+                    replaceText: "Hello Expo"
+                )
+            ]
+        )
+        let initialPlan = IntentPlanner.planActions(
+            goal: goal,
+            workspace: workspace,
+            patchPlan: patchPlan,
+            executionMode: .goalDriven
+        )
+        let completedSignature = try #require(initialPlan.actions
+            .first { action in
+                if case .createFile = action.action {
+                    return true
+                }
+                return false
+            }?
+            .action
+            .retryActionSignature)
+
+        let retryPlan = AIOrchestrator.retryExecutionPlan(
+            goal: goal,
+            workspace: workspace,
+            retryPatchPlan: patchPlan,
+            completedWriteActionSignatures: [completedSignature]
+        )
+
+        #expect(retryPlan != nil)
+        #expect(retryPlan?.actions.map(\.title) == [
+            "Inspect App.tsx",
+            "Update App.tsx",
+            "Validate workspace after actions"
+        ])
+    }
+
+    @Test func retryExecutionPlanReturnsNilWhenNoWriteActionsRemain() throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let goal = "Create file app/settings.tsx"
+        let initialPlan = IntentPlanner.planActions(
+            goal: goal,
+            workspace: workspace,
+            patchPlan: nil
+        )
+        let completedSignature = try #require(initialPlan.actions.first?.action.retryActionSignature)
+
+        let retryPlan = AIOrchestrator.retryExecutionPlan(
+            goal: goal,
+            workspace: workspace,
+            retryPatchPlan: nil,
+            completedWriteActionSignatures: [completedSignature]
+        )
+
+        #expect(retryPlan == nil)
     }
 
     @Test func runtimeMergeCombinesAttemptsAndRetryMetadata() {
