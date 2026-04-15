@@ -349,35 +349,40 @@ struct ChatView: View {
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(Theme.dimText)
 
-            ForEach(viewModel.slashCommandSuggestions) { command in
-                Button {
-                    viewModel.inputText = command.command
-                    isInputFocused = true
-                } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        Text(command.command)
-                            .font(.system(.caption, design: .monospaced).weight(.semibold))
-                            .foregroundStyle(Theme.accent)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(Theme.accent.opacity(0.12), in: .capsule)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(viewModel.slashCommandSuggestions) { command in
+                        Button {
+                            viewModel.inputText = command.command
+                            isInputFocused = true
+                        } label: {
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(command.command)
+                                    .font(.system(.caption, design: .monospaced).weight(.semibold))
+                                    .foregroundStyle(Theme.accent)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(Theme.accent.opacity(0.12), in: .capsule)
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(command.title)
-                                .font(.caption)
-                                .foregroundStyle(.white)
-                            Text(command.description)
-                                .font(.caption2)
-                                .foregroundStyle(Theme.dimText)
-                                .lineLimit(2)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(command.title)
+                                        .font(.caption)
+                                        .foregroundStyle(.white)
+                                    Text(command.description)
+                                        .font(.caption2)
+                                        .foregroundStyle(Theme.dimText)
+                                        .lineLimit(2)
+                                }
+
+                                Spacer(minLength: 0)
+                            }
+                            .contentShape(.rect)
                         }
-
-                        Spacer(minLength: 0)
+                        .buttonStyle(.plain)
                     }
-                    .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
             }
+            .frame(maxHeight: 180)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)

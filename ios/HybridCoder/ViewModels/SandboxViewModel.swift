@@ -295,6 +295,11 @@ final class SandboxViewModel {
     }
 
     func appendConversationSnippet(role: String, content: String) async {
+        await appendConversationSnippets([(role: role, content: content)])
+    }
+
+    func appendConversationSnippets(_ snippets: [(role: String, content: String)]) async {
+        guard !snippets.isEmpty else { return }
         guard let project = activeStudioProject else { return }
         var state = restoredState?.projectID == project.id ? restoredState : nil
         state = state ?? PrototypeStateMemory.ProjectState(
@@ -303,12 +308,14 @@ final class SandboxViewModel {
             lastSavedAt: Date()
         )
         guard var resolvedState = state else { return }
-        let snippet = PrototypeStateMemory.ProjectState.ConversationSnippet(
-            role: role,
-            content: String(content.prefix(500)),
-            timestamp: Date()
-        )
-        resolvedState.conversationSnippets.append(snippet)
+        for snippetEntry in snippets {
+            let snippet = PrototypeStateMemory.ProjectState.ConversationSnippet(
+                role: snippetEntry.role,
+                content: String(snippetEntry.content.prefix(500)),
+                timestamp: Date()
+            )
+            resolvedState.conversationSnippets.append(snippet)
+        }
         if resolvedState.conversationSnippets.count > 20 {
             resolvedState.conversationSnippets = Array(resolvedState.conversationSnippets.suffix(20))
         }

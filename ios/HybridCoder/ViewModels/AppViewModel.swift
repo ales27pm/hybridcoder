@@ -147,6 +147,14 @@ final class AppViewModel {
             }
         }
 
+        chat.onConversationSnippets = { [weak self] snippets in
+            guard let self else { return }
+            Task {
+                let formatted = snippets.map { (role: $0.0, content: $0.1) }
+                await self.sandboxViewModel.appendConversationSnippets(formatted)
+            }
+        }
+
         sandboxViewModel.onActiveProjectChanged = { [weak self] project in
             guard let self else { return }
             self.sandboxWorkspaceTransitionGeneration &+= 1
