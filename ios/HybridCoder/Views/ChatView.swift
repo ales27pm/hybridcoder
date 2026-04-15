@@ -297,6 +297,10 @@ struct ChatView: View {
                 .background(Theme.codeBg)
             }
 
+            if !viewModel.slashCommandSuggestions.isEmpty {
+                slashCommandPalette
+            }
+
             HStack(alignment: .bottom, spacing: 10) {
                 TextField("Ask about your code…", text: $viewModel.inputText, axis: .vertical)
                     .lineLimit(1...6)
@@ -337,6 +341,47 @@ struct ChatView: View {
             .padding(.vertical, 10)
             .background(Theme.cardBg)
         }
+    }
+
+    private var slashCommandPalette: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Slash commands")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Theme.dimText)
+
+            ForEach(viewModel.slashCommandSuggestions) { command in
+                Button {
+                    viewModel.inputText = command.command
+                    isInputFocused = true
+                } label: {
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(command.command)
+                            .font(.system(.caption, design: .monospaced).weight(.semibold))
+                            .foregroundStyle(Theme.accent)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Theme.accent.opacity(0.12), in: .capsule)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(command.title)
+                                .font(.caption)
+                                .foregroundStyle(.white)
+                            Text(command.description)
+                                .font(.caption2)
+                                .foregroundStyle(Theme.dimText)
+                                .lineLimit(2)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Theme.codeBg)
     }
 
     @ViewBuilder
