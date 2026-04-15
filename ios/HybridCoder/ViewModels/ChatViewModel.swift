@@ -3,6 +3,29 @@ import SwiftUI
 @MainActor
 @Observable
 final class ChatViewModel {
+    struct SlashCommand: Identifiable, Sendable {
+        let id: String
+        let command: String
+        let title: String
+        let description: String
+        let response: String
+    }
+
+    private static let availableSlashCommands: [SlashCommand] = [
+        .init(
+            id: "tools",
+            command: "/tools",
+            title: "Show available tool calls",
+            description: "Lists tool calls that can inspect and navigate the workspace.",
+            response: """
+            Available tool calls:
+            • read_file(path): read a workspace file
+            • search_code(query, topK): semantic search for relevant code
+            • list_files(filter): enumerate files or folders
+            """
+        )
+    ]
+
     private let orchestrator: AIOrchestrator
     private let maxConversationTokens = 2400
     private let compactionThreshold = 1200
@@ -34,6 +57,23 @@ final class ChatViewModel {
 
     var onPatchApplied: (() -> Void)?
     var onConversationSnippet: ((String, String) -> Void)?
+    var onConversationSnippets: (([(String, String)]) -> Void)?
+
+    var slashCommandSuggestions: [SlashCommand] {
+        let query = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.hasPrefix("/") else { return [] }
+        if query.count == 1 { return Self.availableSlashCommands }
+        let search = String(query.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedSearch = search.lowercased()
+        guard !normalizedSearch.isEmpty else { return Self.availableSlashCommands }
+
+        return Self.availableSlashCommands.filter { command in
+            let normalizedCommand = command.command.hasPrefix("/") ? String(command.command.dropFirst()) : command.command
+            return normalizedCommand.hasPrefix(normalizedSearch) ||
+                command.title.localizedCaseInsensitiveContains(search) ||
+                command.description.localizedCaseInsensitiveContains(search)
+        }
+    }
 
     var activePatchPlan: PatchPlan? {
         patchPlans.first { $0.pendingCount > 0 }
@@ -83,6 +123,12 @@ final class ChatViewModel {
     func sendMessage() async {
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isStreaming else { return }
+
+        if handleSlashCommandIfNeeded(trimmed) {
+            errorMessage = nil
+            inputText = ""
+            return
+        }
 
         activeTaskSummary = String(trimmed.prefix(240))
         mergeActiveFiles(Self.extractFileHints(from: trimmed))
@@ -349,6 +395,11 @@ final class ChatViewModel {
     }
 
     private func compactConversationMemoryIfNeeded() async {
+        if shouldDeferCompactionForInitialPrompt() {
+            recalculateEstimatedConversationTokens()
+            return
+        }
+
         recalculateEstimatedConversationTokens()
         guard AIOrchestrator.shouldCompactConversation(totalEstimatedTokens: estimatedConversationTokens, threshold: compactionThreshold) else {
             return
@@ -372,6 +423,41 @@ final class ChatViewModel {
 
         conversationTurns = Array(conversationTurns.suffix(keepCount))
         recalculateEstimatedConversationTokens()
+    }
+
+    private func handleSlashCommandIfNeeded(_ trimmedInput: String) -> Bool {
+        guard trimmedInput.hasPrefix("/") else { return false }
+        guard let command = Self.availableSlashCommands.first(where: { $0.command.caseInsensitiveCompare(trimmedInput) == .orderedSame }) else {
+            return false
+        }
+
+        let userMessage = ChatMessage(role: .user, content: trimmedInput)
+        messages.append(userMessage)
+        conversationTurns.append(.init(role: .user, content: trimmedInput))
+
+        let assistantMessage = ChatMessage(role: .assistant, content: command.response)
+        messages.append(assistantMessage)
+        conversationTurns.append(.init(role: .assistant, content: command.response))
+        emitConversationSnippets([("user", trimmedInput), ("assistant", command.response)])
+
+        recalculateEstimatedConversationTokens()
+        return true
+    }
+
+    private func shouldDeferCompactionForInitialPrompt() -> Bool {
+        memorySummary == nil && conversationTurns.count <= 1
+    }
+
+    private func emitConversationSnippets(_ snippets: [(String, String)]) {
+        guard !snippets.isEmpty else { return }
+        if let onConversationSnippets {
+            onConversationSnippets(snippets)
+            return
+        }
+
+        for (role, content) in snippets {
+            onConversationSnippet?(role, content)
+        }
     }
 
     private func updatePinnedTaskState(for userRequest: String, response: AssistantResponse) {
