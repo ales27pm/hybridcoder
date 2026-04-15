@@ -206,8 +206,19 @@ nonisolated enum AgentWorkspaceAction: Sendable {
                 return "replaceText|\(Self.sanitizeSignatureComponent(search))|\(Self.sanitizeSignatureComponent(replacement))"
             case .deleteText(let search):
                 return "deleteText|\(Self.sanitizeSignatureComponent(search))"
-            case .patchPlan:
-                return nil
+            case .patchPlan(let patchPlan):
+                let operationsSignature = patchPlan.operations.map { operation in
+                    let normalizedPath = operation.filePath
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .replacingOccurrences(of: "\\", with: "/")
+                        .lowercased()
+                    return [
+                        normalizedPath,
+                        Self.sanitizeSignatureComponent(operation.searchText),
+                        Self.sanitizeSignatureComponent(operation.replaceText)
+                    ].joined(separator: "~")
+                }.joined(separator: "||")
+                return "patchPlan|\(Self.sanitizeSignatureComponent(patchPlan.summary))|\(operationsSignature)"
             }
         }
 

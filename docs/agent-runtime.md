@@ -29,7 +29,10 @@ The current repository now also has a first agent-runtime milestone:
 - execution coordination around validation, apply, workspace diagnostics, and blocker-aware continuation
 - visible runtime reports back into chat
 - bounded validate -> replan -> retry loops in the goal-first runtime path, with retry planning that stays goal-aware and skips already-completed non-patch write actions
+- retry filtering now includes completed patch-plan action signatures, so identical patch writes can be skipped on later attempts
 - idempotent retry handling for delete/rename/move actions when the target state is already satisfied
+- patch-backed write actions now run guarded preflight and then attempt direct deterministic transformations before falling back to PatchEngine apply
+- patch-backed write actions now refresh cached file snapshots after direct/fallback execution so follow-on same-plan writes see current file content
 - hardened workspace path resolution that blocks parent-path and symlink escapes before runtime file actions execute
 - persisted local KPI snapshots for goal-to-plan latency, scaffold first output latency, multi-step completion, and workspace safety violations, with exported telemetry and generated KPI validation reports
 
@@ -126,7 +129,7 @@ The first realistic bytecoding milestone is not full autonomy. It is:
 - surface progress and blockers back into chat
 
 The current implementation now reaches that milestone for guarded patch-plan execution, but it still does not complete the broader create/rename/delete/retry loop for first-class workspace actions.
-The implementation now advances beyond that milestone with goal-derived create/overwrite/append/prepend/insert-before/insert-after/replace-between/replace-text/delete-text/rename/delete plus create/rename/delete-folder and move-file actions, missing-file bootstrap for direct/append/prepend update actions, bounded retry orchestration with goal-aware retry filtering, and idempotent handling for already-applied delete/rename/move retries, but it remains partial because patch-backed write strategies are still central for many richer update scenarios.
+The implementation now advances beyond that milestone with goal-derived create/overwrite/append/prepend/insert-before/insert-after/replace-between/replace-text/delete-text/rename/delete plus create/rename/delete-folder and move-file actions, missing-file bootstrap for direct/append/prepend update actions, bounded retry orchestration with goal-aware retry filtering, idempotent handling for already-applied delete/rename/move retries, and direct-first execution for deterministic patch-plan writes after guarded preflight, but it remains partial because patch-backed write strategies are still central for many richer update scenarios.
 
 ## Definition of success and Phase 6 exit criteria
 

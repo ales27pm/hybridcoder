@@ -92,12 +92,8 @@ enum ExecutionCoordinator {
                 )
                 actionResults.append(execution.result)
                 blockers.append(contentsOf: execution.result.blockers)
-                if !execution.didBlock {
-                    inspectedFiles[path] = AgentWorkspaceFileSnapshot(
-                        path: path,
-                        exists: true,
-                        content: execution.updatedFileContents
-                    )
+                if let updatedSnapshot = execution.updatedSnapshot {
+                    inspectedFiles[path] = updatedSnapshot
                 }
 
             case .updateFile(let path, let strategy, _):
@@ -166,12 +162,8 @@ enum ExecutionCoordinator {
                 )
                 actionResults.append(execution.result)
                 blockers.append(contentsOf: execution.result.blockers)
-                if !execution.didBlock {
-                    inspectedFiles[path] = AgentWorkspaceFileSnapshot(
-                        path: path,
-                        exists: true,
-                        content: execution.updatedFileContents
-                    )
+                if let updatedSnapshot = execution.updatedSnapshot {
+                    inspectedFiles[path] = updatedSnapshot
                 }
 
             case .createFolder(let path, _):
@@ -548,7 +540,7 @@ enum ExecutionCoordinator {
         allowMissingInspectedFile: Bool,
         existingSnapshot: AgentWorkspaceFileSnapshot,
         dependencies: Dependencies
-    ) async throws -> (result: AgentActionExecutionResult, didBlock: Bool, updatedFileContents: String?) {
+    ) async throws -> (result: AgentActionExecutionResult, didBlock: Bool, updatedSnapshot: AgentWorkspaceFileSnapshot?) {
         switch strategy {
         case .direct(let contents):
             if !allowMissingInspectedFile && !existingSnapshot.exists {
@@ -576,7 +568,7 @@ enum ExecutionCoordinator {
                     changedFiles: [path]
                 ),
                 false,
-                contents
+                AgentWorkspaceFileSnapshot(path: path, exists: true, content: contents)
             )
 
         case .append(let text):
@@ -606,7 +598,7 @@ enum ExecutionCoordinator {
                     changedFiles: [path]
                 ),
                 false,
-                updatedContents
+                AgentWorkspaceFileSnapshot(path: path, exists: true, content: updatedContents)
             )
 
         case .prepend(let text):
@@ -636,7 +628,7 @@ enum ExecutionCoordinator {
                     changedFiles: [path]
                 ),
                 false,
-                updatedContents
+                AgentWorkspaceFileSnapshot(path: path, exists: true, content: updatedContents)
             )
 
         case .insertBefore(let anchor, let text):
@@ -681,7 +673,7 @@ enum ExecutionCoordinator {
                     changedFiles: [path]
                 ),
                 false,
-                updatedContents
+                AgentWorkspaceFileSnapshot(path: path, exists: true, content: updatedContents)
             )
 
         case .insertAfter(let anchor, let text):
@@ -726,7 +718,7 @@ enum ExecutionCoordinator {
                     changedFiles: [path]
                 ),
                 false,
-                updatedContents
+                AgentWorkspaceFileSnapshot(path: path, exists: true, content: updatedContents)
             )
 
         case .replaceBetween(let startAnchor, let endAnchor, let replacement):
@@ -789,7 +781,7 @@ enum ExecutionCoordinator {
                     changedFiles: [path]
                 ),
                 false,
-                updatedContents
+                AgentWorkspaceFileSnapshot(path: path, exists: true, content: updatedContents)
             )
 
         case .replaceText(let search, let replacement):
@@ -836,7 +828,7 @@ enum ExecutionCoordinator {
                     changedFiles: [path]
                 ),
                 false,
-                updatedContents
+                AgentWorkspaceFileSnapshot(path: path, exists: true, content: updatedContents)
             )
 
         case .deleteText(let search):
@@ -880,7 +872,7 @@ enum ExecutionCoordinator {
                     changedFiles: [path]
                 ),
                 false,
-                updatedContents
+                AgentWorkspaceFileSnapshot(path: path, exists: true, content: updatedContents)
             )
 
         case .patchPlan(let patchPlan):
@@ -901,10 +893,54 @@ enum ExecutionCoordinator {
                 )
             }
 
+            if let directPatchExecution = try await executePatchPlanDirectly(
+                patchPlan,
+                targetPath: path,
+                allowMissingInspectedFile: allowMissingInspectedFile,
+                existingSnapshot: existingSnapshot,
+                directWrite: directWrite
+            ) {
+                let patchResult = directPatchExecution.patchResult
+                aggregatedPlan = mergeStatuses(from: patchResult.updatedPlan, into: aggregatedPlan)
+                patchFailures.append(contentsOf: patchResult.failures)
+                changedFiles.formUnion(patchResult.changedFiles)
+
+                if !patchResult.changedFiles.isEmpty {
+                    didMakeMeaningfulWorkspaceProgress = true
+                }
+
+                if !patchResult.failures.isEmpty {
+                    let blockerMessages = patchResult.failures.map { "\($0.filePath): \($0.reason)" }
+                    return (
+                        AgentActionExecutionResult(
+                            for: action,
+                            status: .blocked,
+                            detail: "Patch-backed write action stopped after direct patch-plan transformation failures.",
+                            changedFiles: patchResult.changedFiles,
+                            blockers: blockerMessages
+                        ),
+                        true,
+                        directPatchExecution.updatedSnapshot
+                    )
+                }
+
+                return (
+                    AgentActionExecutionResult(
+                        for: action,
+                        status: .succeeded,
+                        detail: "Executed \(action.action.summary.lowercased()) with direct patch-plan transformations.",
+                        changedFiles: patchResult.changedFiles
+                    ),
+                    false,
+                    directPatchExecution.updatedSnapshot
+                )
+            }
+
             let patchResult = try await dependencies.applyPatchPlan(patchPlan)
             aggregatedPlan = mergeStatuses(from: patchResult.updatedPlan, into: aggregatedPlan)
             patchFailures.append(contentsOf: patchResult.failures)
             changedFiles.formUnion(patchResult.changedFiles)
+            let refreshedSnapshot = await dependencies.inspectFile(path)
 
             if !patchResult.changedFiles.isEmpty {
                 didMakeMeaningfulWorkspaceProgress = true
@@ -921,7 +957,7 @@ enum ExecutionCoordinator {
                         blockers: blockerMessages
                     ),
                     true,
-                    nil
+                    refreshedSnapshot
                 )
             }
 
@@ -933,9 +969,156 @@ enum ExecutionCoordinator {
                     changedFiles: patchResult.changedFiles
                 ),
                 false,
-                nil
+                refreshedSnapshot
             )
         }
+    }
+
+    private struct DirectPatchExecutionResult {
+        let patchResult: PatchEngine.PatchResult
+        let updatedSnapshot: AgentWorkspaceFileSnapshot
+    }
+
+    private static func executePatchPlanDirectly(
+        _ patchPlan: PatchPlan,
+        targetPath: String,
+        allowMissingInspectedFile: Bool,
+        existingSnapshot: AgentWorkspaceFileSnapshot,
+        directWrite: @Sendable (String, String) async throws -> Void
+    ) async throws -> DirectPatchExecutionResult? {
+        let pendingOperations = patchPlan.operations.filter { $0.status == .pending }
+        guard !pendingOperations.isEmpty else {
+            return DirectPatchExecutionResult(
+                patchResult: PatchEngine.PatchResult(
+                    updatedPlan: patchPlan,
+                    changedFiles: [],
+                    failures: []
+                ),
+                updatedSnapshot: existingSnapshot
+            )
+        }
+
+        let normalizedTarget = normalizedActionPath(targetPath)
+        guard pendingOperations.allSatisfy({ normalizedActionPath($0.filePath) == normalizedTarget }) else {
+            return nil
+        }
+
+        let requiresSearchableContent = pendingOperations.contains { operation in
+            !operation.searchText.isEmpty && operation.searchText != operation.replaceText
+        }
+
+        var workingContent: String
+        if existingSnapshot.exists {
+            if let content = existingSnapshot.content {
+                workingContent = content
+            } else {
+                guard !requiresSearchableContent else { return nil }
+                workingContent = ""
+            }
+        } else {
+            guard allowMissingInspectedFile else { return nil }
+            guard !requiresSearchableContent else { return nil }
+            workingContent = ""
+        }
+
+        var statusesByOperationID: [UUID: PatchOperation.Status] = [:]
+        var failuresByOperationIndex: [Int: PatchEngine.OperationFailure] = [:]
+        var requiresWrite = false
+
+        for (index, operation) in patchPlan.operations.enumerated() where operation.status == .pending {
+            if operation.searchText == operation.replaceText {
+                statusesByOperationID[operation.id] = .applied
+                continue
+            }
+
+            if operation.searchText.isEmpty {
+                workingContent = operation.replaceText
+                requiresWrite = true
+                statusesByOperationID[operation.id] = .applied
+                continue
+            }
+
+            let matchCount = countOccurrences(of: operation.searchText, in: workingContent)
+            guard matchCount > 0 else {
+                failuresByOperationIndex[index] = PatchEngine.OperationFailure(
+                    operationID: operation.id,
+                    filePath: operation.filePath,
+                    reason: "Search text not found"
+                )
+                statusesByOperationID[operation.id] = .failed
+                continue
+            }
+
+            guard matchCount == 1 else {
+                failuresByOperationIndex[index] = PatchEngine.OperationFailure(
+                    operationID: operation.id,
+                    filePath: operation.filePath,
+                    reason: "Search text matches \(matchCount) times (must be exactly 1)"
+                )
+                statusesByOperationID[operation.id] = .failed
+                continue
+            }
+
+            let updatedContent = workingContent.replacingOccurrences(
+                of: operation.searchText,
+                with: operation.replaceText
+            )
+            if updatedContent != workingContent {
+                requiresWrite = true
+            }
+            workingContent = updatedContent
+            statusesByOperationID[operation.id] = .applied
+        }
+
+        var changedFiles: [String] = []
+        if requiresWrite {
+            try await directWrite(targetPath, workingContent)
+            changedFiles = [targetPath]
+        }
+
+        let updatedOperations = patchPlan.operations.map { operation in
+            guard let status = statusesByOperationID[operation.id] else { return operation }
+            return PatchOperation(
+                id: operation.id,
+                filePath: operation.filePath,
+                searchText: operation.searchText,
+                replaceText: operation.replaceText,
+                description: operation.description,
+                status: status
+            )
+        }
+
+        let orderedFailures = failuresByOperationIndex
+            .sorted { $0.key < $1.key }
+            .map(\.value)
+
+        let fileExistsAfterExecution = existingSnapshot.exists || requiresWrite
+        let snapshotContent: String?
+        if requiresWrite {
+            snapshotContent = workingContent
+        } else if existingSnapshot.content != nil {
+            snapshotContent = workingContent
+        } else {
+            snapshotContent = nil
+        }
+
+        return DirectPatchExecutionResult(
+            patchResult: PatchEngine.PatchResult(
+                updatedPlan: PatchPlan(
+                    id: patchPlan.id,
+                    summary: patchPlan.summary,
+                    operations: updatedOperations,
+                    createdAt: patchPlan.createdAt
+                ),
+                changedFiles: changedFiles,
+                failures: orderedFailures
+            ),
+            updatedSnapshot: AgentWorkspaceFileSnapshot(
+                path: targetPath,
+                exists: fileExistsAfterExecution,
+                content: snapshotContent
+            )
+        )
     }
 
     private static func mergeStatuses(
@@ -1010,6 +1193,26 @@ enum ExecutionCoordinator {
                 reason: reason
             )
         }
+    }
+
+    private static func normalizedActionPath(_ path: String) -> String {
+        path.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\", with: "/")
+            .lowercased()
+    }
+
+    private static func countOccurrences(of needle: String, in haystack: String) -> Int {
+        guard !needle.isEmpty else { return 0 }
+
+        var count = 0
+        var searchRange = haystack.startIndex..<haystack.endIndex
+
+        while let range = haystack.range(of: needle, options: .literal, range: searchRange) {
+            count += 1
+            searchRange = range.upperBound..<haystack.endIndex
+        }
+
+        return count
     }
 
     private static func bootstrapContentsForMissingUpdate(

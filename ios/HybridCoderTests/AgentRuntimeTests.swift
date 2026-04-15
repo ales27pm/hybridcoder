@@ -16,6 +16,8 @@ private actor RuntimeActionCapture {
     private var deletedFolderPath: String?
     private var movedFrom: String?
     private var movedTo: String?
+    private var patchValidationCallCount = 0
+    private var patchApplyCallCount = 0
 
     func recordRename(from: String, to: String) {
         renamedFrom = from
@@ -73,6 +75,34 @@ private actor RuntimeActionCapture {
 
     func folderRenameDeleteSnapshot() -> (String?, String?, String?) {
         (renamedFolderFrom, renamedFolderTo, deletedFolderPath)
+    }
+
+    func recordPatchValidationCall() {
+        patchValidationCallCount += 1
+    }
+
+    func recordPatchApplyCall() {
+        patchApplyCallCount += 1
+    }
+
+    func patchCallSnapshot() -> (validationCalls: Int, applyCalls: Int) {
+        (patchValidationCallCount, patchApplyCallCount)
+    }
+}
+
+private actor InMemoryWorkspaceState {
+    private var snapshots: [String: AgentWorkspaceFileSnapshot]
+
+    init(snapshots: [String: AgentWorkspaceFileSnapshot] = [:]) {
+        self.snapshots = snapshots
+    }
+
+    func inspect(path: String) -> AgentWorkspaceFileSnapshot {
+        snapshots[path] ?? AgentWorkspaceFileSnapshot(path: path, exists: false, content: nil)
+    }
+
+    func upsertFile(path: String, content: String?) {
+        snapshots[path] = AgentWorkspaceFileSnapshot(path: path, exists: true, content: content)
     }
 }
 
@@ -183,6 +213,556 @@ struct AgentRuntimeTests {
         #expect(report.chatSummary.contains("Runtime attempts: 1. Replans: 0."))
         #expect(report.chatSummary.contains("Planned actions: 3. Executed actions: 3. Blocked actions: 1."))
         #expect(report.chatSummary.contains("Validation: Validation found 1 warning."))
+    }
+
+    @Test func coordinatorExecutesPatchUpdateWithDirectTransformationWhenPreflightPasses() async throws {
+        let operation = PatchOperation(
+            filePath: "App.tsx",
+            searchText: "Hello",
+            replaceText: "Hi"
+        )
+        let patchPlan = PatchPlan(summary: "Update app copy", operations: [operation])
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Improve app copy",
+            workspace: workspace,
+            patchPlan: patchPlan,
+            executionMode: .patchApproval
+        )
+
+        let capture = RuntimeActionCapture()
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { _ in
+                    AgentWorkspaceFileSnapshot(path: "App.tsx", exists: true, content: "Hello")
+                },
+                validatePatchPlan: { _ in
+                    await capture.recordPatchValidationCall()
+                    return []
+                },
+                applyPatchPlan: { _ in
+                    await capture.recordPatchApplyCall()
+                    Issue.record("Patch apply should be bypassed when direct patch-plan transformation is available.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: patchPlan,
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in },
+                updateFile: { path, contents in
+                    await capture.recordUpdate(path: path, contents: contents)
+                },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        let (updatedPath, updatedContents) = await capture.updateSnapshot()
+        let patchCalls = await capture.patchCallSnapshot()
+        #expect(updatedPath == "App.tsx")
+        #expect(updatedContents == "Hi")
+        #expect(patchCalls.validationCalls == 1)
+        #expect(patchCalls.applyCalls == 0)
+        #expect(outcome.patchResult.updatedPlan.operations.map(\.status) == [.applied])
+        #expect(outcome.patchResult.changedFiles == ["App.tsx"])
+        #expect(outcome.patchResult.failures.isEmpty)
+    }
+
+    @Test func coordinatorExecutesPatchCreateWithDirectTransformationWhenPreflightPasses() async throws {
+        let operation = PatchOperation(
+            filePath: "app/new-screen.tsx",
+            searchText: "",
+            replaceText: "export default function NewScreen() {}"
+        )
+        let patchPlan = PatchPlan(summary: "Create new screen", operations: [operation])
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Create new screen",
+            workspace: workspace,
+            patchPlan: patchPlan,
+            executionMode: .patchApproval
+        )
+
+        let capture = RuntimeActionCapture()
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { _ in
+                    AgentWorkspaceFileSnapshot(path: "app/new-screen.tsx", exists: false, content: nil)
+                },
+                validatePatchPlan: { _ in
+                    await capture.recordPatchValidationCall()
+                    return []
+                },
+                applyPatchPlan: { _ in
+                    await capture.recordPatchApplyCall()
+                    Issue.record("Patch apply should be bypassed when direct patch-plan create transformation is available.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: patchPlan,
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { path, contents in
+                    await capture.recordCreate(path: path, contents: contents)
+                },
+                updateFile: { _, _ in },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        let (createdPath, createdContents) = await capture.createSnapshot()
+        let patchCalls = await capture.patchCallSnapshot()
+        #expect(createdPath == "app/new-screen.tsx")
+        #expect(createdContents == "export default function NewScreen() {}")
+        #expect(patchCalls.validationCalls == 1)
+        #expect(patchCalls.applyCalls == 0)
+        #expect(outcome.patchResult.updatedPlan.operations.map(\.status) == [.applied])
+        #expect(outcome.patchResult.changedFiles == ["app/new-screen.tsx"])
+        #expect(outcome.patchResult.failures.isEmpty)
+    }
+
+    @Test func coordinatorFallsBackToPatchApplyWhenPatchDirectTransformationIsNotPossible() async throws {
+        let operation = PatchOperation(
+            filePath: "App.tsx",
+            searchText: "Hello",
+            replaceText: "Hi"
+        )
+        let patchPlan = PatchPlan(summary: "Update app copy", operations: [operation])
+        let appliedPatchPlan = PatchPlan(
+            id: patchPlan.id,
+            summary: patchPlan.summary,
+            operations: [
+                PatchOperation(
+                    id: operation.id,
+                    filePath: operation.filePath,
+                    searchText: operation.searchText,
+                    replaceText: operation.replaceText,
+                    description: operation.description,
+                    status: .applied
+                )
+            ],
+            createdAt: patchPlan.createdAt
+        )
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = IntentPlanner.planActions(
+            goal: "Improve app copy",
+            workspace: workspace,
+            patchPlan: patchPlan,
+            executionMode: .patchApproval
+        )
+
+        let capture = RuntimeActionCapture()
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { _ in
+                    AgentWorkspaceFileSnapshot(path: "App.tsx", exists: true, content: nil)
+                },
+                validatePatchPlan: { _ in
+                    await capture.recordPatchValidationCall()
+                    return []
+                },
+                applyPatchPlan: { _ in
+                    await capture.recordPatchApplyCall()
+                    return PatchEngine.PatchResult(
+                        updatedPlan: appliedPatchPlan,
+                        changedFiles: ["App.tsx"],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in },
+                updateFile: { _, _ in
+                    Issue.record("Direct update should not run when patch-plan direct transformation is not possible.")
+                },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        let patchCalls = await capture.patchCallSnapshot()
+        #expect(patchCalls.validationCalls == 1)
+        #expect(patchCalls.applyCalls == 1)
+        #expect(outcome.patchResult.updatedPlan.operations.map(\.status) == [.applied])
+        #expect(outcome.patchResult.changedFiles == ["App.tsx"])
+        #expect(outcome.patchResult.failures.isEmpty)
+    }
+
+    @Test func coordinatorPreservesPatchDirectSnapshotForFollowOnSameFileWrite() async throws {
+        let operation = PatchOperation(
+            filePath: "App.tsx",
+            searchText: "Hello",
+            replaceText: "Hi"
+        )
+        let patchPlan = PatchPlan(summary: "Update app copy", operations: [operation])
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = AgentExecutionPlan(
+            goal: "Patch then append",
+            workspace: workspace,
+            actions: [
+                AgentPlannedAction(
+                    title: "Inspect App.tsx",
+                    action: .inspectFile(path: "App.tsx", reason: "Read file before patch-backed update"),
+                    detail: "Inspection before patch update"
+                ),
+                AgentPlannedAction(
+                    title: "Update App.tsx",
+                    action: .updateFile(
+                        path: "App.tsx",
+                        strategy: .patchPlan(patchPlan),
+                        reason: "Patch-backed update"
+                    ),
+                    detail: "Patch-backed update action"
+                ),
+                AgentPlannedAction(
+                    title: "Append text to App.tsx",
+                    action: .updateFile(
+                        path: "App.tsx",
+                        strategy: .append(text: "!"),
+                        reason: "Follow-on append"
+                    ),
+                    detail: "Append after patch update"
+                ),
+                AgentPlannedAction(
+                    title: "Validate workspace after actions",
+                    action: .validateWorkspace(reason: "Validate diagnostics"),
+                    detail: "Validation step"
+                )
+            ],
+            fallbackPatchPlan: patchPlan,
+            executionMode: .patchApproval
+        )
+
+        let capture = RuntimeActionCapture()
+        let state = InMemoryWorkspaceState(
+            snapshots: ["App.tsx": AgentWorkspaceFileSnapshot(path: "App.tsx", exists: true, content: "Hello")]
+        )
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    await state.inspect(path: path)
+                },
+                validatePatchPlan: { _ in
+                    await capture.recordPatchValidationCall()
+                    return []
+                },
+                applyPatchPlan: { _ in
+                    await capture.recordPatchApplyCall()
+                    Issue.record("Patch apply should be bypassed when direct patch transformations are available.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: patchPlan,
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in
+                    Issue.record("Create file should not run for this update flow.")
+                },
+                updateFile: { path, contents in
+                    await capture.recordUpdate(path: path, contents: contents)
+                    await state.upsertFile(path: path, content: contents)
+                },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        let patchCalls = await capture.patchCallSnapshot()
+        let writes = await capture.updateWritesSnapshot()
+        #expect(patchCalls.validationCalls == 1)
+        #expect(patchCalls.applyCalls == 0)
+        #expect(writes.count == 2)
+        #expect(writes[0] == ("App.tsx", "Hi"))
+        #expect(writes[1] == ("App.tsx", "Hi!"))
+        #expect(outcome.blockedActions.isEmpty)
+        #expect(outcome.patchResult.failures.isEmpty)
+    }
+
+    @Test func coordinatorRefreshesPatchFallbackSnapshotForFollowOnSameFileWrite() async throws {
+        let operation = PatchOperation(
+            filePath: "App.tsx",
+            searchText: "Hello",
+            replaceText: "Hi"
+        )
+        let patchPlan = PatchPlan(summary: "Update app copy", operations: [operation])
+        let appliedPatchPlan = PatchPlan(
+            id: patchPlan.id,
+            summary: patchPlan.summary,
+            operations: [
+                PatchOperation(
+                    id: operation.id,
+                    filePath: operation.filePath,
+                    searchText: operation.searchText,
+                    replaceText: operation.replaceText,
+                    description: operation.description,
+                    status: .applied
+                )
+            ],
+            createdAt: patchPlan.createdAt
+        )
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = AgentExecutionPlan(
+            goal: "Fallback patch then append",
+            workspace: workspace,
+            actions: [
+                AgentPlannedAction(
+                    title: "Inspect App.tsx",
+                    action: .inspectFile(path: "App.tsx", reason: "Read file before patch-backed update"),
+                    detail: "Inspection before patch update"
+                ),
+                AgentPlannedAction(
+                    title: "Update App.tsx",
+                    action: .updateFile(
+                        path: "App.tsx",
+                        strategy: .patchPlan(patchPlan),
+                        reason: "Patch-backed update"
+                    ),
+                    detail: "Patch-backed update action"
+                ),
+                AgentPlannedAction(
+                    title: "Append text to App.tsx",
+                    action: .updateFile(
+                        path: "App.tsx",
+                        strategy: .append(text: "!"),
+                        reason: "Follow-on append"
+                    ),
+                    detail: "Append after patch update"
+                ),
+                AgentPlannedAction(
+                    title: "Validate workspace after actions",
+                    action: .validateWorkspace(reason: "Validate diagnostics"),
+                    detail: "Validation step"
+                )
+            ],
+            fallbackPatchPlan: patchPlan,
+            executionMode: .patchApproval
+        )
+
+        let capture = RuntimeActionCapture()
+        let state = InMemoryWorkspaceState(
+            snapshots: ["App.tsx": AgentWorkspaceFileSnapshot(path: "App.tsx", exists: true, content: nil)]
+        )
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    await state.inspect(path: path)
+                },
+                validatePatchPlan: { _ in
+                    await capture.recordPatchValidationCall()
+                    return []
+                },
+                applyPatchPlan: { _ in
+                    await capture.recordPatchApplyCall()
+                    await state.upsertFile(path: "App.tsx", content: "Hi")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: appliedPatchPlan,
+                        changedFiles: ["App.tsx"],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in
+                    Issue.record("Create file should not run for this update flow.")
+                },
+                updateFile: { path, contents in
+                    await capture.recordUpdate(path: path, contents: contents)
+                    await state.upsertFile(path: path, content: contents)
+                },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        let patchCalls = await capture.patchCallSnapshot()
+        let writes = await capture.updateWritesSnapshot()
+        #expect(patchCalls.validationCalls == 1)
+        #expect(patchCalls.applyCalls == 1)
+        #expect(writes.count == 1)
+        #expect(writes[0] == ("App.tsx", "Hi!"))
+        #expect(outcome.blockedActions.isEmpty)
+        #expect(outcome.patchResult.failures.isEmpty)
+    }
+
+    @Test func coordinatorCarriesDirectPatchPartialProgressIntoFollowOnSameFileWrite() async throws {
+        let firstOperation = PatchOperation(
+            filePath: "App.tsx",
+            searchText: "Hello",
+            replaceText: "Hi"
+        )
+        let secondOperation = PatchOperation(
+            filePath: "App.tsx",
+            searchText: "Missing",
+            replaceText: "ignored"
+        )
+        let patchPlan = PatchPlan(
+            summary: "Partially update app copy",
+            operations: [firstOperation, secondOperation]
+        )
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let executionPlan = AgentExecutionPlan(
+            goal: "Partial patch then append",
+            workspace: workspace,
+            actions: [
+                AgentPlannedAction(
+                    title: "Inspect App.tsx",
+                    action: .inspectFile(path: "App.tsx", reason: "Read file before patch-backed update"),
+                    detail: "Inspection before patch update"
+                ),
+                AgentPlannedAction(
+                    title: "Update App.tsx",
+                    action: .updateFile(
+                        path: "App.tsx",
+                        strategy: .patchPlan(patchPlan),
+                        reason: "Patch-backed update"
+                    ),
+                    detail: "Patch-backed update action"
+                ),
+                AgentPlannedAction(
+                    title: "Append text to App.tsx",
+                    action: .updateFile(
+                        path: "App.tsx",
+                        strategy: .append(text: "!"),
+                        reason: "Follow-on append"
+                    ),
+                    detail: "Append after patch update"
+                ),
+                AgentPlannedAction(
+                    title: "Validate workspace after actions",
+                    action: .validateWorkspace(reason: "Validate diagnostics"),
+                    detail: "Validation step"
+                )
+            ],
+            fallbackPatchPlan: patchPlan,
+            executionMode: .patchApproval
+        )
+
+        let capture = RuntimeActionCapture()
+        let state = InMemoryWorkspaceState(
+            snapshots: ["App.tsx": AgentWorkspaceFileSnapshot(path: "App.tsx", exists: true, content: "Hello")]
+        )
+
+        let outcome = try await ExecutionCoordinator.executeActionPlan(
+            executionPlan,
+            dependencies: .init(
+                inspectFile: { path in
+                    await state.inspect(path: path)
+                },
+                validatePatchPlan: { _ in
+                    await capture.recordPatchValidationCall()
+                    return []
+                },
+                applyPatchPlan: { _ in
+                    await capture.recordPatchApplyCall()
+                    Issue.record("Patch apply should be bypassed when direct patch transformations are available.")
+                    return PatchEngine.PatchResult(
+                        updatedPlan: patchPlan,
+                        changedFiles: [],
+                        failures: []
+                    )
+                },
+                createFile: { _, _ in
+                    Issue.record("Create file should not run for this update flow.")
+                },
+                updateFile: { path, contents in
+                    await capture.recordUpdate(path: path, contents: contents)
+                    await state.upsertFile(path: path, content: contents)
+                },
+                createFolder: { _ in },
+                renameFolder: { _, _ in },
+                deleteFolder: { _ in },
+                moveFile: { _, _ in },
+                renameFile: { _, _ in },
+                deleteFile: { _ in },
+                validateWorkspace: { [] }
+            )
+        )
+
+        let patchCalls = await capture.patchCallSnapshot()
+        let writes = await capture.updateWritesSnapshot()
+        #expect(patchCalls.validationCalls == 1)
+        #expect(patchCalls.applyCalls == 0)
+        #expect(writes.count == 2)
+        #expect(writes[0] == ("App.tsx", "Hi"))
+        #expect(writes[1] == ("App.tsx", "Hi!"))
+        #expect(outcome.blockedActions.count == 1)
+        #expect(outcome.blockers.contains { $0.contains("Search text not found") })
+        #expect(outcome.didMakeMeaningfulWorkspaceProgress)
     }
 
     @Test func plannerDerivesRenameAndDeleteActionsFromGoalWithoutPatchFallback() {
@@ -1434,6 +2014,113 @@ struct AgentRuntimeTests {
             goal: goal,
             workspace: workspace,
             retryPatchPlan: patchPlan,
+            completedWriteActionSignatures: [completedSignature]
+        )
+
+        #expect(retryPlan != nil)
+        #expect(retryPlan?.actions.map(\.title) == [
+            "Inspect App.tsx",
+            "Update App.tsx",
+            "Validate workspace after actions"
+        ])
+    }
+
+    @Test func retryExecutionPlanSkipsCompletedPatchWritesWhenSignatureMatches() throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let goal = "Improve app copy"
+        let patchPlan = PatchPlan(
+            summary: "Update app copy",
+            operations: [
+                PatchOperation(
+                    filePath: "App.tsx",
+                    searchText: "Hello",
+                    replaceText: "Hello Expo"
+                )
+            ]
+        )
+        let initialPlan = IntentPlanner.planActions(
+            goal: goal,
+            workspace: workspace,
+            patchPlan: patchPlan,
+            executionMode: .patchApproval
+        )
+        let patchActionSignature = try #require(initialPlan.actions
+            .first { action in
+                if case .updateFile(_, .patchPlan(_), _) = action.action {
+                    return true
+                }
+                return false
+            }?
+            .action
+            .retryActionSignature)
+
+        let retryPlan = AIOrchestrator.retryExecutionPlan(
+            goal: goal,
+            workspace: workspace,
+            retryPatchPlan: patchPlan,
+            completedWriteActionSignatures: [patchActionSignature]
+        )
+
+        #expect(retryPlan == nil)
+    }
+
+    @Test func retryExecutionPlanKeepsPatchWritesWhenPatchSignatureDiffers() throws {
+        let workspace = AgentWorkspaceContext(
+            kind: .prototype,
+            projectName: "Starter",
+            projectKind: .expoTS,
+            entryFile: "App.tsx",
+            hasExpoRouter: false,
+            dependencies: ["expo"]
+        )
+        let goal = "Improve app copy"
+        let completedPatchPlan = PatchPlan(
+            summary: "Update app copy",
+            operations: [
+                PatchOperation(
+                    filePath: "App.tsx",
+                    searchText: "Hello",
+                    replaceText: "Hello Expo"
+                )
+            ]
+        )
+        let retryPatchPlan = PatchPlan(
+            summary: "Update app copy again",
+            operations: [
+                PatchOperation(
+                    filePath: "App.tsx",
+                    searchText: "Expo",
+                    replaceText: "Expo v2"
+                )
+            ]
+        )
+        let completedPlan = IntentPlanner.planActions(
+            goal: goal,
+            workspace: workspace,
+            patchPlan: completedPatchPlan,
+            executionMode: .patchApproval
+        )
+        let completedSignature = try #require(completedPlan.actions
+            .first { action in
+                if case .updateFile(_, .patchPlan(_), _) = action.action {
+                    return true
+                }
+                return false
+            }?
+            .action
+            .retryActionSignature)
+
+        let retryPlan = AIOrchestrator.retryExecutionPlan(
+            goal: goal,
+            workspace: workspace,
+            retryPatchPlan: retryPatchPlan,
             completedWriteActionSignatures: [completedSignature]
         )
 
