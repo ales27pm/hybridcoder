@@ -239,9 +239,7 @@ actor QwenCoderService {
     }
 
     private func resolveModelURL() async throws -> URL {
-        guard let modelsRoot = await bookmarkService.resolveModelsFolderBookmark() else {
-            throw QwenError.pipelineUnavailable("Models folder bookmark is missing. Please select On My iPhone > Hybrid Coder > Models.")
-        }
+        let modelsRoot = await bookmarkService.resolveModelsFolderBookmark() ?? ModelRegistry.externalModelsRoot
         return modelsRoot.appendingPathComponent(modelName, isDirectory: false)
     }
 
