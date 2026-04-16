@@ -76,7 +76,7 @@ final class ModelDownloadService {
         guard !isDownloading else { return }
         guard let entry = registry.entry(for: modelID) else { return }
         guard entry.runtime != .llamaCppGGUF else {
-            downloadError = "llama.cpp models are loaded from Files > On My iPhone > HybridCoder > Models/."
+            downloadError = "llama.cpp models are loaded from Files > On My iPhone > Hybrid Coder > Models/."
             shouldSuggestTokenInput = false
             let isReady = registry.isCodeGenerationModelInstalled(modelID: modelID)
             registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)

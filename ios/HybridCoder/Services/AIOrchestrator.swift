@@ -380,7 +380,7 @@ final class AIOrchestrator {
                 modelRegistry.setLoadState(for: activeModelID, .loaded)
                 warmUpError = nil
             } else {
-                let message = "llama.cpp warm-up finished, but expected Qwen GGUF file was not found in Files > On My iPhone > HybridCoder > Models/."
+                let message = "llama.cpp warm-up finished, but expected Qwen GGUF file was not found in Files > On My iPhone > Hybrid Coder > Models/."
                 modelRegistry.setInstallState(for: activeModelID, .notInstalled)
                 modelRegistry.setLoadState(for: activeModelID, .failed(message))
                 warmUpError = message
@@ -2345,7 +2345,7 @@ final class AIOrchestrator {
                 modelRegistry.setInstallState(for: activeModelID, .installed)
                 return coder
             }
-            let message = "llama.cpp warm-up finished, but expected Qwen GGUF file was not found in Files > On My iPhone > HybridCoder > Models/."
+            let message = "llama.cpp warm-up finished, but expected Qwen GGUF file was not found in Files > On My iPhone > Hybrid Coder > Models/."
             modelRegistry.setInstallState(for: activeModelID, .notInstalled)
             throw OrchestratorError.codeGenerationModelUnavailable(message)
         } catch {
