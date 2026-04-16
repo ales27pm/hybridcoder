@@ -1,14 +1,10 @@
-import Darwin
 import Foundation
-import CoreMLPipelines
-@preconcurrency import Hub
-
-extension TextGenerationPipeline: @unchecked @retroactive Sendable {}
+import SpeziLLM
+import SpeziLLMLocal
 
 actor QwenCoderService {
     let modelName: String
-    private let hubDownloadBase: URL
-    private let accessTokenProvider: () -> String?
+    private let bookmarkService: BookmarkService
 
     private(set) var isLoaded: Bool = false
     private(set) var isLoading: Bool = false
@@ -17,18 +13,17 @@ actor QwenCoderService {
     private(set) var tokensPerSecond: Double = 0
     private(set) var loadProgress: Double = 0
 
-    private var pipeline: TextGenerationPipeline?
-    private var loadingTask: Task<TextGenerationPipeline, Error>?
+    private let platform = LLMLocalPlatform()
+    private var platformTask: Task<Void, Never>?
+    private var session: LLMLocalSession?
     private var shouldUnloadAfterGeneration: Bool = false
 
     init(
-        modelName: String = "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit",
-        hubDownloadBase: URL = ModelRegistry.coreMLPipelinesDownloadRoot,
-        accessTokenProvider: @escaping () -> String? = { nil }
+        modelName: String = ModelRegistry.defaultCodeGenerationModelID,
+        bookmarkService: BookmarkService = BookmarkService()
     ) {
         self.modelName = modelName
-        self.hubDownloadBase = hubDownloadBase
-        self.accessTokenProvider = accessTokenProvider
+        self.bookmarkService = bookmarkService
     }
 
     func warmUp(progressHandler: (@Sendable (Double) -> Void)? = nil) async throws {
@@ -42,22 +37,16 @@ actor QwenCoderService {
             isLoading = false
         }
 
-        configureDownloadEnvironment()
-        let pipeline = try await loadPipelineIfNeeded()
-        loadProgress = 0.7
-        progressHandler?(0.7)
-
-        do {
-            try await pipeline.prewarm()
-        } catch {
-            loadError = error.localizedDescription
-            loadProgress = 0
-            throw QwenError.pipelineUnavailable(error.localizedDescription)
+        let modelURL = try await resolveModelURL()
+        guard FileManager.default.fileExists(atPath: modelURL.path(percentEncoded: false)) else {
+            throw QwenError.pipelineUnavailable("Missing model file at \(modelURL.path(percentEncoded: false)).")
         }
 
-        isLoaded = true
+
+        _ = try await loadSessionIfNeeded()
         loadProgress = 1.0
         progressHandler?(1.0)
+        isLoaded = true
     }
 
     func generate(
@@ -134,66 +123,10 @@ actor QwenCoderService {
             shouldUnloadAfterGeneration = true
             throw QwenError.generationInProgress
         }
+        if let session {
+            await session.offload()
+        }
         performUnload()
-    }
-
-    private func configureDownloadEnvironment() {
-        guard let rawToken = accessTokenProvider() else {
-            return
-        }
-        let token = rawToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !token.isEmpty else {
-            return
-        }
-
-        setenv("HF_TOKEN", token, 1)
-        setenv("HUGGING_FACE_HUB_TOKEN", token, 1)
-        setenv("HUGGINGFACE_HUB_TOKEN", token, 1)
-    }
-
-    private func loadPipelineIfNeeded() async throws -> TextGenerationPipeline {
-        if let pipeline {
-            isLoaded = true
-            loadError = nil
-            return pipeline
-        }
-
-        if let loadingTask {
-            return try await loadingTask.value
-        }
-
-        isLoading = true
-        loadProgress = max(loadProgress, 0.2)
-        loadError = nil
-
-        let token = accessTokenProvider()?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let hubAPI = HubApi(
-            downloadBase: hubDownloadBase,
-            hfToken: token?.isEmpty == false ? token : nil
-        )
-
-        let task = Task {
-            try await TextGenerationPipeline(modelName: modelName, prewarm: false, hubAPI: hubAPI)
-        }
-        loadingTask = task
-
-        defer {
-            loadingTask = nil
-            isLoading = false
-        }
-
-        do {
-            let loaded = try await task.value
-            pipeline = loaded
-            isLoaded = true
-            loadError = nil
-            loadProgress = max(loadProgress, 0.6)
-            return loaded
-        } catch {
-            isLoaded = false
-            loadError = error.localizedDescription
-            throw QwenError.pipelineUnavailable(error.localizedDescription)
-        }
     }
 
     private static let maxInputTokens = 2048
@@ -225,10 +158,11 @@ actor QwenCoderService {
             throw QwenError.alreadyGenerating
         }
 
-        let pipeline = try await loadPipelineIfNeeded()
-        isGenerating = true
+        if !isLoaded {
+            try await warmUp()
+        }
 
-        let truncatedMessages = Self.truncateMessages(messages, maxEstimatedTokens: Self.maxInputTokens)
+        isGenerating = true
         let startedAt = Date()
         var fullText = ""
 
@@ -236,12 +170,22 @@ actor QwenCoderService {
             isGenerating = false
             if shouldUnloadAfterGeneration {
                 shouldUnloadAfterGeneration = false
-                performUnload()
+                Task { [weak self] in
+                    guard let self else { return }
+                    _ = try? await self.unload()
+                }
             }
         }
 
         do {
-            let stream = pipeline.generate(messages: truncatedMessages, maxNewTokens: maxTokens)
+            let session = try await loadSessionIfNeeded()
+            let truncatedMessages = Self.truncateMessages(messages, maxEstimatedTokens: Self.maxInputTokens)
+
+            await MainActor.run {
+                session.customContext = truncatedMessages
+            }
+
+            let stream = try await session.generate()
             for try await chunk in stream {
                 try Task.checkCancellation()
                 fullText += chunk
@@ -249,6 +193,10 @@ actor QwenCoderService {
                     await MainActor.run {
                         onChunk(chunk)
                     }
+                }
+                if Self.estimateTokenCount(in: fullText) >= maxTokens {
+                    session.cancel()
+                    break
                 }
             }
 
@@ -270,9 +218,35 @@ actor QwenCoderService {
         }
     }
 
+    private func loadSessionIfNeeded() async throws -> LLMLocalSession {
+        if let session {
+            return session
+        }
+
+        if platformTask == nil {
+            platform.configure()
+            platformTask = Task { [platform] in
+                await platform.run()
+            }
+        }
+
+        let modelIdentifier = modelName.hasSuffix(".gguf") ? String(modelName.dropLast(5)) : modelName
+        let schema = LLMLocalSchema(model: .custom(id: modelIdentifier), injectIntoContext: false)
+        let created = platform(with: schema)
+        try await created.setup()
+        session = created
+        return created
+    }
+
+    private func resolveModelURL() async throws -> URL {
+        guard let modelsRoot = await bookmarkService.resolveModelsFolderBookmark() else {
+            throw QwenError.pipelineUnavailable("Models folder bookmark is missing. Please select On My iPhone > HybridCoder > Models.")
+        }
+        return modelsRoot.appendingPathComponent(modelName, isDirectory: false)
+    }
+
     private func performUnload() {
-        pipeline = nil
-        loadingTask = nil
+        session = nil
         isLoaded = false
         isLoading = false
         tokensPerSecond = 0
@@ -308,7 +282,7 @@ actor QwenCoderService {
         var errorDescription: String? {
             switch self {
             case .pipelineUnavailable(let reason):
-                return "CoreMLPipelines model is unavailable: \(reason)"
+                return "llama.cpp model is unavailable: \(reason)"
             case .alreadyGenerating:
                 return "A Qwen generation is already in progress."
             case .generationInProgress:

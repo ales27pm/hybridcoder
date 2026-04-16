@@ -12,30 +12,26 @@ struct ModelRegistryTests {
         #expect(registry.entry(for: modelID)?.installState == .notInstalled)
     }
 
-    @Test("Qwen registry entry points at CoreMLPipelines snapshot artifacts")
-    func qwenRegistryIncludesCompiledCoreMLArtifacts() {
+    @Test("Qwen registry entry points at external GGUF artifact")
+    func qwenRegistryIncludesGGUFArtifact() {
         let registry = ModelRegistry()
         let modelID = registry.activeCodeGenerationModelID
         let entry = registry.entry(for: modelID)
 
-        #expect(entry?.remoteBaseURL == "https://huggingface.co/finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit/resolve/main")
-        #expect(entry?.runtime == .coreMLPipelines)
+        #expect(entry?.remoteBaseURL == nil)
+        #expect(entry?.runtime == .llamaCppGGUF)
         #expect(entry?.files.contains(where: {
-            $0.localPath == "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/model.mil"
+            $0.localPath == "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
         }) == true)
-        #expect(entry?.files.contains(where: {
-            $0.localPath == "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc/weights/weight.bin"
-        }) == true)
-        #expect(entry?.files.contains(where: { $0.localPath == "special_tokens_map.json" }) == false)
-        #expect(entry?.files.contains(where: { $0.localPath == "generation_config.json" }) == false)
     }
 
-    @Test("CoreMLPipelines snapshots are stored outside Documents")
-    func coreMLPipelinesSnapshotsUseApplicationSupport() {
-        let root = ModelRegistry.coreMLPipelinesDownloadRoot.path(percentEncoded: false)
+    @Test("External models folder is stored in Documents/HybridCoder/Models")
+    func externalModelsFolderPathIsInDocuments() {
+        let root = ModelRegistry.externalModelsRoot.path(percentEncoded: false)
 
-        #expect(root.contains("Application Support"))
-        #expect(root.contains("Documents") == false)
+        #expect(root.contains("Documents"))
+        #expect(root.contains("HybridCoder"))
+        #expect(root.contains("Models"))
     }
 
     @Test("Install marker can be written and cleared")

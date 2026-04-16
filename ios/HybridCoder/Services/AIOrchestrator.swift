@@ -328,17 +328,7 @@ final class AIOrchestrator {
     }
 
     private func makeQwenCoderService(modelID: String) -> QwenCoderService {
-        let downloadService = modelDownload
-        let tokenProvider: () -> String? = { [weak downloadService] in
-            guard let downloadService else { return nil }
-            let token = downloadService.huggingFaceToken.trimmingCharacters(in: .whitespacesAndNewlines)
-            return token.isEmpty ? nil : token
-        }
-        return QwenCoderService(
-            modelName: modelID,
-            hubDownloadBase: ModelRegistry.coreMLPipelinesDownloadRoot,
-            accessTokenProvider: tokenProvider
-        )
+        QwenCoderService(modelName: modelID)
     }
 
     private func ensureQwenServiceMatchesActiveModel() async -> QwenCoderService {
@@ -390,7 +380,7 @@ final class AIOrchestrator {
                 modelRegistry.setLoadState(for: activeModelID, .loaded)
                 warmUpError = nil
             } else {
-                let message = "CoreMLPipelines finished warm-up, but expected Qwen snapshot files were not found in Application Support."
+                let message = "llama.cpp warm-up finished, but expected Qwen GGUF file was not found in Files > On My iPhone > HybridCoder > Models/."
                 modelRegistry.setInstallState(for: activeModelID, .notInstalled)
                 modelRegistry.setLoadState(for: activeModelID, .failed(message))
                 warmUpError = message
@@ -2355,7 +2345,7 @@ final class AIOrchestrator {
                 modelRegistry.setInstallState(for: activeModelID, .installed)
                 return coder
             }
-            let message = "CoreMLPipelines finished warm-up, but expected Qwen snapshot files were not found in Application Support."
+            let message = "llama.cpp warm-up finished, but expected Qwen GGUF file was not found in Files > On My iPhone > HybridCoder > Models/."
             modelRegistry.setInstallState(for: activeModelID, .notInstalled)
             throw OrchestratorError.codeGenerationModelUnavailable(message)
         } catch {

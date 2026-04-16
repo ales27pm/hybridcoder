@@ -16,8 +16,7 @@ final class ModelRegistry {
 
     enum Runtime: String, Sendable {
         case builtInApple
-        case packageCompiledCoreML
-        case coreMLPipelines
+        case llamaCppGGUF
     }
 
     enum InstallState: Equatable, Sendable {
@@ -63,40 +62,29 @@ final class ModelRegistry {
     private let activeGenerationKey = "models.active.generation"
     private let activeCodeGenerationKey = "models.active.codeGeneration"
 
-    private let embeddingID = "microsoft/codebert-base"
+    static let defaultEmbeddingModelID = "jina-embeddings-v3-Q4_K_M.gguf"
+    private let embeddingID = defaultEmbeddingModelID
     private let generationID = "apple/foundation-language-model"
-    private let codeGenerationID = "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit"
-    private let qwenCompiledModelFolder = "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc"
+    static let defaultCodeGenerationModelID = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
+    private let codeGenerationID = defaultCodeGenerationModelID
 
     init() {
         let embeddingFiles: [ModelFile] = [
-            ModelFile(remotePath: "model.mlpackage/Manifest.json", localPath: "model.mlpackage/Manifest.json"),
-            ModelFile(remotePath: "model.mlpackage/Data/com.apple.CoreML/model.mlmodel", localPath: "model.mlpackage/Data/com.apple.CoreML/model.mlmodel"),
-            ModelFile(remotePath: "model.mlpackage/Data/com.apple.CoreML/weights/weight.bin", localPath: "model.mlpackage/Data/com.apple.CoreML/weights/weight.bin"),
-            ModelFile(remotePath: "tokenizer.json", localPath: "tokenizer.json"),
-            ModelFile(remotePath: "tokenizer_config.json", localPath: "tokenizer_config.json"),
-            ModelFile(remotePath: "special_tokens_map.json", localPath: "special_tokens_map.json")
+            ModelFile(remotePath: embeddingID, localPath: embeddingID)
         ]
 
         let qwenFiles: [ModelFile] = [
-            ModelFile(remotePath: "\(qwenCompiledModelFolder)/analytics/coremldata.bin", localPath: "\(qwenCompiledModelFolder)/analytics/coremldata.bin"),
-            ModelFile(remotePath: "\(qwenCompiledModelFolder)/coremldata.bin", localPath: "\(qwenCompiledModelFolder)/coremldata.bin"),
-            ModelFile(remotePath: "\(qwenCompiledModelFolder)/metadata.json", localPath: "\(qwenCompiledModelFolder)/metadata.json"),
-            ModelFile(remotePath: "\(qwenCompiledModelFolder)/model.mil", localPath: "\(qwenCompiledModelFolder)/model.mil"),
-            ModelFile(remotePath: "\(qwenCompiledModelFolder)/weights/weight.bin", localPath: "\(qwenCompiledModelFolder)/weights/weight.bin"),
-            ModelFile(remotePath: "config.json", localPath: "config.json"),
-            ModelFile(remotePath: "tokenizer.json", localPath: "tokenizer.json"),
-            ModelFile(remotePath: "tokenizer_config.json", localPath: "tokenizer_config.json")
+            ModelFile(remotePath: codeGenerationID, localPath: codeGenerationID)
         ]
 
         let initialEntries: [String: Entry] = [
             embeddingID: Entry(
                 id: embeddingID,
-                displayName: "CodeBERT (rsvalerio/codebert-base-coreml)",
+                displayName: "jina-embeddings-v3 (Q4_K_M)",
                 capability: .embedding,
                 provider: .huggingFace,
-                runtime: .packageCompiledCoreML,
-                remoteBaseURL: "https://huggingface.co/rsvalerio/codebert-base-coreml/resolve/main",
+                runtime: .llamaCppGGUF,
+                remoteBaseURL: nil,
                 files: embeddingFiles,
                 isAvailable: true,
                 installState: .notInstalled,
@@ -116,11 +104,11 @@ final class ModelRegistry {
             ),
             codeGenerationID: Entry(
                 id: codeGenerationID,
-                displayName: "Qwen2.5-Coder 1.5B Instruct (4-bit)",
+                displayName: "Qwen2.5-Coder 3B Instruct (Q5_K_M)",
                 capability: .codeGeneration,
                 provider: .huggingFace,
-                runtime: .coreMLPipelines,
-                remoteBaseURL: "https://huggingface.co/finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit/resolve/main",
+                runtime: .llamaCppGGUF,
+                remoteBaseURL: nil,
                 files: qwenFiles,
                 isAvailable: true,
                 installState: .notInstalled,
@@ -215,12 +203,12 @@ final class ModelRegistry {
         BundledEmbeddingAssets.modelsRootURL
     }
 
-    nonisolated static var coreMLPipelinesDownloadRoot: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    nonisolated static var externalModelsRoot: URL {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        return appSupport
+        return documents
             .appendingPathComponent("HybridCoder", isDirectory: true)
-            .appendingPathComponent("CoreMLPipelines", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
     }
 
     func downloadedModelDirectory(for modelID: String) -> URL {
@@ -248,9 +236,10 @@ final class ModelRegistry {
     }
 
     func codeGenerationSnapshotDirectory(for modelID: String) -> URL {
-        Self.coreMLPipelinesDownloadRoot
-            .appendingPathComponent("models", isDirectory: true)
-            .appendingPathComponent(modelID, isDirectory: true)
+        let scoped = modelID.replacingOccurrences(of: "/", with: "__")
+        return Self.externalModelsRoot
+            .appendingPathComponent(".hybridcoder-markers", isDirectory: true)
+            .appendingPathComponent(scoped, isDirectory: true)
     }
 
     func isCodeGenerationModelInstalled(modelID: String) -> Bool {
@@ -263,14 +252,14 @@ final class ModelRegistry {
     }
 
     func areCodeGenerationModelFilesInstalled(modelID: String) -> Bool {
-        guard let entry = entries[modelID], entry.runtime == .coreMLPipelines, entry.files.isEmpty == false else {
+        guard let entry = entries[modelID], entry.runtime == .llamaCppGGUF, entry.files.isEmpty == false else {
             return false
         }
 
-        let snapshotDirectory = codeGenerationSnapshotDirectory(for: modelID)
+        let modelsDirectory = Self.externalModelsRoot
         return entry.files.allSatisfy { file in
             FileManager.default.fileExists(
-                atPath: snapshotDirectory.appendingPathComponent(file.localPath).path(percentEncoded: false)
+                atPath: modelsDirectory.appendingPathComponent(file.localPath).path(percentEncoded: false)
             )
         }
     }
@@ -306,6 +295,17 @@ final class ModelRegistry {
     func deleteCodeGenerationModelAssets(modelID: String) {
         clearCodeGenerationInstallMarker(modelID: modelID)
         try? FileManager.default.removeItem(at: codeGenerationSnapshotDirectory(for: modelID))
+
+        if let entry = entries[modelID], entry.runtime == .llamaCppGGUF {
+            let modelsDirectory = Self.externalModelsRoot
+            for file in entry.files {
+                let fileURL = modelsDirectory.appendingPathComponent(file.localPath)
+                if FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) {
+                    try? FileManager.default.removeItem(at: fileURL)
+                }
+            }
+        }
+
         try? FileManager.default.removeItem(at: downloadedModelDirectory(for: modelID))
         try? FileManager.default.removeItem(at: downloadedTokenizerDirectory(for: modelID))
     }

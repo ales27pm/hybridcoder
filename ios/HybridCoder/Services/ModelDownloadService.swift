@@ -55,7 +55,7 @@ final class ModelDownloadService {
     }
 
     func refreshInstallState(modelID: String) async {
-        if registry.entry(for: modelID)?.runtime == .coreMLPipelines {
+        if registry.entry(for: modelID)?.runtime == .llamaCppGGUF {
             let isReady = registry.isCodeGenerationModelInstalled(modelID: modelID)
             registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
             return
@@ -76,8 +76,8 @@ final class ModelDownloadService {
         let modelID = modelID ?? activeEmbeddingModelID
         guard !isDownloading else { return }
         guard let entry = registry.entry(for: modelID) else { return }
-        guard entry.runtime != .coreMLPipelines else {
-            downloadError = "Code-generation models are downloaded by CoreMLPipelines during warm-up."
+        guard entry.runtime != .llamaCppGGUF else {
+            downloadError = "llama.cpp models are loaded from Files > On My iPhone > HybridCoder > Models/."
             shouldSuggestTokenInput = false
             let isReady = registry.isCodeGenerationModelInstalled(modelID: modelID)
             registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
@@ -216,7 +216,7 @@ final class ModelDownloadService {
 
     func deleteDownloadedModels(modelID: String? = nil) {
         let modelID = modelID ?? activeEmbeddingModelID
-        if registry.entry(for: modelID)?.runtime == .coreMLPipelines {
+        if registry.entry(for: modelID)?.runtime == .llamaCppGGUF {
             registry.deleteCodeGenerationModelAssets(modelID: modelID)
             registry.setInstallState(for: modelID, .notInstalled)
             registry.setLoadState(for: modelID, .unloaded)
@@ -317,9 +317,9 @@ final class ModelDownloadService {
             throw DownloadError.fileCorrupt("Missing model registry entry for \(modelID)")
         }
 
-        if entry.runtime == .coreMLPipelines {
+        if entry.runtime == .llamaCppGGUF {
             guard registry.isCodeGenerationModelInstalled(modelID: modelID) else {
-                throw DownloadError.fileCorrupt("Expected CoreMLPipelines snapshot files")
+                throw DownloadError.fileCorrupt("Expected llama.cpp GGUF files in the external Models folder")
             }
             return
         }
@@ -380,9 +380,9 @@ final class ModelDownloadService {
 
     private static func validateDownloadedAssetsPostCompileOrThrow(modelID: String, registry: ModelRegistry) async throws {
         let fm = FileManager.default
-        if registry.entry(for: modelID)?.runtime == .coreMLPipelines {
+        if registry.entry(for: modelID)?.runtime == .llamaCppGGUF {
             guard registry.isCodeGenerationModelInstalled(modelID: modelID) else {
-                throw DownloadError.fileCorrupt("Expected CoreMLPipelines snapshot files")
+                throw DownloadError.fileCorrupt("Expected llama.cpp GGUF files in the external Models folder")
             }
             return
         }

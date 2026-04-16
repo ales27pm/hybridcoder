@@ -5,6 +5,7 @@ import OSLog
 @MainActor
 final class BookmarkService {
     private let secureStoreKey = "savedRepositoryBookmarks"
+    private let modelsFolderBookmarkKey = "savedModelsFolderBookmark"
     private let secureStore = SecureStoreService(serviceName: "com.hybridcoder.repos")
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "BookmarkService")
     var repositories: [Repository] = []
@@ -57,6 +58,42 @@ final class BookmarkService {
                 }
             }
         }
+        return url
+    }
+
+
+    func saveModelsFolderBookmark(for url: URL) async throws {
+        let bookmarkData = try url.bookmarkData(
+            options: .minimalBookmark,
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+
+        try await secureStore.setData(modelsFolderBookmarkKey, value: bookmarkData)
+    }
+
+    func resolveModelsFolderBookmark() async -> URL? {
+        let bookmarkData: Data
+        do {
+            guard let stored = try await secureStore.getData(modelsFolderBookmarkKey) else { return nil }
+            bookmarkData = stored
+        } catch {
+            logger.error("Failed to load models folder bookmark: \(error.localizedDescription)")
+            return nil
+        }
+
+        var isStale = false
+        guard let url = try? URL(
+            resolvingBookmarkData: bookmarkData,
+            options: [],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ) else { return nil }
+
+        if isStale {
+            try? await saveModelsFolderBookmark(for: url)
+        }
+
         return url
     }
 
