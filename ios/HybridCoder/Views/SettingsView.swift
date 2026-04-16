@@ -432,7 +432,7 @@ struct SettingsView: View {
                 Text("Architecture")
                     .font(.subheadline)
                 Spacer()
-                Text("Foundation Models + CoreML")
+                Text("Foundation Models + llama.cpp")
                     .font(.caption)
                     .foregroundStyle(Theme.dimText)
             }

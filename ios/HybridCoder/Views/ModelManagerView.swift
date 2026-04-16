@@ -33,7 +33,7 @@ struct ModelManagerView: View {
                     .foregroundStyle(.white)
             }
 
-            Text("All inference runs locally: Apple Foundation Models route/plan, CodeBERT handles retrieval, and Qwen coder handles code generation via CoreMLPipelines.")
+            Text("All inference runs locally: Apple Foundation Models route/plan, CodeBERT handles retrieval, and Qwen coder handles code generation via SpeziLLM llama.cpp.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
         }
@@ -59,7 +59,7 @@ struct ModelManagerView: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
 
-                    Text(isEmbedding ? "Semantic code search · CoreML" : "Code generation · CoreMLPipelines")
+                    Text(isEmbedding ? "Semantic code search · llama.cpp embeddings" : "Code generation · SpeziLLM llama.cpp")
                         .font(.caption2)
                         .foregroundStyle(Theme.dimText)
                 }
@@ -256,7 +256,7 @@ struct ModelManagerView: View {
     private func installSummary(installState: ModelRegistry.InstallState, loadState: ModelRegistry.LoadState, isEmbedding: Bool) -> String {
         switch (installState, loadState) {
         case (_, .loaded):
-            return "Downloaded and loaded · \(isEmbedding ? "CoreML runtime" : "CoreMLPipelines runtime")"
+            return "Downloaded and loaded · \(isEmbedding ? "llama.cpp runtime" : "SpeziLLM llama.cpp runtime")"
         case (.installed, .unloaded):
             return "Downloaded · tap Load to activate"
         case (.installed, .failed):

@@ -110,13 +110,13 @@ struct OnboardingView: View {
                 modelRow(
                     icon: "waveform.badge.magnifyingglass",
                     name: orchestrator.modelRegistry.entry(for: orchestrator.modelRegistry.activeEmbeddingModelID)?.displayName ?? "CodeBERT",
-                    detail: "Semantic code search · CoreML embedding model"
+                    detail: "Semantic code search · llama.cpp embedding model"
                 )
 
                 modelRow(
                     icon: "hammer",
                     name: orchestrator.modelRegistry.entry(for: orchestrator.modelRegistry.activeCodeGenerationModelID)?.displayName ?? "Qwen Coder",
-                    detail: "On-device code generation · CoreMLPipelines"
+                    detail: "On-device code generation · SpeziLLM llama.cpp"
                 )
             }
             .padding(16)

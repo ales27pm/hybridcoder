@@ -1,5 +1,4 @@
 import Foundation
-import CoreML
 import OSLog
 
 @Observable
@@ -98,19 +97,12 @@ final class ModelDownloadService {
             try fm.createDirectory(at: modelDir, withIntermediateDirectories: true)
             try fm.createDirectory(at: tokenizerDir, withIntermediateDirectories: true)
 
-            let modelPackageFiles = entry.files.filter { $0.localPath.hasPrefix("model.mlpackage") }
-            let modelCompiledFiles = entry.files.filter { $0.localPath.hasPrefix("model.mlmodelc") }
-            let tokenizerFiles = entry.files.filter {
-                !$0.localPath.hasPrefix("model.mlmodelc") &&
-                !$0.localPath.hasPrefix("model.mlpackage")
+            let allFiles = entry.files.map { file -> (URL, ModelRegistry.ModelFile) in
+                let isModelFile = file.localPath.hasPrefix("model/")
+                return (isModelFile ? modelDir : tokenizerDir, file)
             }
-            let allFiles =
-                modelPackageFiles.map { (modelDir, $0) } +
-                modelCompiledFiles.map { (modelDir, $0) } +
-                tokenizerFiles.map { (tokenizerDir, $0) }
 
-            let shouldCompileModel = !modelPackageFiles.isEmpty
-            let totalCount = Double(allFiles.count + (shouldCompileModel ? 1 : 0))
+            let totalCount = Double(allFiles.count)
             var completed = 0.0
 
             for (baseDir, file) in allFiles {
@@ -187,15 +179,7 @@ final class ModelDownloadService {
                 updateProgress(completed: completed, total: totalCount, modelID: modelID)
             }
 
-            try await Self.validateDownloadedAssetsPreCompileOrThrow(modelID: modelID, registry: registry)
-            if shouldCompileModel {
-                let packageModel = modelDir.appendingPathComponent("model.mlpackage")
-                let compiledDestination = modelDir.appendingPathComponent("model.mlmodelc")
-                try await Self.compileModelPackage(packageModel: packageModel, compiledDestination: compiledDestination)
-                completed += 1
-                updateProgress(completed: completed, total: totalCount, modelID: modelID)
-            }
-            try await Self.validateDownloadedAssetsPostCompileOrThrow(modelID: modelID, registry: registry)
+            try await Self.validateDownloadedAssetsOrThrow(modelID: modelID, registry: registry)
             registry.setInstallState(for: modelID, .installed)
         } catch is CancellationError {
             downloadError = "Download was cancelled."
@@ -303,15 +287,14 @@ final class ModelDownloadService {
 
     static func validateDownloadedAssets(modelID: String, registry: ModelRegistry) async -> Bool {
         do {
-            try await validateDownloadedAssetsPreCompileOrThrow(modelID: modelID, registry: registry)
-            try await validateDownloadedAssetsPostCompileOrThrow(modelID: modelID, registry: registry)
+            try await validateDownloadedAssetsOrThrow(modelID: modelID, registry: registry)
             return true
         } catch {
             return false
         }
     }
 
-    private static func validateDownloadedAssetsPreCompileOrThrow(modelID: String, registry: ModelRegistry) async throws {
+    private static func validateDownloadedAssetsOrThrow(modelID: String, registry: ModelRegistry) async throws {
         let fm = FileManager.default
         guard let entry = registry.entry(for: modelID) else {
             throw DownloadError.fileCorrupt("Missing model registry entry for \(modelID)")
@@ -325,33 +308,10 @@ final class ModelDownloadService {
         }
 
         let modelDir = registry.downloadedModelDirectory(for: modelID)
-        let packageModel = modelDir.appendingPathComponent("model.mlpackage")
-        let compiledModel = modelDir.appendingPathComponent("model.mlmodelc")
-        let hasPackageModel = fm.fileExists(atPath: packageModel.path)
-        let hasCompiledModel = fm.fileExists(atPath: compiledModel.path)
-
-        guard hasPackageModel || hasCompiledModel else {
-            throw DownloadError.fileCorrupt("Expected model.mlpackage or model.mlmodelc")
-        }
-
-        let modelFiles = entry.files
-            .filter { $0.localPath.hasPrefix("model.mlpackage") || $0.localPath.hasPrefix("model.mlmodelc") }
-            .map(\.localPath)
-        for expectedFile in modelFiles {
-            let path = modelDir.appendingPathComponent(expectedFile).path
-            guard fm.fileExists(atPath: path) else {
-                throw DownloadError.fileCorrupt(expectedFile)
-            }
-        }
-
         let tokenizerDir = registry.downloadedTokenizerDirectory(for: modelID)
-        let tokenizerFiles = entry.files
-            .filter {
-                !$0.localPath.hasPrefix("model.mlmodelc") &&
-                !$0.localPath.hasPrefix("model.mlpackage")
-            }
-        for expectedFile in tokenizerFiles {
-            let url = tokenizerDir.appendingPathComponent(expectedFile.localPath)
+        for expectedFile in entry.files {
+            let baseDir = expectedFile.localPath.hasPrefix("model/") ? modelDir : tokenizerDir
+            let url = baseDir.appendingPathComponent(expectedFile.localPath)
             guard fm.fileExists(atPath: url.path) else {
                 throw DownloadError.fileCorrupt(expectedFile.localPath)
             }
@@ -359,63 +319,6 @@ final class ModelDownloadService {
                await isInvalidTokenizerOrManifestJSON(at: url) {
                 try? fm.removeItem(at: url)
                 throw DownloadError.fileCorrupt("Invalid JSON artifact: \(expectedFile.localPath)")
-            }
-        }
-
-        let jsonModelFiles = entry.files.filter {
-            ($0.localPath.hasPrefix("model.mlpackage") || $0.localPath.hasPrefix("model.mlmodelc")) &&
-            shouldValidateJSONArtifact(localPath: $0.localPath)
-        }
-        for expectedFile in jsonModelFiles {
-            let url = modelDir.appendingPathComponent(expectedFile.localPath)
-            guard fm.fileExists(atPath: url.path) else {
-                throw DownloadError.fileCorrupt(expectedFile.localPath)
-            }
-            if await isInvalidTokenizerOrManifestJSON(at: url) {
-                try? fm.removeItem(at: url)
-                throw DownloadError.fileCorrupt("Invalid JSON artifact: \(expectedFile.localPath)")
-            }
-        }
-    }
-
-    private static func validateDownloadedAssetsPostCompileOrThrow(modelID: String, registry: ModelRegistry) async throws {
-        let fm = FileManager.default
-        if registry.entry(for: modelID)?.runtime == .llamaCppGGUF {
-            guard registry.isCodeGenerationModelInstalled(modelID: modelID) else {
-                throw DownloadError.fileCorrupt("Expected llama.cpp GGUF files in the external Models folder")
-            }
-            return
-        }
-
-        let modelDir = registry.downloadedModelDirectory(for: modelID)
-        let compiledModel = modelDir.appendingPathComponent("model.mlmodelc")
-
-        guard fm.fileExists(atPath: compiledModel.path) else {
-            throw DownloadError.fileCorrupt("model.mlmodelc")
-        }
-
-        do {
-            _ = try MLModel(contentsOf: compiledModel)
-        } catch {
-            throw DownloadError.fileCorrupt("model.mlmodelc (unloadable)")
-        }
-    }
-
-    nonisolated private static func compileModelPackage(packageModel: URL, compiledDestination: URL) async throws {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    let fm = FileManager.default
-                    let compiledOutput = try MLModel.compileModel(at: packageModel)
-
-                    if fm.fileExists(atPath: compiledDestination.path) {
-                        try fm.removeItem(at: compiledDestination)
-                    }
-                    try fm.moveItem(at: compiledOutput, to: compiledDestination)
-                    continuation.resume(returning: ())
-                } catch {
-                    continuation.resume(throwing: error)
-                }
             }
         }
     }
