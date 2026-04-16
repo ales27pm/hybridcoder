@@ -207,7 +207,7 @@ final class ModelRegistry {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return documents
-            .appendingPathComponent("HybridCoder", isDirectory: true)
+            .appendingPathComponent("Hybrid Coder", isDirectory: true)
             .appendingPathComponent("Models", isDirectory: true)
     }
 

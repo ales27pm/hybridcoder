@@ -1,24 +1,21 @@
 import Foundation
 
 nonisolated enum ArtifactKind: String, Codable, Sendable {
-    case mlpackage
-    case mlmodelc
+    case gguf
+    case metadata
     case tokenizer
 }
 
 nonisolated enum ArtifactValidationPhase: String, Sendable {
-    case preCompile
-    case postCompile
+    case availability
 }
 
 nonisolated struct ModelArtifact: Identifiable, Sendable {
     let id: String
     let displayName: String
-    let packageRootPath: String
-    let tokenizerRootPath: String
+    let modelsRootPath: String
     let remoteBaseURL: String?
     let requiredFiles: [RequiredFile]
-    let supportsLocalCompilation: Bool
 
     nonisolated struct RequiredFile: Hashable, Sendable {
         let remotePath: String
@@ -35,15 +32,11 @@ nonisolated struct ModelArtifact: Identifiable, Sendable {
     }
 
     var modelFiles: [RequiredFile] {
-        requiredFiles.filter { $0.kind == .mlpackage || $0.kind == .mlmodelc }
+        requiredFiles.filter { $0.kind == .gguf }
     }
 
     var tokenizerFiles: [RequiredFile] {
         requiredFiles.filter { $0.kind == .tokenizer }
-    }
-
-    var hasPackageSource: Bool {
-        requiredFiles.contains { $0.kind == .mlpackage }
     }
 }
 
@@ -63,22 +56,17 @@ nonisolated struct ArtifactValidationResult: Sendable {
 }
 
 nonisolated enum ModelArtifactFactory {
-    static func codeBERTArtifact(remoteBaseURL: String) -> ModelArtifact {
+    static func embeddingArtifact() -> ModelArtifact {
+        let modelID = "jina-embeddings-v3-Q4_K_M.gguf"
+
         return ModelArtifact(
-            id: "microsoft/codebert-base",
-            displayName: "CodeBERT (rsvalerio/codebert-base-coreml)",
-            packageRootPath: "model.mlpackage",
-            tokenizerRootPath: "tokenizer",
-            remoteBaseURL: remoteBaseURL,
+            id: modelID,
+            displayName: "jina-embeddings-v3 (Q4_K_M)",
+            modelsRootPath: "Hybrid Coder/Models",
+            remoteBaseURL: nil,
             requiredFiles: [
-                .init(remotePath: "model.mlpackage/Manifest.json", localPath: "model.mlpackage/Manifest.json", kind: .mlpackage, isValidatable: true),
-                .init(remotePath: "model.mlpackage/Data/com.apple.CoreML/model.mlmodel", localPath: "model.mlpackage/Data/com.apple.CoreML/model.mlmodel", kind: .mlpackage),
-                .init(remotePath: "model.mlpackage/Data/com.apple.CoreML/weights/weight.bin", localPath: "model.mlpackage/Data/com.apple.CoreML/weights/weight.bin", kind: .mlpackage),
-                .init(remotePath: "tokenizer.json", localPath: "tokenizer.json", kind: .tokenizer, isValidatable: true),
-                .init(remotePath: "tokenizer_config.json", localPath: "tokenizer_config.json", kind: .tokenizer, isValidatable: true),
-                .init(remotePath: "special_tokens_map.json", localPath: "special_tokens_map.json", kind: .tokenizer, isValidatable: true),
-            ],
-            supportsLocalCompilation: true
+                .init(remotePath: modelID, localPath: modelID, kind: .gguf)
+            ]
         )
     }
 
@@ -86,34 +74,23 @@ nonisolated enum ModelArtifactFactory {
         return ModelArtifact(
             id: "apple/foundation-language-model",
             displayName: "Apple Foundation Models",
-            packageRootPath: "",
-            tokenizerRootPath: "",
+            modelsRootPath: "",
             remoteBaseURL: nil,
-            requiredFiles: [],
-            supportsLocalCompilation: false
+            requiredFiles: []
         )
     }
 
     static func qwenCoderArtifact() -> ModelArtifact {
-        let compiledModelFolder = "Qwen2.5-Coder-1.5B-Instruct-4bit.mlmodelc"
+        let modelID = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
 
         return ModelArtifact(
-            id: "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit",
-            displayName: "Qwen2.5-Coder 1.5B Instruct (4-bit)",
-            packageRootPath: compiledModelFolder,
-            tokenizerRootPath: "",
-            remoteBaseURL: "https://huggingface.co/finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit/resolve/main",
+            id: modelID,
+            displayName: "Qwen2.5-Coder 3B Instruct (Q5_K_M)",
+            modelsRootPath: "Hybrid Coder/Models",
+            remoteBaseURL: nil,
             requiredFiles: [
-                .init(remotePath: "\(compiledModelFolder)/analytics/coremldata.bin", localPath: "\(compiledModelFolder)/analytics/coremldata.bin", kind: .mlmodelc),
-                .init(remotePath: "\(compiledModelFolder)/coremldata.bin", localPath: "\(compiledModelFolder)/coremldata.bin", kind: .mlmodelc),
-                .init(remotePath: "\(compiledModelFolder)/metadata.json", localPath: "\(compiledModelFolder)/metadata.json", kind: .mlmodelc, isValidatable: true),
-                .init(remotePath: "\(compiledModelFolder)/model.mil", localPath: "\(compiledModelFolder)/model.mil", kind: .mlmodelc),
-                .init(remotePath: "\(compiledModelFolder)/weights/weight.bin", localPath: "\(compiledModelFolder)/weights/weight.bin", kind: .mlmodelc),
-                .init(remotePath: "config.json", localPath: "config.json", kind: .tokenizer, isValidatable: true),
-                .init(remotePath: "tokenizer.json", localPath: "tokenizer.json", kind: .tokenizer, isValidatable: true),
-                .init(remotePath: "tokenizer_config.json", localPath: "tokenizer_config.json", kind: .tokenizer, isValidatable: true),
-            ],
-            supportsLocalCompilation: false
+                .init(remotePath: modelID, localPath: modelID, kind: .gguf)
+            ]
         )
     }
 }

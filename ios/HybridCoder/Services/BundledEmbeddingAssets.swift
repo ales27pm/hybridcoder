@@ -2,8 +2,8 @@ import Foundation
 
 nonisolated enum BundledEmbeddingAssets: Sendable {
     static let embeddingModelsFolder = "Models"
-    static let modelDirectoryName = "codebert-base-coreml"
-    static let tokenizerDirectoryName = "codebert-base-tokenizer"
+    static let modelDirectoryName = "jina-embeddings-v3-gguf"
+    static let tokenizerDirectoryName = "jina-embeddings-v3-tokenizer"
 
     static var modelsRootURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
