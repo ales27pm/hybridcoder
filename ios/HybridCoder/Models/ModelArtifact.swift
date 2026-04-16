@@ -71,12 +71,16 @@ nonisolated enum ModelArtifactFactory {
     }
 
     static func foundationModelArtifact() -> ModelArtifact {
+        let modelID = ModelRegistry.defaultGenerationModelID
+
         return ModelArtifact(
-            id: "apple/foundation-language-model",
-            displayName: "Apple Foundation Models",
-            modelsRootPath: "",
+            id: modelID,
+            displayName: "Qwen2.5-Coder 3B Orchestration (Q5_K_M)",
+            modelsRootPath: "Hybrid Coder/Models",
             remoteBaseURL: nil,
-            requiredFiles: []
+            requiredFiles: [
+                .init(remotePath: modelID, localPath: modelID, kind: .gguf)
+            ]
         )
     }
 
