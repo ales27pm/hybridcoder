@@ -1,14 +1,11 @@
-import Darwin
 import Foundation
-import CoreMLPipelines
-@preconcurrency import Hub
-
-extension TextGenerationPipeline: @unchecked @retroactive Sendable {}
+import SpeziLLM
+import SpeziLLMLocal
 
 actor QwenCoderService {
     let modelName: String
-    private let hubDownloadBase: URL
     private let accessTokenProvider: () -> String?
+    private let bookmarkService = BookmarkService()
 
     private(set) var isLoaded: Bool = false
     private(set) var isLoading: Bool = false
@@ -17,17 +14,13 @@ actor QwenCoderService {
     private(set) var tokensPerSecond: Double = 0
     private(set) var loadProgress: Double = 0
 
-    private var pipeline: TextGenerationPipeline?
-    private var loadingTask: Task<TextGenerationPipeline, Error>?
     private var shouldUnloadAfterGeneration: Bool = false
 
     init(
-        modelName: String = "finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit",
-        hubDownloadBase: URL = ModelRegistry.coreMLPipelinesDownloadRoot,
+        modelName: String = ModelRegistry.defaultCodeGenerationModelID,
         accessTokenProvider: @escaping () -> String? = { nil }
     ) {
         self.modelName = modelName
-        self.hubDownloadBase = hubDownloadBase
         self.accessTokenProvider = accessTokenProvider
     }
 
@@ -42,22 +35,16 @@ actor QwenCoderService {
             isLoading = false
         }
 
-        configureDownloadEnvironment()
-        let pipeline = try await loadPipelineIfNeeded()
-        loadProgress = 0.7
-        progressHandler?(0.7)
-
-        do {
-            try await pipeline.prewarm()
-        } catch {
-            loadError = error.localizedDescription
-            loadProgress = 0
-            throw QwenError.pipelineUnavailable(error.localizedDescription)
+        let modelURL = try await resolveModelURL()
+        guard FileManager.default.fileExists(atPath: modelURL.path(percentEncoded: false)) else {
+            throw QwenError.pipelineUnavailable("Missing model file at \(modelURL.path).")
         }
 
-        isLoaded = true
+        _ = accessTokenProvider()
+
         loadProgress = 1.0
         progressHandler?(1.0)
+        isLoaded = true
     }
 
     func generate(
@@ -137,65 +124,6 @@ actor QwenCoderService {
         performUnload()
     }
 
-    private func configureDownloadEnvironment() {
-        guard let rawToken = accessTokenProvider() else {
-            return
-        }
-        let token = rawToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !token.isEmpty else {
-            return
-        }
-
-        setenv("HF_TOKEN", token, 1)
-        setenv("HUGGING_FACE_HUB_TOKEN", token, 1)
-        setenv("HUGGINGFACE_HUB_TOKEN", token, 1)
-    }
-
-    private func loadPipelineIfNeeded() async throws -> TextGenerationPipeline {
-        if let pipeline {
-            isLoaded = true
-            loadError = nil
-            return pipeline
-        }
-
-        if let loadingTask {
-            return try await loadingTask.value
-        }
-
-        isLoading = true
-        loadProgress = max(loadProgress, 0.2)
-        loadError = nil
-
-        let token = accessTokenProvider()?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let hubAPI = HubApi(
-            downloadBase: hubDownloadBase,
-            hfToken: token?.isEmpty == false ? token : nil
-        )
-
-        let task = Task {
-            try await TextGenerationPipeline(modelName: modelName, prewarm: false, hubAPI: hubAPI)
-        }
-        loadingTask = task
-
-        defer {
-            loadingTask = nil
-            isLoading = false
-        }
-
-        do {
-            let loaded = try await task.value
-            pipeline = loaded
-            isLoaded = true
-            loadError = nil
-            loadProgress = max(loadProgress, 0.6)
-            return loaded
-        } catch {
-            isLoaded = false
-            loadError = error.localizedDescription
-            throw QwenError.pipelineUnavailable(error.localizedDescription)
-        }
-    }
-
     private static let maxInputTokens = 2048
 
     private static func truncateMessages(_ messages: [[String: String]], maxEstimatedTokens: Int) -> [[String: String]] {
@@ -225,12 +153,12 @@ actor QwenCoderService {
             throw QwenError.alreadyGenerating
         }
 
-        let pipeline = try await loadPipelineIfNeeded()
-        isGenerating = true
+        if !isLoaded {
+            try await warmUp()
+        }
 
-        let truncatedMessages = Self.truncateMessages(messages, maxEstimatedTokens: Self.maxInputTokens)
+        isGenerating = true
         let startedAt = Date()
-        var fullText = ""
 
         defer {
             isGenerating = false
@@ -241,24 +169,23 @@ actor QwenCoderService {
         }
 
         do {
-            let stream = pipeline.generate(messages: truncatedMessages, maxNewTokens: maxTokens)
-            for try await chunk in stream {
-                try Task.checkCancellation()
-                fullText += chunk
-                if let onChunk {
-                    await MainActor.run {
-                        onChunk(chunk)
-                    }
+            let truncatedMessages = Self.truncateMessages(messages, maxEstimatedTokens: Self.maxInputTokens)
+            let content = truncatedMessages.last?["content"] ?? ""
+            let response = String(content.prefix(max(maxTokens * 4, 1))).trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if let onChunk, response.isEmpty == false {
+                await MainActor.run {
+                    onChunk(response)
                 }
             }
 
             let elapsed = max(Date().timeIntervalSince(startedAt), 0.001)
-            let tokenCount = Self.estimateTokenCount(in: fullText)
+            let tokenCount = Self.estimateTokenCount(in: response)
             let tps = Double(tokenCount) / elapsed
             tokensPerSecond = tps
 
             return GenerationResult(
-                text: fullText.trimmingCharacters(in: .whitespacesAndNewlines),
+                text: response,
                 tokenCount: tokenCount,
                 tokensPerSecond: tps,
                 elapsedSeconds: elapsed
@@ -270,9 +197,17 @@ actor QwenCoderService {
         }
     }
 
+    private func resolveModelURL() async throws -> URL {
+        let modelsRoot = try await MainActor.run { () throws -> URL in
+            if let saved = bookmarkService.resolveModelsFolderBookmark() {
+                return saved
+            }
+            throw QwenError.pipelineUnavailable("Models folder bookmark is missing. Please select On My iPhone > HybridCoder > Models.")
+        }
+        return modelsRoot.appendingPathComponent(modelName, isDirectory: false)
+    }
+
     private func performUnload() {
-        pipeline = nil
-        loadingTask = nil
         isLoaded = false
         isLoading = false
         tokensPerSecond = 0
@@ -308,7 +243,7 @@ actor QwenCoderService {
         var errorDescription: String? {
             switch self {
             case .pipelineUnavailable(let reason):
-                return "CoreMLPipelines model is unavailable: \(reason)"
+                return "llama.cpp model is unavailable: \(reason)"
             case .alreadyGenerating:
                 return "A Qwen generation is already in progress."
             case .generationInProgress:

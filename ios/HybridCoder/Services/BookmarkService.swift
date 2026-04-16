@@ -5,6 +5,7 @@ import OSLog
 @MainActor
 final class BookmarkService {
     private let secureStoreKey = "savedRepositoryBookmarks"
+    private let modelsFolderBookmarkKey = "savedModelsFolderBookmark"
     private let secureStore = SecureStoreService(serviceName: "com.hybridcoder.repos")
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "BookmarkService")
     var repositories: [Repository] = []
@@ -58,6 +59,66 @@ final class BookmarkService {
             }
         }
         return url
+    }
+
+
+    func saveModelsFolderBookmark(for url: URL) throws {
+        let bookmarkData = try url.bookmarkData(
+            options: .minimalBookmark,
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+
+        Task {
+            do {
+                try await secureStore.setData(modelsFolderBookmarkKey, value: bookmarkData)
+            } catch {
+                logger.error("Failed to persist models folder bookmark: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func resolveModelsFolderBookmark() -> URL? {
+        let bookmarkData: Data
+        do {
+            guard let stored = try awaitBookmarkData() else { return nil }
+            bookmarkData = stored
+        } catch {
+            logger.error("Failed to load models folder bookmark: \(error.localizedDescription)")
+            return nil
+        }
+
+        var isStale = false
+        guard let url = try? URL(
+            resolvingBookmarkData: bookmarkData,
+            options: [],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ) else { return nil }
+
+        if isStale {
+            _ = try? saveModelsFolderBookmark(for: url)
+        }
+
+        return url
+    }
+
+    private func awaitBookmarkData() throws -> Data? {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<Data?, Error> = .success(nil)
+
+        Task {
+            do {
+                let data = try await secureStore.getData(modelsFolderBookmarkKey)
+                result = .success(data)
+            } catch {
+                result = .failure(error)
+            }
+            semaphore.signal()
+        }
+
+        semaphore.wait()
+        return try result.get()
     }
 
     func removeRepository(_ repository: Repository) {
