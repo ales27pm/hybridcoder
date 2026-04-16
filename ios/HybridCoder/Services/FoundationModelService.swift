@@ -1,32 +1,5 @@
 import Foundation
-import FoundationModels
 import OSLog
-
-@available(iOS 26.0, *)
-@Generable
-nonisolated struct GenerablePatchOperation: Sendable {
-    @Guide(description: "Relative file path within the repository")
-    var filePath: String
-
-    @Guide(description: "The exact text to find in the file — must match verbatim including whitespace")
-    var searchText: String
-
-    @Guide(description: "The replacement text that will replace the search text")
-    var replaceText: String
-
-    @Guide(description: "One-line description of what this change does")
-    var description: String
-}
-
-@available(iOS 26.0, *)
-@Generable
-nonisolated struct GenerablePatchPlan: Sendable {
-    @Guide(description: "A concise summary of what this patch set accomplishes")
-    var summary: String
-
-    @Guide(description: "Ordered list of exact-match search-and-replace operations", .minimumCount(1))
-    var operations: [GenerablePatchOperation]
-}
 
 nonisolated struct ToolProviders: Sendable {
     let readFile: @Sendable (String) async -> String?
@@ -34,44 +7,25 @@ nonisolated struct ToolProviders: Sendable {
     let listFiles: @Sendable (String?) async -> [String]
 }
 
-@available(iOS 26.0, *)
 @Observable
 @MainActor
 final class FoundationModelService {
     private let registry: ModelRegistry
     private let modelID: String
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "FoundationModelService")
+    private let qwenService: QwenCoderService
 
     var statusText: String = "Checking…"
     var isAvailable: Bool = false
     var isGenerating: Bool = false
 
-    private var routeClassifierSession: LanguageModelSession?
-    private var routeClassifierTurnCount: Int = 0
-
-    private var explanationSession: LanguageModelSession?
-    private var explanationTurnCount: Int = 0
-
-    private var patchSession: LanguageModelSession?
-    private var patchTurnCount: Int = 0
-
-    private var compactionSession: LanguageModelSession?
-
     private var toolProviders: ToolProviders?
-
     private var sessionManager: LanguageModelSessionManager?
-    private let routeSessionID = "fm-route-classifier"
-    private let explanationSessionID = "fm-explanation"
-    private let patchSessionID = "fm-patch-planning"
-    private let compactionSessionID = "fm-compaction"
-
-    private let maxRouteClassifierTurns = 1
-    private let maxExplanationTurns = 1
-    private let maxPatchTurns = 1
 
     init(registry: ModelRegistry, modelID: String) {
         self.registry = registry
         self.modelID = modelID
+        self.qwenService = QwenCoderService(modelName: modelID)
         refreshStatus()
     }
 
@@ -81,76 +35,58 @@ final class FoundationModelService {
     }
 
     func refreshStatus() {
-        switch SystemLanguageModel.default.availability {
-        case .available:
+        let installed = registry.isCodeGenerationModelInstalled(modelID: modelID)
+        isAvailable = installed
+
+        if installed {
             statusText = "Ready"
-            isAvailable = true
             registry.setAvailability(for: modelID, isAvailable: true)
+            registry.setInstallState(for: modelID, .installed)
             registry.setLoadState(for: modelID, .loaded)
-        case .unavailable(.appleIntelligenceNotEnabled):
-            statusText = "Enable Apple Intelligence in Settings"
-            isAvailable = false
+        } else {
+            statusText = "Model not found in Files > On My iPhone > Hybrid Coder > Models/"
             registry.setAvailability(for: modelID, isAvailable: false)
-            registry.setLoadState(for: modelID, .unloaded)
-        case .unavailable(.modelNotReady):
-            statusText = "Model downloading…"
-            isAvailable = false
-            registry.setAvailability(for: modelID, isAvailable: false)
-            registry.setLoadState(for: modelID, .loading)
-        case .unavailable(.deviceNotEligible):
-            statusText = "Device not supported"
-            isAvailable = false
-            registry.setAvailability(for: modelID, isAvailable: false)
-            registry.setLoadState(for: modelID, .unloaded)
-        default:
-            statusText = "Unavailable"
-            isAvailable = false
-            registry.setAvailability(for: modelID, isAvailable: false)
+            registry.setInstallState(for: modelID, .notInstalled)
             registry.setLoadState(for: modelID, .unloaded)
         }
     }
 
     func invalidateSessions() {
-        routeClassifierSession = nil
-        routeClassifierTurnCount = 0
-        explanationSession = nil
-        explanationTurnCount = 0
-        patchSession = nil
-        patchTurnCount = 0
-        compactionSession = nil
-
-        sessionManager?.removeSession(id: routeSessionID)
-        sessionManager?.removeSession(id: explanationSessionID)
-        sessionManager?.removeSession(id: patchSessionID)
-        sessionManager?.removeSession(id: compactionSessionID)
+        sessionManager?.removeSession(id: "fm-route-classifier")
+        sessionManager?.removeSession(id: "fm-explanation")
+        sessionManager?.removeSession(id: "fm-patch-planning")
+        sessionManager?.removeSession(id: "fm-compaction")
     }
 
     func classifyRoute(query: String, fileList: [String]) async throws -> RouteDecision {
-        guard isAvailable else { throw ServiceError.unavailable }
-        isGenerating = true
-        defer { isGenerating = false }
+        let lowered = query.lowercased()
 
-        let promptEnvelope = PromptBuilder.routeClassifierPrompt(
-            query: query,
-            fileList: Array(fileList.prefix(40))
-        )
-
-        return try await withContextWindowRecovery(resetSession: { [self] in
-            routeClassifierSession = nil
-            routeClassifierTurnCount = 0
-            sessionManager?.removeSession(id: routeSessionID)
-        }) {
-            let session = self.obtainRouteClassifierSession(systemPrompt: promptEnvelope.system)
-            let prompt = Prompt { promptEnvelope.user }
-            let response = try await session.respond(
-                to: prompt,
-                generating: RouteDecision.self,
-                options: GenerationOptions(sampling: .greedy)
-            )
-            self.routeClassifierTurnCount += 1
-            self.recordTurn(sessionID: self.routeSessionID, estimatedTokens: self.estimateTokens(promptEnvelope.user) + self.estimateTokens(response.content.route))
-            return response.content
+        let route: Route
+        if lowered.contains("patch") || lowered.contains("apply") || lowered.contains("modify") || lowered.contains("edit") {
+            route = .patchPlanning
+        } else if lowered.contains("create") || lowered.contains("implement") || lowered.contains("write") || lowered.contains("generate") {
+            route = .codeGeneration
+        } else if lowered.contains("find") || lowered.contains("where") || lowered.contains("search") {
+            route = .search
+        } else {
+            route = .explanation
         }
+
+        let terms = lowered
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count >= 4 }
+        let relevantFiles = fileList.filter { path in
+            let pathLower = path.lowercased()
+            return terms.contains { pathLower.contains($0) }
+        }
+
+        return RouteDecision(
+            route: route.rawValue,
+            reasoning: "Heuristic route selected from query intent.",
+            searchTerms: Array(terms.prefix(8)),
+            relevantFiles: Array(relevantFiles.prefix(8)),
+            confidence: 3
+        )
     }
 
     func generateAnswer(query: String, context: String, route: Route) async throws -> String {
@@ -159,18 +95,11 @@ final class FoundationModelService {
         defer { isGenerating = false }
 
         let promptEnvelope = PromptBuilder.foundationPrompt(route: route, query: query, repoContext: context)
-
-        return try await withContextWindowRecovery(resetSession: { [self] in
-            explanationSession = nil
-            explanationTurnCount = 0
-            sessionManager?.removeSession(id: explanationSessionID)
-        }) {
-            let session = self.obtainToolSession(for: route, systemPrompt: promptEnvelope.system)
-            let response = try await session.respond(to: promptEnvelope.user)
-            self.explanationTurnCount += 1
-            self.recordTurn(sessionID: self.explanationSessionID, estimatedTokens: self.estimateTokens(promptEnvelope.user) + self.estimateTokens(response.content))
-            return response.content
-        }
+        let result = try await qwenService.generate(
+            systemPrompt: promptEnvelope.system,
+            userPrompt: promptEnvelope.user
+        )
+        return result.text
     }
 
     func streamAnswer(query: String, context: String, route: Route) -> AsyncThrowingStream<String, Error> {
@@ -183,9 +112,17 @@ final class FoundationModelService {
 
                 self.isGenerating = true
                 let promptEnvelope = PromptBuilder.foundationPrompt(route: route, query: query, repoContext: context)
+                var accumulated = ""
 
                 do {
-                    try await self.streamWithRecovery(promptEnvelope: promptEnvelope, route: route, continuation: continuation)
+                    _ = try await self.qwenService.generateStreaming(
+                        systemPrompt: promptEnvelope.system,
+                        userPrompt: promptEnvelope.user
+                    ) { delta in
+                        accumulated += delta
+                        continuation.yield(accumulated)
+                    }
+                    continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
                 }
@@ -195,69 +132,24 @@ final class FoundationModelService {
         }
     }
 
-    private func streamWithRecovery(promptEnvelope: PromptBuilder.PromptEnvelope, route: Route, continuation: AsyncThrowingStream<String, Error>.Continuation, isRetry: Bool = false) async throws {
-        let session = obtainToolSession(for: route, systemPrompt: promptEnvelope.system)
-
-        do {
-            let stream = session.streamResponse(to: promptEnvelope.user)
-            var lastContent = ""
-            for try await partial in stream {
-                lastContent = partial.content
-                continuation.yield(partial.content)
-            }
-            explanationTurnCount += 1
-            recordTurn(sessionID: explanationSessionID, estimatedTokens: estimateTokens(promptEnvelope.user) + estimateTokens(lastContent))
-            continuation.finish()
-        } catch let error as LanguageModelSession.GenerationError where Self.isContextWindowError(error) && !isRetry {
-            logger.warning("stream.contextWindowExceeded — resetting explanation session and retrying")
-            explanationSession = nil
-            explanationTurnCount = 0
-            sessionManager?.removeSession(id: explanationSessionID)
-            try await streamWithRecovery(promptEnvelope: promptEnvelope, route: route, continuation: continuation, isRetry: true)
-        }
-    }
-
     func generatePatchPlan(query: String, codeContext: String) async throws -> PatchPlan {
         guard isAvailable else { throw ServiceError.unavailable }
         isGenerating = true
         defer { isGenerating = false }
 
         let promptEnvelope = PromptBuilder.patchPlanningPrompt(query: query, repoContext: codeContext)
-        let extendedSystem = """
-        \(promptEnvelope.system)
-        Each operation's searchText MUST be an exact verbatim substring found in the file — including all whitespace, indentation, and newlines.
-        The replaceText is the new text that will replace it. DO NOT paraphrase or approximate the search text.
-        NEVER produce an operation where searchText equals replaceText — that is a no-op and will be rejected.
-        To CREATE a new file, set searchText to an empty string and replaceText to the full file content.
-        """
+        let result = try await qwenService.generate(
+            systemPrompt: promptEnvelope.system,
+            userPrompt: promptEnvelope.user
+        )
 
-        return try await withContextWindowRecovery(resetSession: { [self] in
-            patchSession = nil
-            patchTurnCount = 0
-            sessionManager?.removeSession(id: patchSessionID)
-        }) {
-            let session = self.obtainPatchSession(systemPrompt: extendedSystem)
-            let prompt = Prompt { promptEnvelope.user }
-            let response = try await session.respond(
-                to: prompt,
-                generating: GenerablePatchPlan.self,
-                options: GenerationOptions(sampling: .greedy)
-            )
-            self.patchTurnCount += 1
-            self.recordTurn(sessionID: self.patchSessionID, estimatedTokens: self.estimateTokens(promptEnvelope.user) + 200)
-
-            let plan = response.content
-            let operations = plan.operations.compactMap { op -> PatchOperation? in
-                if !op.searchText.isEmpty && op.searchText == op.replaceText { return nil }
-                return PatchOperation(
-                    filePath: op.filePath,
-                    searchText: op.searchText,
-                    replaceText: op.replaceText,
-                    description: op.description
-                )
-            }
-            return PatchPlan(summary: plan.summary, operations: operations)
+        let summary = "Patch plan generated with llama.cpp"
+        let operations = Self.extractPatchOperations(from: result.text)
+        if operations.isEmpty {
+            logger.warning("Failed to parse patch plan output")
+            throw ServiceError.generationFailed("No valid patch operations could be parsed from model output")
         }
+        return PatchPlan(summary: summary, operations: operations)
     }
 
     func summarizeConversationMemory(
@@ -269,143 +161,45 @@ final class FoundationModelService {
         isGenerating = true
         defer { isGenerating = false }
 
-        compactionSession = nil
-        sessionManager?.removeSession(id: compactionSessionID)
-        compactionSession = LanguageModelSession {
-            """
-            You compress coding-chat memory. Keep critical constraints, decisions, and unresolved tasks.
-            Preserve file operation outcomes and avoid repeating obvious details.
-            """
-        }
-        sessionManager?.registerSession(id: compactionSessionID, purpose: .conversationSummary)
+        let prompt = """
+        You compress coding-chat memory. Keep critical constraints, decisions, and unresolved tasks.
+        Preserve file operation outcomes and avoid repeating obvious details.
 
-        let clippedSummary = String(priorSummary.prefix(800))
-        let clippedOperations = String(fileOperationSummaries.prefix(600))
-        let clippedTurns = String(turns.prefix(2_000))
+        Existing summary:
+        \(String(priorSummary.prefix(800)))
 
-        let prompt = Prompt {
-            """
-            Existing summary:
-            \(clippedSummary)
+        File operation summaries:
+        \(String(fileOperationSummaries.prefix(600)))
 
-            File operation summaries:
-            \(clippedOperations)
+        Older turns to compact:
+        \(String(turns.prefix(2_000)))
 
-            Older turns to compact:
-            \(clippedTurns)
+        Return a compact, actionable memory block in under 220 words.
+        """
 
-            Return a compact, actionable memory block in under 220 words.
-            """
-        }
-
-        let response = try await compactionSession!.respond(to: prompt)
-        recordTurn(sessionID: compactionSessionID, estimatedTokens: estimateTokens(clippedTurns) + estimateTokens(response.content))
-        return response.content
+        let result = try await qwenService.generate(
+            systemPrompt: "You are a concise engineering memory compactor.",
+            userPrompt: prompt,
+            maxTokens: 512
+        )
+        return result.text
     }
 
-    private func obtainRouteClassifierSession(systemPrompt: String) -> LanguageModelSession {
-        if let existing = routeClassifierSession, routeClassifierTurnCount < maxRouteClassifierTurns {
-            return existing
-        }
+    private static func extractPatchOperations(from text: String) -> [PatchOperation] {
+        let pattern = #"(?s)filePath:\s*(.+?)\nsearchText:\s*(.*?)\nreplaceText:\s*(.*?)\ndescription:\s*(.*?)(?:\n\n|$)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let nsText = text as NSString
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
 
-        routeClassifierTurnCount = 0
-        sessionManager?.removeSession(id: routeSessionID)
-        let session = LanguageModelSession {
-            systemPrompt
-        }
-        routeClassifierSession = session
-        sessionManager?.registerSession(id: routeSessionID, purpose: .routeClassification)
-        return session
-    }
-
-    private func obtainToolSession(for route: Route, systemPrompt: String) -> LanguageModelSession {
-        if let existing = explanationSession, explanationTurnCount < maxExplanationTurns {
-            return existing
-        }
-
-        explanationTurnCount = 0
-        sessionManager?.removeSession(id: explanationSessionID)
-
-        let tools = buildTools()
-        let session: LanguageModelSession
-        if !tools.isEmpty {
-            session = LanguageModelSession(tools: tools) {
-                systemPrompt
-                "You have access to tools to read files, search code, and list workspace files. Use them when the provided context is insufficient to answer accurately."
-            }
-        } else {
-            session = LanguageModelSession {
-                systemPrompt
-            }
-        }
-
-        explanationSession = session
-        sessionManager?.registerSession(id: explanationSessionID, purpose: .explanation)
-        return session
-    }
-
-    private func obtainPatchSession(systemPrompt: String) -> LanguageModelSession {
-        if let existing = patchSession, patchTurnCount < maxPatchTurns {
-            return existing
-        }
-
-        patchTurnCount = 0
-        sessionManager?.removeSession(id: patchSessionID)
-
-        let tools = buildTools()
-        let session: LanguageModelSession
-        if !tools.isEmpty {
-            session = LanguageModelSession(tools: tools) {
-                systemPrompt
-                "You have access to tools to read files and search code. Use the read_file tool to get exact file contents before producing patch operations."
-            }
-        } else {
-            session = LanguageModelSession {
-                systemPrompt
-            }
-        }
-
-        patchSession = session
-        sessionManager?.registerSession(id: patchSessionID, purpose: .patchPlanning)
-        return session
-    }
-
-    private func buildTools() -> [any Tool] {
-        guard let providers = toolProviders else { return [] }
-
-        let readTool = ReadFileTool(fileProvider: providers.readFile)
-        let searchTool = SearchCodeTool(searchProvider: providers.searchCode)
-        let listTool = ListFilesTool(filesProvider: providers.listFiles)
-        return [readTool, searchTool, listTool]
-    }
-
-    private func recordTurn(sessionID: String, estimatedTokens: Int) {
-        sessionManager?.recordTurn(sessionID: sessionID, estimatedTokens: estimatedTokens)
-    }
-
-    private func estimateTokens(_ text: String) -> Int {
-        max(1, text.count / 4)
-    }
-
-    private static func isContextWindowError(_ error: LanguageModelSession.GenerationError) -> Bool {
-        if case .exceededContextWindowSize = error { return true }
-        return false
-    }
-
-    private func withContextWindowRecovery<T>(
-        resetSession: @escaping () -> Void,
-        operation: @escaping () async throws -> T
-    ) async throws -> T {
-        do {
-            return try await operation()
-        } catch let error as LanguageModelSession.GenerationError where Self.isContextWindowError(error) {
-            logger.warning("contextWindowExceeded — resetting session and retrying")
-            resetSession()
-            do {
-                return try await operation()
-            } catch let retryError as LanguageModelSession.GenerationError where Self.isContextWindowError(retryError) {
-                throw ServiceError.generationFailed("Context window exceeded. Try a shorter message or clear the chat.")
-            }
+        return matches.compactMap { match in
+            guard match.numberOfRanges == 5 else { return nil }
+            let filePath = nsText.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let searchText = nsText.substring(with: match.range(at: 2))
+            let replaceText = nsText.substring(with: match.range(at: 3))
+            let description = nsText.substring(with: match.range(at: 4)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !filePath.isEmpty else { return nil }
+            if !searchText.isEmpty && searchText == replaceText { return nil }
+            return PatchOperation(filePath: filePath, searchText: searchText, replaceText: replaceText, description: description)
         }
     }
 
@@ -416,7 +210,7 @@ final class FoundationModelService {
         nonisolated var errorDescription: String? {
             switch self {
             case .unavailable:
-                return "Apple Intelligence is not available on this device."
+                return "llama.cpp model is not available. Place the model inside Files > On My iPhone > Hybrid Coder > Models/."
             case .generationFailed(let reason):
                 return "Generation failed: \(reason)"
             }

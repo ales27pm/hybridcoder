@@ -64,7 +64,8 @@ final class ModelRegistry {
 
     static let defaultEmbeddingModelID = "jina-embeddings-v3-Q4_K_M.gguf"
     private let embeddingID = defaultEmbeddingModelID
-    private let generationID = "apple/foundation-language-model"
+    static let defaultGenerationModelID = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
+    private let generationID = defaultGenerationModelID
     static let defaultCodeGenerationModelID = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
     private let codeGenerationID = defaultCodeGenerationModelID
 
@@ -92,14 +93,14 @@ final class ModelRegistry {
             ),
             generationID: Entry(
                 id: generationID,
-                displayName: "Apple Foundation Models",
+                displayName: "Qwen2.5-Coder 3B Orchestration (Q5_K_M)",
                 capability: .orchestration,
-                provider: .apple,
-                runtime: .builtInApple,
+                provider: .huggingFace,
+                runtime: .llamaCppGGUF,
                 remoteBaseURL: nil,
-                files: [],
-                isAvailable: false,
-                installState: .installed,
+                files: qwenFiles,
+                isAvailable: true,
+                installState: .notInstalled,
                 loadState: .unloaded
             ),
             codeGenerationID: Entry(
@@ -194,8 +195,8 @@ final class ModelRegistry {
     }
 
     func hasAnyGenerationModelReady() -> Bool {
-        // Readiness gate for chat execution must align with route resolution,
-        // which requires the orchestration (Foundation Models) runtime.
+        // Readiness gate for chat execution must align with route resolution
+        // on the active orchestration runtime.
         return isReady(modelID: activeGenerationModelID)
     }
 
