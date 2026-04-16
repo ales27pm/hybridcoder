@@ -78,10 +78,10 @@ final class BookmarkService {
         }
     }
 
-    func resolveModelsFolderBookmark() -> URL? {
+    func resolveModelsFolderBookmark() async -> URL? {
         let bookmarkData: Data
         do {
-            guard let stored = try awaitBookmarkData() else { return nil }
+            guard let stored = try await secureStore.getData(modelsFolderBookmarkKey) else { return nil }
             bookmarkData = stored
         } catch {
             logger.error("Failed to load models folder bookmark: \(error.localizedDescription)")
@@ -101,24 +101,6 @@ final class BookmarkService {
         }
 
         return url
-    }
-
-    private func awaitBookmarkData() throws -> Data? {
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: Result<Data?, Error> = .success(nil)
-
-        Task {
-            do {
-                let data = try await secureStore.getData(modelsFolderBookmarkKey)
-                result = .success(data)
-            } catch {
-                result = .failure(error)
-            }
-            semaphore.signal()
-        }
-
-        semaphore.wait()
-        return try result.get()
     }
 
     func removeRepository(_ repository: Repository) {

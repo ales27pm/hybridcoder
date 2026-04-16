@@ -55,12 +55,7 @@ actor CoreMLEmbeddingService {
         }
 
         do {
-            let root = try await MainActor.run { () throws -> URL in
-                if let bookmarked = bookmarkService.resolveModelsFolderBookmark() {
-                    return bookmarked
-                }
-                return ModelRegistry.externalModelsRoot
-            }
+            let root = await bookmarkService.resolveModelsFolderBookmark() ?? ModelRegistry.externalModelsRoot
             let resolved = root.appendingPathComponent(modelID, isDirectory: false)
 
             guard FileManager.default.fileExists(atPath: resolved.path(percentEncoded: false)) else {

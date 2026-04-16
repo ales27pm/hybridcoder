@@ -236,7 +236,10 @@ final class ModelRegistry {
     }
 
     func codeGenerationSnapshotDirectory(for modelID: String) -> URL {
-Self.externalModelsRoot
+        let scoped = modelID.replacingOccurrences(of: "/", with: "__")
+        return Self.externalModelsRoot
+            .appendingPathComponent(".hybridcoder-markers", isDirectory: true)
+            .appendingPathComponent(scoped, isDirectory: true)
     }
 
     func isCodeGenerationModelInstalled(modelID: String) -> Bool {
@@ -253,10 +256,10 @@ Self.externalModelsRoot
             return false
         }
 
-        let snapshotDirectory = codeGenerationSnapshotDirectory(for: modelID)
+        let modelsDirectory = Self.externalModelsRoot
         return entry.files.allSatisfy { file in
             FileManager.default.fileExists(
-                atPath: snapshotDirectory.appendingPathComponent(file.localPath).path(percentEncoded: false)
+                atPath: modelsDirectory.appendingPathComponent(file.localPath).path(percentEncoded: false)
             )
         }
     }

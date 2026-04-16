@@ -14,6 +14,9 @@ actor QwenCoderService {
     private(set) var tokensPerSecond: Double = 0
     private(set) var loadProgress: Double = 0
 
+    private let platform = LLMLocalPlatform()
+    private var platformTask: Task<Void, Never>?
+    private var session: LLMLocalSession?
     private var shouldUnloadAfterGeneration: Bool = false
 
     init(
@@ -42,6 +45,7 @@ actor QwenCoderService {
 
         _ = accessTokenProvider()
 
+        _ = try await loadSessionIfNeeded()
         loadProgress = 1.0
         progressHandler?(1.0)
         isLoaded = true
@@ -121,6 +125,9 @@ actor QwenCoderService {
             shouldUnloadAfterGeneration = true
             throw QwenError.generationInProgress
         }
+        if let session {
+            await session.offload()
+        }
         performUnload()
     }
 
@@ -159,33 +166,49 @@ actor QwenCoderService {
 
         isGenerating = true
         let startedAt = Date()
+        var fullText = ""
 
         defer {
             isGenerating = false
             if shouldUnloadAfterGeneration {
                 shouldUnloadAfterGeneration = false
-                performUnload()
+                Task { [weak self] in
+                    guard let self else { return }
+                    _ = try? await self.unload()
+                }
             }
         }
 
         do {
+            let session = try await loadSessionIfNeeded()
             let truncatedMessages = Self.truncateMessages(messages, maxEstimatedTokens: Self.maxInputTokens)
-            let content = truncatedMessages.last?["content"] ?? ""
-            let response = String(content.prefix(max(maxTokens * 4, 1))).trimmingCharacters(in: .whitespacesAndNewlines)
 
-            if let onChunk, response.isEmpty == false {
-                await MainActor.run {
-                    onChunk(response)
+            await MainActor.run {
+                session.customContext = truncatedMessages
+            }
+
+            let stream = try await session.generate()
+            for try await chunk in stream {
+                try Task.checkCancellation()
+                fullText += chunk
+                if let onChunk {
+                    await MainActor.run {
+                        onChunk(chunk)
+                    }
+                }
+                if Self.estimateTokenCount(in: fullText) >= maxTokens {
+                    session.cancel()
+                    break
                 }
             }
 
             let elapsed = max(Date().timeIntervalSince(startedAt), 0.001)
-            let tokenCount = Self.estimateTokenCount(in: response)
+            let tokenCount = Self.estimateTokenCount(in: fullText)
             let tps = Double(tokenCount) / elapsed
             tokensPerSecond = tps
 
             return GenerationResult(
-                text: response,
+                text: fullText.trimmingCharacters(in: .whitespacesAndNewlines),
                 tokenCount: tokenCount,
                 tokensPerSecond: tps,
                 elapsedSeconds: elapsed
@@ -197,17 +220,35 @@ actor QwenCoderService {
         }
     }
 
-    private func resolveModelURL() async throws -> URL {
-        let modelsRoot = try await MainActor.run { () throws -> URL in
-            if let saved = bookmarkService.resolveModelsFolderBookmark() {
-                return saved
+    private func loadSessionIfNeeded() async throws -> LLMLocalSession {
+        if let session {
+            return session
+        }
+
+        if platformTask == nil {
+            platform.configure()
+            platformTask = Task { [platform] in
+                await platform.run()
             }
+        }
+
+        let modelIdentifier = modelName.hasSuffix(".gguf") ? String(modelName.dropLast(5)) : modelName
+        let schema = LLMLocalSchema(model: .custom(id: modelIdentifier), injectIntoContext: false)
+        let created = platform(with: schema)
+        try await created.setup()
+        session = created
+        return created
+    }
+
+    private func resolveModelURL() async throws -> URL {
+        guard let modelsRoot = await bookmarkService.resolveModelsFolderBookmark() else {
             throw QwenError.pipelineUnavailable("Models folder bookmark is missing. Please select On My iPhone > HybridCoder > Models.")
         }
         return modelsRoot.appendingPathComponent(modelName, isDirectory: false)
     }
 
     private func performUnload() {
+        session = nil
         isLoaded = false
         isLoading = false
         tokensPerSecond = 0
