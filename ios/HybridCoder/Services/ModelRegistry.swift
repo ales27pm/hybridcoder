@@ -295,6 +295,17 @@ final class ModelRegistry {
     func deleteCodeGenerationModelAssets(modelID: String) {
         clearCodeGenerationInstallMarker(modelID: modelID)
         try? FileManager.default.removeItem(at: codeGenerationSnapshotDirectory(for: modelID))
+
+        if let entry = entries[modelID], entry.runtime == .llamaCppGGUF {
+            let modelsDirectory = Self.externalModelsRoot
+            for file in entry.files {
+                let fileURL = modelsDirectory.appendingPathComponent(file.localPath)
+                if FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) {
+                    try? FileManager.default.removeItem(at: fileURL)
+                }
+            }
+        }
+
         try? FileManager.default.removeItem(at: downloadedModelDirectory(for: modelID))
         try? FileManager.default.removeItem(at: downloadedTokenizerDirectory(for: modelID))
     }
