@@ -4,8 +4,7 @@ import SpeziLLMLocal
 
 actor QwenCoderService {
     let modelName: String
-    private let accessTokenProvider: () -> String?
-    private let bookmarkService = BookmarkService()
+    private let bookmarkService: BookmarkService
 
     private(set) var isLoaded: Bool = false
     private(set) var isLoading: Bool = false
@@ -21,10 +20,10 @@ actor QwenCoderService {
 
     init(
         modelName: String = ModelRegistry.defaultCodeGenerationModelID,
-        accessTokenProvider: @escaping () -> String? = { nil }
+        bookmarkService: BookmarkService = BookmarkService()
     ) {
         self.modelName = modelName
-        self.accessTokenProvider = accessTokenProvider
+        self.bookmarkService = bookmarkService
     }
 
     func warmUp(progressHandler: (@Sendable (Double) -> Void)? = nil) async throws {
@@ -40,10 +39,9 @@ actor QwenCoderService {
 
         let modelURL = try await resolveModelURL()
         guard FileManager.default.fileExists(atPath: modelURL.path(percentEncoded: false)) else {
-            throw QwenError.pipelineUnavailable("Missing model file at \(modelURL.path).")
+            throw QwenError.pipelineUnavailable("Missing model file at \(modelURL.path(percentEncoded: false)).")
         }
 
-        _ = accessTokenProvider()
 
         _ = try await loadSessionIfNeeded()
         loadProgress = 1.0

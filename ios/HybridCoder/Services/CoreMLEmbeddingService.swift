@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 
 actor CoreMLEmbeddingService {
 
@@ -39,7 +40,7 @@ actor CoreMLEmbeddingService {
     }
 
     private let maxSequenceLength = 512
-    private let embeddingDimension = 1024
+    private let fallbackEmbeddingDimension = 512
 
     var isLoaded: Bool {
         modelURL != nil
@@ -66,7 +67,7 @@ actor CoreMLEmbeddingService {
             cachedModelInfo = ModelInfo(
                 inputNames: ["text"],
                 outputNames: ["embedding"],
-                embeddingDimension: embeddingDimension,
+                embeddingDimension: fallbackEmbeddingDimension,
                 maxSequenceLength: maxSequenceLength
             )
 
@@ -87,7 +88,7 @@ actor CoreMLEmbeddingService {
             throw EmbeddingError.inferenceFailure("Input text is empty")
         }
 
-        return Self.hashEmbedding(for: text, dimension: embeddingDimension)
+        return try Self.semanticEmbedding(for: text)
     }
 
     func embedBatch(texts: [String]) async throws -> [[Float]] {
@@ -112,16 +113,23 @@ actor CoreMLEmbeddingService {
         }
     }
 
-    private static func hashEmbedding(for text: String, dimension: Int) -> [Float] {
-        var vector = Array(repeating: Float(0), count: max(dimension, 1))
-        let scalars = Array(text.unicodeScalars)
-
-        for (index, scalar) in scalars.enumerated() {
-            let bucket = Int(scalar.value) % vector.count
-            let sign: Float = ((index + bucket) % 2 == 0) ? 1 : -1
-            vector[bucket] += sign * Float((Int(scalar.value) % 13) + 1)
+    private static func semanticEmbedding(for text: String) throws -> [Float] {
+        if let sentenceEmbedding = NLEmbedding.sentenceEmbedding(for: .english),
+           let vector = sentenceEmbedding.vector(for: text),
+           vector.isEmpty == false {
+            return l2Normalize(vector)
         }
 
+        if let wordEmbedding = NLEmbedding.wordEmbedding(for: .english),
+           let vector = wordEmbedding.vector(for: text),
+           vector.isEmpty == false {
+            return l2Normalize(vector)
+        }
+
+        throw EmbeddingError.inferenceFailure("NaturalLanguage embedding lookup failed")
+    }
+
+    private static func l2Normalize(_ vector: [Float]) -> [Float] {
         let norm = sqrt(vector.reduce(0) { $0 + ($1 * $1) })
         guard norm > 0 else { return vector }
         return vector.map { $0 / norm }

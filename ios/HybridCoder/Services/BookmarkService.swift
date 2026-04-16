@@ -62,20 +62,14 @@ final class BookmarkService {
     }
 
 
-    func saveModelsFolderBookmark(for url: URL) throws {
+    func saveModelsFolderBookmark(for url: URL) async throws {
         let bookmarkData = try url.bookmarkData(
             options: .minimalBookmark,
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
 
-        Task {
-            do {
-                try await secureStore.setData(modelsFolderBookmarkKey, value: bookmarkData)
-            } catch {
-                logger.error("Failed to persist models folder bookmark: \(error.localizedDescription)")
-            }
-        }
+        try await secureStore.setData(modelsFolderBookmarkKey, value: bookmarkData)
     }
 
     func resolveModelsFolderBookmark() async -> URL? {
@@ -97,7 +91,7 @@ final class BookmarkService {
         ) else { return nil }
 
         if isStale {
-            _ = try? saveModelsFolderBookmark(for: url)
+            try? await saveModelsFolderBookmark(for: url)
         }
 
         return url
