@@ -27,7 +27,7 @@ actor SemanticSearchIndex {
         }
     }
 
-    private let embeddingService: CoreMLEmbeddingService
+    private let embeddingService: LlamaEmbeddingService
     private let chunker: CodeChunker
     private let store: SQLiteIndexStore?
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "SemanticSearchIndex")
@@ -43,7 +43,7 @@ actor SemanticSearchIndex {
     private var isEvicted: Bool = false
 
     init(
-        embeddingService: CoreMLEmbeddingService,
+        embeddingService: LlamaEmbeddingService,
         chunker: CodeChunker = CodeChunker()
     ) {
         self.embeddingService = embeddingService
