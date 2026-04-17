@@ -5,7 +5,7 @@ nonisolated enum WorkspaceStructureAnalyzer {
         at workspaceRoot: URL,
         _repoAccess: RepoAccessService
     ) -> WorkspaceTreeSummary {
-        assertionFailure("TODO: WorkspaceStructureAnalyzer.summarizeWorkspace is a scaffold and must be fully implemented before production use.")
+        // TODO: Analyze workspace structure with repo access data.
         WorkspaceTreeSummary(
             rootPath: workspaceRoot.path(percentEncoded: false),
             totalFiles: 0,

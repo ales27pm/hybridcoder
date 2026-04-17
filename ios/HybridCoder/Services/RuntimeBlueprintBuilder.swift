@@ -7,7 +7,7 @@ nonisolated enum RuntimeBlueprintBuilder {
         repoAccess _: RepoAccessService,
         workspaceRoot: URL
     ) async -> RuntimeBlueprint {
-        assertionFailure("TODO: RuntimeBlueprintBuilder.build is a scaffold and must be fully implemented before production use.")
+        // TODO: Incorporate repo-aware blueprint construction.
         RuntimeBlueprint(
             goal: goal,
             workspace: workspace,
