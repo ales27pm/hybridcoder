@@ -107,7 +107,11 @@ final class AIOrchestrator {
     ) {
         let registry = ModelRegistry()
         self.modelRegistry = registry
-        self.embeddingService = LlamaEmbeddingService(modelID: registry.activeEmbeddingModelID, registry: registry)
+        self.embeddingService = LlamaEmbeddingService(
+            modelID: registry.activeEmbeddingModelID,
+            registry: registry,
+            bookmarkService: BookmarkService()
+        )
         self.modelDownload = ModelDownloadService(registry: registry)
         self.contextPolicyLoader = ContextPolicyLoader()
         self.promptTemplateService = promptTemplateService

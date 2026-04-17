@@ -1003,7 +1003,7 @@ private enum PlanningRoute {
     case blueprintAware
 }
 
-private enum GoalFileOperationIntent {
+fileprivate enum GoalFileOperationIntent {
     case createFolder(path: String)
     case renameFolder(from: String, to: String)
     case deleteFolder(path: String)

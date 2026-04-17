@@ -6,7 +6,7 @@ actor LlamaEmbeddingService {
 
     private let modelID: String
     private let registry: ModelRegistry
-    private let bookmarkService = BookmarkService()
+    private let bookmarkService: BookmarkService
 
     nonisolated enum EmbeddingError: Error, LocalizedError, Sendable {
         case modelNotLoaded
@@ -111,10 +111,12 @@ actor LlamaEmbeddingService {
     init(
         modelID: String,
         registry: ModelRegistry,
+        bookmarkService: BookmarkService,
         embeddingBackend: (any EmbeddingBackend)? = nil
     ) {
         self.modelID = modelID
         self.registry = registry
+        self.bookmarkService = bookmarkService
         self.embeddingBackend = embeddingBackend ?? SpeziLLMDeterministicEmbeddingBackend()
     }
 
