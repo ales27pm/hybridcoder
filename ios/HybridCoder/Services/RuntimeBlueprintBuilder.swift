@@ -4,11 +4,10 @@ nonisolated enum RuntimeBlueprintBuilder {
     static func build(
         goal: String,
         workspace: AgentWorkspaceContext,
-        repoAccess: RepoAccessService,
+        repoAccess _: RepoAccessService,
         workspaceRoot: URL
     ) async -> RuntimeBlueprint {
         assertionFailure("TODO: RuntimeBlueprintBuilder.build is a scaffold and must be fully implemented before production use.")
-        let _ = repoAccess
         RuntimeBlueprint(
             goal: goal,
             workspace: workspace,
