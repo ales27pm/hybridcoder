@@ -17,7 +17,7 @@ nonisolated struct BlueprintPatternReference: Hashable, Sendable {
         case unknown
     }
 
-    nonisolated enum Source: Sendable {
+    nonisolated enum Source: Hashable, Sendable {
         case builtIn
         case workspace(path: String)
         case documentation(url: URL)
