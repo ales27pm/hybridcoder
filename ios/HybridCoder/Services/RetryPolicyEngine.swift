@@ -51,9 +51,7 @@ nonisolated enum RetryPolicyEngine {
     }
 
     static func shouldRetry(
-        classification: FailureClassification,
-        attempt _: Int,
-        maxAttempts _: Int
+        classification: FailureClassification
     ) -> RetryDecision {
         let strategy: RetryDecision.Strategy
         if classification.isRetryable {

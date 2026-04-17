@@ -1348,9 +1348,7 @@ final class AIOrchestrator {
                 maxAttempts: Self.agentRuntimeMaximumAttempts
             )
             let retryDecision = RetryPolicyEngine.shouldRetry(
-                classification: classification,
-                attempt: attempt,
-                maxAttempts: Self.agentRuntimeMaximumAttempts
+                classification: classification
             )
             latestRetryCause = retryDecision.reason
             let shouldRetry = retryDecision.shouldRetry && attempt < Self.agentRuntimeMaximumAttempts
@@ -1675,6 +1673,7 @@ final class AIOrchestrator {
                     .map { Self.normalizedWorkspacePath($0) }
                     .filter { !$0.isEmpty }
             )
+            guard !phaseTargetPaths.isEmpty else { continue }
 
             var phaseActions: [AgentPlannedAction] = []
             for action in executionPlan.actions {
@@ -1682,7 +1681,7 @@ final class AIOrchestrator {
                     continue
                 }
                 let actionPaths = action.action.targetPaths.map { Self.normalizedWorkspacePath($0) }
-                if phaseTargetPaths.isEmpty || !Set(actionPaths).isDisjoint(with: phaseTargetPaths) {
+                if !Set(actionPaths).isDisjoint(with: phaseTargetPaths) {
                     phaseActions.append(action)
                     usedActionIDs.insert(action.id)
                 }
