@@ -3,6 +3,8 @@ import SpeziLLM
 import SpeziLLMLocal
 
 actor QwenCoderService {
+    private nonisolated static let defaultModelName = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
+
     let modelName: String
     private let bookmarkService: BookmarkService
 
