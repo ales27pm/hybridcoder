@@ -372,7 +372,7 @@ final class AIOrchestrator {
                 modelRegistry.setLoadState(for: activeModelID, .loaded)
                 warmUpError = nil
             } else {
-                let message = "llama.cpp warm-up finished, but expected Qwen GGUF file was not found in Files > On My iPhone > Hybrid Coder > Models/."
+                let message = "llama.cpp warm-up finished, but expected Qwen GGUF file was not found in Files > On My iPhone > HybridCoder > Models/."
                 modelRegistry.setInstallState(for: activeModelID, .notInstalled)
                 modelRegistry.setLoadState(for: activeModelID, .failed(message))
                 warmUpError = message
@@ -2318,7 +2318,7 @@ final class AIOrchestrator {
                 modelRegistry.setInstallState(for: activeModelID, .installed)
                 return coder
             }
-            let message = "llama.cpp warm-up finished, but expected Qwen GGUF file was not found in Files > On My iPhone > Hybrid Coder > Models/."
+            let message = "llama.cpp warm-up finished, but expected Qwen GGUF file was not found in Files > On My iPhone > HybridCoder > Models/."
             modelRegistry.setInstallState(for: activeModelID, .notInstalled)
             throw OrchestratorError.codeGenerationModelUnavailable(message)
         } catch {
@@ -2644,7 +2644,7 @@ final class AIOrchestrator {
             case .foundationModelNotInitialized:
                 return "Orchestration model service is not initialized. Restart the app to reinitialize the AI runtime."
             case .noModelAvailable:
-                return "No AI model is available. Place the model files in Files > On My iPhone > Hybrid Coder > Models/."
+                return "No AI model is available. Place the model files in Files > On My iPhone > HybridCoder > Models/."
             case .routeResolutionFailed(let reason):
                 return "Route resolution failed: \(reason)"
             case .templateResolutionFailed(let reason):

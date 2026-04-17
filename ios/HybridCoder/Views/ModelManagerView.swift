@@ -33,7 +33,7 @@ struct ModelManagerView: View {
                     .foregroundStyle(.white)
             }
 
-            Text("All inference runs locally via SpeziLLM llama.cpp. Keep model files in Files > On My iPhone > Hybrid Coder > Models/.")
+            Text("All inference runs locally via SpeziLLM llama.cpp. Keep model files in Files > On My iPhone > HybridCoder > Models/.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
         }
@@ -348,7 +348,7 @@ struct ModelManagerView: View {
                 }
             }
 
-            Text("Used for routing, explanations, structured outputs, and patch planning via local llama.cpp models in Files > On My iPhone > Hybrid Coder > Models/.")
+            Text("Used for routing, explanations, structured outputs, and patch planning via local llama.cpp models in Files > On My iPhone > HybridCoder > Models/.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
         }

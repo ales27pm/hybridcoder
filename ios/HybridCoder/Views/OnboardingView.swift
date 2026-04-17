@@ -200,7 +200,7 @@ struct OnboardingView: View {
                 )
             }
 
-            Text("This may take a few minutes depending\non your connection and device.\nModels load from Files > On My iPhone > Hybrid Coder > Models/.")
+            Text("This may take a few minutes depending\non your connection and device.\nModels load from Files > On My iPhone > HybridCoder > Models/.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
                 .multilineTextAlignment(.center)

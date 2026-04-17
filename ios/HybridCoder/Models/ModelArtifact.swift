@@ -62,7 +62,7 @@ nonisolated enum ModelArtifactFactory {
         return ModelArtifact(
             id: modelID,
             displayName: "jina-embeddings-v3 (Q4_K_M)",
-            modelsRootPath: "Hybrid Coder/Models",
+            modelsRootPath: "HybridCoder/Models",
             remoteBaseURL: nil,
             requiredFiles: [
                 .init(remotePath: modelID, localPath: modelID, kind: .gguf)
@@ -76,7 +76,7 @@ nonisolated enum ModelArtifactFactory {
         return ModelArtifact(
             id: modelID,
             displayName: "Qwen2.5-Coder 3B Orchestration (Q5_K_M)",
-            modelsRootPath: "Hybrid Coder/Models",
+            modelsRootPath: "HybridCoder/Models",
             remoteBaseURL: nil,
             requiredFiles: [
                 .init(remotePath: modelID, localPath: modelID, kind: .gguf)
@@ -90,7 +90,7 @@ nonisolated enum ModelArtifactFactory {
         return ModelArtifact(
             id: modelID,
             displayName: "Qwen2.5-Coder 3B Instruct (Q5_K_M)",
-            modelsRootPath: "Hybrid Coder/Models",
+            modelsRootPath: "HybridCoder/Models",
             remoteBaseURL: nil,
             requiredFiles: [
                 .init(remotePath: modelID, localPath: modelID, kind: .gguf)
