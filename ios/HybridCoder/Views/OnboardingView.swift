@@ -103,8 +103,8 @@ struct OnboardingView: View {
             VStack(spacing: 12) {
                 modelRow(
                     icon: "brain.head.profile",
-                    name: "Apple Foundation Models",
-                    detail: "Routing, explanations, and patch planning (built-in)"
+                    name: "SpeziLLM llama.cpp Runtime",
+                    detail: "Routing, explanations, and patch planning from local models"
                 )
 
                 modelRow(
@@ -200,7 +200,7 @@ struct OnboardingView: View {
                 )
             }
 
-            Text("This may take a few minutes depending\non your connection and device.")
+            Text("This may take a few minutes depending\non your connection and device.\nModels load from Files > On My iPhone > Hybrid Coder > Models/.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
                 .multilineTextAlignment(.center)
