@@ -22,14 +22,6 @@
 				version = 0.9.2;
 			};
 		};
-		A1B2C3D4E5F60123456789AE /* XCRemoteSwiftPackageReference "swift-transformers" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/huggingface/swift-transformers.git";
-			requirement = {
-				kind = exactVersion;
-				version = 1.0.0;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -238,7 +230,6 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				A1B2C3D4E5F60123456789AB /* XCRemoteSwiftPackageReference "SpeziLLM" */,
-				A1B2C3D4E5F60123456789AE /* XCRemoteSwiftPackageReference "swift-transformers" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 105FC57B2E9EAD3100EA8BCF /* Products */;
