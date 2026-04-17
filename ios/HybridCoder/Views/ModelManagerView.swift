@@ -33,7 +33,7 @@ struct ModelManagerView: View {
                     .foregroundStyle(.white)
             }
 
-            Text("All inference runs locally: Apple Foundation Models handle routing/planning, CodeBERT handles retrieval, and Qwen coder handles code generation via SpeziLLM llama.cpp.")
+            Text("All inference runs locally via SpeziLLM llama.cpp. Keep model files in Files > On My iPhone > Hybrid Coder > Models/.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
         }
@@ -330,7 +330,7 @@ struct ModelManagerView: View {
                     .font(.subheadline)
                     .foregroundStyle(Theme.accent)
 
-                Text("Apple Foundation Models")
+                Text("SpeziLLM llama.cpp Runtime")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.white)
 
@@ -348,7 +348,7 @@ struct ModelManagerView: View {
                 }
             }
 
-            Text("Used for routing, explanations, structured outputs, and patch planning. Built into iOS — no download needed.")
+            Text("Used for routing, explanations, structured outputs, and patch planning via local llama.cpp models in Files > On My iPhone > Hybrid Coder > Models/.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
         }
