@@ -12,6 +12,7 @@ actor CoreMLEmbeddingService {
         case modelNotLoaded
         case inferenceFailure(String)
         case modelArtifactsMissing(path: String)
+        case outputParseFailure(String)
 
         nonisolated var errorDescription: String? {
             switch self {
@@ -21,6 +22,8 @@ actor CoreMLEmbeddingService {
                 return "Embedding inference failed: \(detail)"
             case .modelArtifactsMissing(let path):
                 return "Embedding model file not found at '\(path)'."
+            case .outputParseFailure(let detail):
+                return "Embedding output parse failure: \(detail)"
             }
         }
     }
@@ -44,7 +47,6 @@ actor CoreMLEmbeddingService {
     }
 
     private let maxSequenceLength = 512
-    private let fallbackEmbeddingDimension = 512
 
     var isLoaded: Bool {
         modelURL != nil && session != nil
@@ -72,7 +74,7 @@ actor CoreMLEmbeddingService {
             cachedModelInfo = ModelInfo(
                 inputNames: ["text"],
                 outputNames: ["embedding"],
-                embeddingDimension: fallbackEmbeddingDimension,
+                embeddingDimension: 0,
                 maxSequenceLength: maxSequenceLength
             )
 
@@ -93,7 +95,16 @@ actor CoreMLEmbeddingService {
             throw EmbeddingError.inferenceFailure("Input text is empty")
         }
 
-        return Self.semanticEmbedding(for: text, dimensions: fallbackEmbeddingDimension)
+        let session = try await loadSessionIfNeeded()
+        do {
+            let vector = try await requestEmbedding(for: text, using: session)
+            try validateAndCacheEmbeddingDimension(vector.count)
+            return vector
+        } catch let error as EmbeddingError {
+            throw error
+        } catch {
+            throw EmbeddingError.inferenceFailure(error.localizedDescription)
+        }
     }
 
     func embedBatch(texts: [String]) async throws -> [[Float]] {
@@ -134,7 +145,8 @@ actor CoreMLEmbeddingService {
             }
         }
 
-        let modelIdentifier = modelID.hasSuffix(".gguf") ? String(modelID.dropLast(5)) : modelID
+        let modelFileName = modelURL?.lastPathComponent ?? modelID
+        let modelIdentifier = modelFileName.hasSuffix(".gguf") ? String(modelFileName.dropLast(5)) : modelFileName
         let schema = LLMLocalSchema(model: .custom(id: modelIdentifier), injectIntoContext: false)
         let created = platform(with: schema)
         try await created.setup()
@@ -142,15 +154,130 @@ actor CoreMLEmbeddingService {
         return created
     }
 
-    private static func semanticEmbedding(for text: String, dimensions: Int) -> [Float] {
-        var vector = Array(repeating: Float(0), count: dimensions)
-        for scalar in text.unicodeScalars {
-            let idx = Int(scalar.value) % dimensions
-            vector[idx] += 1
+    private func requestEmbedding(for text: String, using session: LLMLocalSession) async throws -> [Float] {
+        let systemPrompt = """
+        You are an embedding endpoint. Return only valid JSON with this shape: {"embedding":[float,...]} and no additional text.
+        """
+
+        let userPrompt = """
+        Produce an embedding for this input:
+\(text)
+        """
+
+        await MainActor.run {
+            session.customContext = [
+                ["role": "system", "content": systemPrompt],
+                ["role": "user", "content": userPrompt]
+            ]
         }
 
-        let norm = sqrt(vector.reduce(0) { $0 + ($1 * $1) })
-        guard norm > 0 else { return vector }
-        return vector.map { $0 / norm }
+        var response = ""
+        let stream = try await session.generate()
+        for try await chunk in stream {
+            response += chunk
+        }
+
+        do {
+            return try Self.parseEmbedding(from: response)
+        } catch let error as EmbeddingError {
+            throw error
+        } catch {
+            throw EmbeddingError.outputParseFailure(error.localizedDescription)
+        }
+    }
+
+    private func validateAndCacheEmbeddingDimension(_ dimension: Int) throws {
+        guard dimension > 0 else {
+            throw EmbeddingError.inferenceFailure("Embedding vector is empty")
+        }
+
+        if let info = cachedModelInfo {
+            if info.embeddingDimension == 0 {
+                cachedModelInfo = ModelInfo(
+                    inputNames: info.inputNames,
+                    outputNames: info.outputNames,
+                    embeddingDimension: dimension,
+                    maxSequenceLength: info.maxSequenceLength
+                )
+                return
+            }
+
+            guard info.embeddingDimension == dimension else {
+                throw EmbeddingError.inferenceFailure(
+                    "Embedding dimension mismatch. Expected \(info.embeddingDimension), got \(dimension)."
+                )
+            }
+
+            return
+        }
+
+        cachedModelInfo = ModelInfo(
+            inputNames: ["text"],
+            outputNames: ["embedding"],
+            embeddingDimension: dimension,
+            maxSequenceLength: maxSequenceLength
+        )
+    }
+
+    private static func parseEmbedding(from response: String) throws -> [Float] {
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw EmbeddingError.outputParseFailure("Model returned an empty response")
+        }
+
+        if let vector = parseEmbeddingJSON(trimmed) {
+            return vector
+        }
+
+        if let start = trimmed.firstIndex(of: "["), let end = trimmed.lastIndex(of: "]"), start < end {
+            let candidate = String(trimmed[start...end])
+            if let vector = parseFloatArray(candidate) {
+                return vector
+            }
+        }
+
+        throw EmbeddingError.outputParseFailure("Unable to decode embedding JSON")
+    }
+
+    private static func parseEmbeddingJSON(_ jsonString: String) -> [Float]? {
+        guard let data = jsonString.data(using: .utf8) else {
+            return nil
+        }
+
+        if let object = try? JSONSerialization.jsonObject(with: data),
+           let dictionary = object as? [String: Any],
+           let raw = dictionary["embedding"] {
+            return coerceFloatArray(raw)
+        }
+
+        return parseFloatArray(jsonString)
+    }
+
+    private static func parseFloatArray(_ jsonArrayString: String) -> [Float]? {
+        guard let data = jsonArrayString.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) else {
+            return nil
+        }
+        return coerceFloatArray(object)
+    }
+
+    private static func coerceFloatArray(_ raw: Any) -> [Float]? {
+        guard let values = raw as? [Any], !values.isEmpty else {
+            return nil
+        }
+
+        var floats: [Float] = []
+        floats.reserveCapacity(values.count)
+        for value in values {
+            if let number = value as? NSNumber {
+                floats.append(number.floatValue)
+            } else if let string = value as? String, let parsed = Float(string) {
+                floats.append(parsed)
+            } else {
+                return nil
+            }
+        }
+
+        return floats
     }
 }
