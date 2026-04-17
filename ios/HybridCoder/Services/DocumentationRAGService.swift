@@ -312,12 +312,8 @@ nonisolated private final class DocumentationRAGStore {
         var handle: OpaquePointer?
         let rc = sqlite3_open(databaseURL.path, &handle)
         if rc != SQLITE_OK {
-            let reason: String
             if let handle {
-                reason = String(cString: sqlite3_errmsg(handle))
                 sqlite3_close(handle)
-            } else {
-                reason = "sqlite3_open failed with code \(rc)"
             }
             throw DocumentationRAGService.RAGError.databaseUnavailable
         }
