@@ -3,7 +3,7 @@ import Foundation
 nonisolated enum ValidationScenarioBuilder {
     static func buildValidationTargets(
         from blueprint: RuntimeBlueprint,
-        phasePlan: RuntimePhasePlan
+        phasePlan _: RuntimePhasePlan
     ) -> BlueprintValidationPlan {
         blueprint.validationPlan
     }
