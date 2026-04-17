@@ -1601,20 +1601,6 @@ final class AIOrchestrator {
             from: executionPlan,
             runtimePhasePlan: runtimePhasePlan
         )
-        guard !phaseExecutionPlans.isEmpty else {
-            let fallbackTelemetry = AgentRuntimeTelemetry(
-                phase: "Runtime actions",
-                retryCause: retryCause,
-                validationGateStatus: "not_available",
-                safetyMode: safetyMode
-            )
-            let fallbackReport = try await executeAgentRuntimePlan(
-                executionPlan,
-                repoRoot: root,
-                telemetry: fallbackTelemetry
-            )
-            return [fallbackReport]
-        }
         var reports: [AgentRuntimeReport] = []
         reports.reserveCapacity(phaseExecutionPlans.count)
 
