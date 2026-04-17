@@ -97,7 +97,6 @@ actor LlamaEmbeddingService {
     private var modelURL: URL?
     private var cachedModelInfo: ModelInfo?
     private let platform = LLMLocalPlatform()
-    private var platformTask: Task<Void, Never>?
     private var session: LLMLocalSession?
     private let embeddingBackend: any EmbeddingBackend
 
@@ -198,7 +197,7 @@ actor LlamaEmbeddingService {
 
     func unload() async {
         if let session {
-            await session.offload()
+            session.cancel()
         }
         session = nil
         modelURL = nil
@@ -213,12 +212,7 @@ actor LlamaEmbeddingService {
             return session
         }
 
-        if platformTask == nil {
-            platform.configure()
-            platformTask = Task { [platform] in
-                await platform.run()
-            }
-        }
+        platform.configure()
 
         let modelFileName = modelURL?.lastPathComponent ?? modelID
         let modelIdentifier = modelFileName.hasSuffix(".gguf") ? String(modelFileName.dropLast(5)) : modelFileName
