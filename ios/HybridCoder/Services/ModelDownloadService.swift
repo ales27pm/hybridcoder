@@ -55,7 +55,7 @@ final class ModelDownloadService {
 
     func refreshInstallState(modelID: String) async {
         if registry.entry(for: modelID)?.runtime == .llamaCppGGUF {
-            let isReady = registry.isCodeGenerationModelInstalled(modelID: modelID)
+            let isReady = registry.isModelInstalledInExternalModelsFolder(modelID: modelID)
             registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
             return
         }
@@ -78,7 +78,7 @@ final class ModelDownloadService {
         guard entry.runtime != .llamaCppGGUF else {
             downloadError = "llama.cpp models are loaded from Files > On My iPhone > Hybrid Coder > Models/."
             shouldSuggestTokenInput = false
-            let isReady = registry.isCodeGenerationModelInstalled(modelID: modelID)
+            let isReady = registry.isModelInstalledInExternalModelsFolder(modelID: modelID)
             registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
             return
         }
@@ -301,7 +301,7 @@ final class ModelDownloadService {
         }
 
         if entry.runtime == .llamaCppGGUF {
-            guard registry.isCodeGenerationModelInstalled(modelID: modelID) else {
+            guard registry.isModelInstalledInExternalModelsFolder(modelID: modelID) else {
                 throw DownloadError.fileCorrupt("Expected llama.cpp GGUF files in the external Models folder")
             }
             return
