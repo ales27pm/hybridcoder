@@ -14,13 +14,12 @@ actor QwenCoderService {
     private(set) var loadProgress: Double = 0
 
     private let platform = LLMLocalPlatform()
-    private var platformTask: Task<Void, Never>?
     private var session: LLMLocalSession?
     private var shouldUnloadAfterGeneration: Bool = false
 
     init(
-        modelName: String = ModelRegistry.defaultCodeGenerationModelID,
-        bookmarkService: BookmarkService = BookmarkService()
+        modelName: String = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf",
+        bookmarkService: BookmarkService
     ) {
         self.modelName = modelName
         self.bookmarkService = bookmarkService
@@ -124,7 +123,7 @@ actor QwenCoderService {
             throw QwenError.generationInProgress
         }
         if let session {
-            await session.offload()
+            session.cancel()
         }
         performUnload()
     }
@@ -223,12 +222,7 @@ actor QwenCoderService {
             return session
         }
 
-        if platformTask == nil {
-            platform.configure()
-            platformTask = Task { [platform] in
-                await platform.run()
-            }
-        }
+        platform.configure()
 
         let modelIdentifier = modelName.hasSuffix(".gguf") ? String(modelName.dropLast(5)) : modelName
         let schema = LLMLocalSchema(model: .custom(id: modelIdentifier), injectIntoContext: false)
