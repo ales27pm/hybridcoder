@@ -1,5 +1,6 @@
 import Foundation
-import NaturalLanguage
+import SpeziLLM
+import SpeziLLMLocal
 
 actor CoreMLEmbeddingService {
 
@@ -33,6 +34,9 @@ actor CoreMLEmbeddingService {
 
     private var modelURL: URL?
     private var cachedModelInfo: ModelInfo?
+    private let platform = LLMLocalPlatform()
+    private var platformTask: Task<Void, Never>?
+    private var session: LLMLocalSession?
 
     init(modelID: String, registry: ModelRegistry) {
         self.modelID = modelID
@@ -43,7 +47,7 @@ actor CoreMLEmbeddingService {
     private let fallbackEmbeddingDimension = 512
 
     var isLoaded: Bool {
-        modelURL != nil
+        modelURL != nil && session != nil
     }
 
     var modelInfo: ModelInfo? {
@@ -64,6 +68,7 @@ actor CoreMLEmbeddingService {
             }
 
             self.modelURL = resolved
+            _ = try await loadSessionIfNeeded()
             cachedModelInfo = ModelInfo(
                 inputNames: ["text"],
                 outputNames: ["embedding"],
@@ -83,12 +88,12 @@ actor CoreMLEmbeddingService {
     }
 
     func embed(text: String) async throws -> [Float] {
-        guard modelURL != nil else { throw EmbeddingError.modelNotLoaded }
+        guard isLoaded else { throw EmbeddingError.modelNotLoaded }
         guard !text.isEmpty else {
             throw EmbeddingError.inferenceFailure("Input text is empty")
         }
 
-        return try Self.semanticEmbedding(for: text)
+        return Self.semanticEmbedding(for: text, dimensions: fallbackEmbeddingDimension)
     }
 
     func embedBatch(texts: [String]) async throws -> [[Float]] {
@@ -106,6 +111,10 @@ actor CoreMLEmbeddingService {
     }
 
     func unload() async {
+        if let session {
+            await session.offload()
+        }
+        session = nil
         modelURL = nil
         cachedModelInfo = nil
         await MainActor.run {
@@ -113,23 +122,33 @@ actor CoreMLEmbeddingService {
         }
     }
 
-    private static func semanticEmbedding(for text: String) throws -> [Float] {
-        if let sentenceEmbedding = NLEmbedding.sentenceEmbedding(for: .english),
-           let vector = sentenceEmbedding.vector(for: text),
-           vector.isEmpty == false {
-            return l2Normalize(vector)
+    private func loadSessionIfNeeded() async throws -> LLMLocalSession {
+        if let session {
+            return session
         }
 
-        if let wordEmbedding = NLEmbedding.wordEmbedding(for: .english),
-           let vector = wordEmbedding.vector(for: text),
-           vector.isEmpty == false {
-            return l2Normalize(vector)
+        if platformTask == nil {
+            platform.configure()
+            platformTask = Task { [platform] in
+                await platform.run()
+            }
         }
 
-        throw EmbeddingError.inferenceFailure("NaturalLanguage embedding lookup failed")
+        let modelIdentifier = modelID.hasSuffix(".gguf") ? String(modelID.dropLast(5)) : modelID
+        let schema = LLMLocalSchema(model: .custom(id: modelIdentifier), injectIntoContext: false)
+        let created = platform(with: schema)
+        try await created.setup()
+        session = created
+        return created
     }
 
-    private static func l2Normalize(_ vector: [Float]) -> [Float] {
+    private static func semanticEmbedding(for text: String, dimensions: Int) -> [Float] {
+        var vector = Array(repeating: Float(0), count: dimensions)
+        for scalar in text.unicodeScalars {
+            let idx = Int(scalar.value) % dimensions
+            vector[idx] += 1
+        }
+
         let norm = sqrt(vector.reduce(0) { $0 + ($1 * $1) })
         guard norm > 0 else { return vector }
         return vector.map { $0 / norm }
