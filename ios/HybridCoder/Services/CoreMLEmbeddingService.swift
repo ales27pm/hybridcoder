@@ -98,7 +98,7 @@ actor CoreMLEmbeddingService {
         let session = try await loadSessionIfNeeded()
         do {
             let vector = try await requestEmbedding(for: text, using: session)
-            updateCachedEmbeddingDimensionIfNeeded(vector.count)
+            try validateAndCacheEmbeddingDimension(vector.count)
             return vector
         } catch let error as EmbeddingError {
             throw error
@@ -186,25 +186,37 @@ actor CoreMLEmbeddingService {
         }
     }
 
-    private func updateCachedEmbeddingDimensionIfNeeded(_ dimension: Int) {
-        guard dimension > 0 else { return }
+    private func validateAndCacheEmbeddingDimension(_ dimension: Int) throws {
+        guard dimension > 0 else {
+            throw EmbeddingError.inferenceFailure("Embedding vector is empty")
+        }
 
         if let info = cachedModelInfo {
-            guard info.embeddingDimension != dimension else { return }
-            cachedModelInfo = ModelInfo(
-                inputNames: info.inputNames,
-                outputNames: info.outputNames,
-                embeddingDimension: dimension,
-                maxSequenceLength: info.maxSequenceLength
-            )
-        } else {
-            cachedModelInfo = ModelInfo(
-                inputNames: ["text"],
-                outputNames: ["embedding"],
-                embeddingDimension: dimension,
-                maxSequenceLength: maxSequenceLength
-            )
+            if info.embeddingDimension == 0 {
+                cachedModelInfo = ModelInfo(
+                    inputNames: info.inputNames,
+                    outputNames: info.outputNames,
+                    embeddingDimension: dimension,
+                    maxSequenceLength: info.maxSequenceLength
+                )
+                return
+            }
+
+            guard info.embeddingDimension == dimension else {
+                throw EmbeddingError.inferenceFailure(
+                    "Embedding dimension mismatch. Expected \(info.embeddingDimension), got \(dimension)."
+                )
+            }
+
+            return
         }
+
+        cachedModelInfo = ModelInfo(
+            inputNames: ["text"],
+            outputNames: ["embedding"],
+            embeddingDimension: dimension,
+            maxSequenceLength: maxSequenceLength
+        )
     }
 
     private static func parseEmbedding(from response: String) throws -> [Float] {
