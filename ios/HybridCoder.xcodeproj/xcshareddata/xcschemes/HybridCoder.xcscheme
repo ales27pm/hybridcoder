@@ -6,24 +6,6 @@
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES"
       buildArchitectures = "Automatic">
-      <PreActions>
-         <ExecutionAction
-            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
-            <ActionContent
-               title = "Enable Trusted Macros"
-               scriptText = "defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES&#10;">
-               <EnvironmentBuildable>
-                  <BuildableReference
-                     BuildableIdentifier = "primary"
-                     BlueprintIdentifier = "105FC5792E9EAD3100EA8BCF"
-                     BuildableName = "HybridCoder.app"
-                     BlueprintName = "HybridCoder"
-                     ReferencedContainer = "container:HybridCoder.xcodeproj">
-                  </BuildableReference>
-               </EnvironmentBuildable>
-            </ActionContent>
-         </ExecutionAction>
-      </PreActions>
       <BuildActionEntries>
          <BuildActionEntry
             buildForTesting = "YES"

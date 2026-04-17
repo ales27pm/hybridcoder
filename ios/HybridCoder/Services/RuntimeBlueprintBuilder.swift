@@ -8,7 +8,7 @@ nonisolated enum RuntimeBlueprintBuilder {
         workspaceRoot: URL
     ) async -> RuntimeBlueprint {
         // TODO: Incorporate repo-aware blueprint construction.
-        RuntimeBlueprint(
+        return RuntimeBlueprint(
             goal: goal,
             workspace: workspace,
             rootPath: workspaceRoot.path(percentEncoded: false),

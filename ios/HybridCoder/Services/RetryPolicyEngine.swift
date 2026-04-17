@@ -6,21 +6,23 @@ nonisolated enum RetryPolicyEngine {
         attempt: Int,
         maxAttempts: Int
     ) -> FailureClassification {
+        // TODO: Derive classification details from AgentRuntimeReport and align with AIOrchestrator.shouldRetryAgentRuntime(after:).
+        let _ = report
         FailureClassification(
             category: .unknown,
             isRetryable: attempt < maxAttempts,
-            reason: "",
+            reason: "TODO: derive reason from AgentRuntimeReport",
             suggestedDelay: nil
         )
     }
 
     static func shouldRetry(
         classification: FailureClassification,
-        attempt: Int,
-        maxAttempts: Int
+        attempt _: Int,
+        maxAttempts _: Int
     ) -> RetryDecision {
         RetryDecision(
-            shouldRetry: classification.isRetryable && attempt < maxAttempts,
+            shouldRetry: classification.isRetryable,
             strategy: classification.isRetryable ? .retrySamePlan : .doNotRetry,
             reason: classification.reason
         )
