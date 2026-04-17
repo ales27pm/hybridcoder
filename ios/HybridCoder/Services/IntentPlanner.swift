@@ -5,6 +5,69 @@ nonisolated enum IntentPlanner {
         goal: String,
         workspace: AgentWorkspaceContext,
         patchPlan: PatchPlan? = nil,
+        executionMode: AgentExecutionMode = .goalDriven,
+        runtimeBlueprint: RuntimeBlueprint? = nil,
+        runtimePhasePlan: RuntimePhasePlan? = nil
+    ) -> AgentExecutionPlan {
+        switch route(
+            for: goal,
+            executionMode: executionMode,
+            runtimeBlueprint: runtimeBlueprint,
+            runtimePhasePlan: runtimePhasePlan
+        ) {
+        case .fast:
+            return FastIntentPlanner.planActions(
+                goal: goal,
+                workspace: workspace,
+                patchPlan: patchPlan,
+                executionMode: executionMode
+            )
+        case .blueprintAware:
+            return BlueprintAwarePlanner.planActions(
+                goal: goal,
+                workspace: workspace,
+                patchPlan: patchPlan,
+                executionMode: executionMode,
+                runtimeBlueprint: runtimeBlueprint,
+                runtimePhasePlan: runtimePhasePlan
+            )
+        }
+    }
+
+    private static func route(
+        for goal: String,
+        executionMode: AgentExecutionMode,
+        runtimeBlueprint: RuntimeBlueprint?,
+        runtimePhasePlan: RuntimePhasePlan?
+    ) -> PlanningRoute {
+        guard executionMode == .goalDriven else {
+            return .fast
+        }
+
+        let explicitOperations = FastIntentPlanner.goalFileOperationIntents(goal: goal)
+        if !explicitOperations.isEmpty {
+            return .fast
+        }
+
+        let normalizedGoal = goal.lowercased()
+        let hasBroadGoalSignal = normalizedGoal.range(
+            of: #"\b(feature|build|refactor|implement|architect|redesign|workflow|system|module|screen|flow)\b"#,
+            options: .regularExpression
+        ) != nil
+
+        if hasBroadGoalSignal || (runtimeBlueprint != nil && runtimePhasePlan != nil) {
+            return .blueprintAware
+        }
+
+        return .fast
+    }
+}
+
+nonisolated enum FastIntentPlanner {
+    static func planActions(
+        goal: String,
+        workspace: AgentWorkspaceContext,
+        patchPlan: PatchPlan? = nil,
         executionMode: AgentExecutionMode = .goalDriven
     ) -> AgentExecutionPlan {
         let normalizedGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -46,7 +109,7 @@ nonisolated enum IntentPlanner {
         )
     }
 
-    private static func planPatchBackedActions(
+    static func planPatchBackedActions(
         goal: String,
         patchPlan: PatchPlan
     ) -> [AgentPlannedAction] {
@@ -98,7 +161,7 @@ nonisolated enum IntentPlanner {
         }
     }
 
-    private static func exploratoryActions(
+    static func exploratoryActions(
         goal: String,
         workspace: AgentWorkspaceContext
     ) -> [AgentPlannedAction] {
@@ -133,7 +196,7 @@ nonisolated enum IntentPlanner {
         operations.allSatisfy { $0.searchText.isEmpty }
     }
 
-    private static func planGoalBackedActions(goal: String) -> [AgentPlannedAction] {
+    static func planGoalBackedActions(goal: String) -> [AgentPlannedAction] {
         var actions: [AgentPlannedAction] = []
         var seenKeys: Set<String> = []
 
@@ -387,7 +450,7 @@ nonisolated enum IntentPlanner {
         return actions
     }
 
-    private static func goalFileOperationIntents(goal: String) -> [GoalFileOperationIntent] {
+    static func goalFileOperationIntents(goal: String) -> [GoalFileOperationIntent] {
         parseCreateFolderIntents(goal)
         + parseRenameFolderIntents(goal)
         + parseDeleteFolderIntents(goal)
@@ -826,6 +889,118 @@ nonisolated enum IntentPlanner {
 
         return orderedGroups
     }
+}
+
+
+nonisolated enum BlueprintAwarePlanner {
+    static func planActions(
+        goal: String,
+        workspace: AgentWorkspaceContext,
+        patchPlan: PatchPlan? = nil,
+        executionMode: AgentExecutionMode = .goalDriven,
+        runtimeBlueprint: RuntimeBlueprint? = nil,
+        runtimePhasePlan: RuntimePhasePlan? = nil
+    ) -> AgentExecutionPlan {
+        let normalizedGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeGoal = normalizedGoal.isEmpty ? (patchPlan?.summary ?? workspace.displayName) : normalizedGoal
+        var actions: [AgentPlannedAction] = []
+
+        if let patchPlan {
+            actions.append(contentsOf: FastIntentPlanner.planPatchBackedActions(goal: safeGoal, patchPlan: patchPlan))
+        }
+
+        if executionMode == .goalDriven,
+           let runtimeBlueprint,
+           let runtimePhasePlan {
+            actions.append(contentsOf: plannedActions(from: runtimeBlueprint, phasePlan: runtimePhasePlan))
+        }
+
+        if actions.isEmpty {
+            actions.append(contentsOf: FastIntentPlanner.exploratoryActions(goal: safeGoal, workspace: workspace))
+        }
+
+        actions.append(
+            AgentPlannedAction(
+                title: "Validate workspace after actions",
+                action: .validateWorkspace(
+                    reason: workspace.isExpoFocused
+                        ? "Check Expo / React Native diagnostics after the planned workspace actions"
+                        : "Check workspace diagnostics after the planned actions"
+                ),
+                detail: workspace.isExpoFocused
+                    ? "Expo-focused validation for \(workspace.projectName)"
+                    : "General workspace validation for \(workspace.projectName)"
+            )
+        )
+
+        return AgentExecutionPlan(
+            goal: safeGoal,
+            workspace: workspace,
+            actions: actions,
+            fallbackPatchPlan: patchPlan,
+            executionMode: executionMode
+        )
+    }
+
+    static func plannedActions(
+        from blueprint: RuntimeBlueprint,
+        phasePlan: RuntimePhasePlan
+    ) -> [AgentPlannedAction] {
+        var actions: [AgentPlannedAction] = []
+        var seenPaths: Set<String> = []
+
+        let orderedPhases = phasePlan.phases.sorted { $0.order < $1.order }
+        for phase in orderedPhases {
+            for phaseAction in phase.actions {
+                for targetPath in phaseAction.targetPaths {
+                    let normalizedPath = targetPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !normalizedPath.isEmpty else { continue }
+                    let key = normalizedPath.lowercased()
+                    guard !seenPaths.contains(key) else { continue }
+                    seenPaths.insert(key)
+
+                    actions.append(
+                        AgentPlannedAction(
+                            title: "Inspect \(normalizedPath)",
+                            action: .inspectFile(
+                                path: normalizedPath,
+                                reason: "Blueprint phase \(phase.order) objective: \(phase.objective)"
+                            ),
+                            detail: "Blueprint-aware inspection for \(normalizedPath)"
+                        )
+                    )
+                }
+            }
+        }
+
+        if actions.isEmpty {
+            for reference in blueprint.files {
+                let normalizedPath = reference.path.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !normalizedPath.isEmpty else { continue }
+                let key = normalizedPath.lowercased()
+                guard !seenPaths.contains(key) else { continue }
+                seenPaths.insert(key)
+
+                actions.append(
+                    AgentPlannedAction(
+                        title: "Inspect \(normalizedPath)",
+                        action: .inspectFile(
+                            path: normalizedPath,
+                            reason: "Blueprint file context: \(reference.reason)"
+                        ),
+                        detail: "Blueprint-aware inspection for \(normalizedPath)"
+                    )
+                )
+            }
+        }
+
+        return actions
+    }
+}
+
+private enum PlanningRoute {
+    case fast
+    case blueprintAware
 }
 
 private enum GoalFileOperationIntent {
