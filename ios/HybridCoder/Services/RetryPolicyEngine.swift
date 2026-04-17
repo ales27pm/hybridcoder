@@ -6,12 +6,46 @@ nonisolated enum RetryPolicyEngine {
         attempt: Int,
         maxAttempts: Int
     ) -> FailureClassification {
-        // TODO: Derive classification details from AgentRuntimeReport and align with AIOrchestrator.shouldRetryAgentRuntime(after:).
-        let _ = report
+        if report.patchResult.updatedPlan.pendingCount > 0 {
+            return FailureClassification(
+                category: .patchApply,
+                isRetryable: attempt < maxAttempts,
+                reason: "Pending patch operations remain after attempt \(attempt).",
+                suggestedDelay: nil
+            )
+        }
+
+        if !report.blockedActions.isEmpty {
+            return FailureClassification(
+                category: .toolRuntime,
+                isRetryable: attempt < maxAttempts,
+                reason: "Workspace actions were blocked during execution.",
+                suggestedDelay: nil
+            )
+        }
+
+        if report.validationOutcome.status == .blocked {
+            return FailureClassification(
+                category: .validation,
+                isRetryable: attempt < maxAttempts,
+                reason: "Validation gate blocked progression.",
+                suggestedDelay: nil
+            )
+        }
+
+        if !report.patchResult.failures.isEmpty || !report.preflightFailures.isEmpty {
+            return FailureClassification(
+                category: .dependency,
+                isRetryable: attempt < maxAttempts,
+                reason: "Patch validation/apply failures detected.",
+                suggestedDelay: nil
+            )
+        }
+
         FailureClassification(
             category: .unknown,
-            isRetryable: attempt < maxAttempts,
-            reason: "TODO: derive reason from AgentRuntimeReport",
+            isRetryable: false,
+            reason: "No retryable runtime failures detected.",
             suggestedDelay: nil
         )
     }
@@ -21,9 +55,23 @@ nonisolated enum RetryPolicyEngine {
         attempt _: Int,
         maxAttempts _: Int
     ) -> RetryDecision {
+        let strategy: RetryDecision.Strategy
+        if classification.isRetryable {
+            switch classification.category {
+            case .validation:
+                strategy = .replan
+            case .patchApply:
+                strategy = .replan
+            case .toolRuntime, .dependency, .timeout, .unknown:
+                strategy = .retrySamePlan
+            }
+        } else {
+            strategy = .doNotRetry
+        }
+
         RetryDecision(
             shouldRetry: classification.isRetryable,
-            strategy: classification.isRetryable ? .retrySamePlan : .doNotRetry,
+            strategy: strategy,
             reason: classification.reason
         )
     }
