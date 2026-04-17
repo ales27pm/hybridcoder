@@ -20,8 +20,8 @@ actor QwenCoderService {
     private var shouldUnloadAfterGeneration: Bool = false
 
     init(
-        modelName: String = Self.defaultModelName,
-        bookmarkService: BookmarkService = BookmarkService()
+        modelName: String = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf",
+        bookmarkService: BookmarkService
     ) {
         self.modelName = modelName
         self.bookmarkService = bookmarkService

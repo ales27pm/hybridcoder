@@ -320,7 +320,7 @@ final class AIOrchestrator {
     }
 
     private func makeQwenCoderService(modelID: String) -> QwenCoderService {
-        QwenCoderService(modelName: modelID)
+        QwenCoderService(modelName: modelID, bookmarkService: BookmarkService())
     }
 
     private func ensureQwenServiceMatchesActiveModel() async -> QwenCoderService {
