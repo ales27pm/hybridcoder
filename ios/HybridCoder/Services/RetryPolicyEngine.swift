@@ -42,7 +42,7 @@ nonisolated enum RetryPolicyEngine {
             )
         }
 
-        FailureClassification(
+        return FailureClassification(
             category: .unknown,
             isRetryable: false,
             reason: "No retryable runtime failures detected.",
@@ -60,14 +60,16 @@ nonisolated enum RetryPolicyEngine {
                 strategy = .replan
             case .patchApply:
                 strategy = .replan
-            case .toolRuntime, .dependency, .timeout, .unknown:
+            case .dependency:
+                strategy = .reduceScope
+            case .toolRuntime, .timeout, .unknown:
                 strategy = .retrySamePlan
             }
         } else {
             strategy = .doNotRetry
         }
 
-        RetryDecision(
+        return RetryDecision(
             shouldRetry: classification.isRetryable,
             strategy: strategy,
             reason: classification.reason

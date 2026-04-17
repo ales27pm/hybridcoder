@@ -1304,6 +1304,8 @@ final class AIOrchestrator {
         let safetyMode = activeWorkspaceSource == .prototype ? "prototype" : "repository"
 
         for attempt in 1...Self.agentRuntimeMaximumAttempts {
+            // Intentionally refresh workspace/session each attempt so retries re-evaluate runtime context
+            // against the latest filesystem state after prior phase execution.
             workspace = await agentWorkspaceContext(repoRoot: root)
             runtimeSession = WorkspaceRuntimeSession(
                 goal: safeGoal,
@@ -1462,26 +1464,6 @@ final class AIOrchestrator {
         )
     }
 
-    private func shouldRetryAgentRuntime(after report: AgentRuntimeReport) -> Bool {
-        if report.patchResult.updatedPlan.pendingCount > 0 {
-            return true
-        }
-
-        if !report.blockedActions.isEmpty {
-            return true
-        }
-
-        if report.validationOutcome.status == .blocked {
-            return true
-        }
-
-        if !report.patchResult.failures.isEmpty || !report.preflightFailures.isEmpty {
-            return true
-        }
-
-        return false
-    }
-
     private func replanPatchForAgentRuntimeRetry(
         goal: String,
         patchPlanningContext: String,
@@ -1619,6 +1601,20 @@ final class AIOrchestrator {
             from: executionPlan,
             runtimePhasePlan: runtimePhasePlan
         )
+        guard !phaseExecutionPlans.isEmpty else {
+            let fallbackTelemetry = AgentRuntimeTelemetry(
+                phase: "Runtime actions",
+                retryCause: retryCause,
+                validationGateStatus: "not_available",
+                safetyMode: safetyMode
+            )
+            let fallbackReport = try await executeAgentRuntimePlan(
+                executionPlan,
+                repoRoot: root,
+                telemetry: fallbackTelemetry
+            )
+            return [fallbackReport]
+        }
         var reports: [AgentRuntimeReport] = []
         reports.reserveCapacity(phaseExecutionPlans.count)
 
@@ -1642,6 +1638,7 @@ final class AIOrchestrator {
             }
             reports.append(report)
             if report.validationOutcome.status == .blocked || !report.blockedActions.isEmpty {
+                logger.warning("agent.runtime.phase.blocked phase=\(phasePlan.phaseName, privacy: .public) validation=\(report.validationOutcome.detail, privacy: .public)")
                 break
             }
         }
@@ -1673,7 +1670,6 @@ final class AIOrchestrator {
                     .map { Self.normalizedWorkspacePath($0) }
                     .filter { !$0.isEmpty }
             )
-            guard !phaseTargetPaths.isEmpty else { continue }
 
             var phaseActions: [AgentPlannedAction] = []
             for action in executionPlan.actions {
@@ -1681,7 +1677,10 @@ final class AIOrchestrator {
                     continue
                 }
                 let actionPaths = action.action.targetPaths.map { Self.normalizedWorkspacePath($0) }
-                if !Set(actionPaths).isDisjoint(with: phaseTargetPaths) {
+                let actionPathSet = Set(actionPaths.filter { !$0.isEmpty })
+                let shouldMatch = (!phaseTargetPaths.isEmpty && !actionPathSet.isDisjoint(with: phaseTargetPaths))
+                    || (phaseTargetPaths.isEmpty && actionPathSet.isEmpty)
+                if shouldMatch {
                     phaseActions.append(action)
                     usedActionIDs.insert(action.id)
                 }
@@ -1720,12 +1719,14 @@ final class AIOrchestrator {
         return plans.isEmpty ? [("Runtime actions", "empty_phase_mapping", executionPlan)] : plans
     }
 
+    nonisolated private static let broadGoalSignalRegex = try! NSRegularExpression(
+        pattern: #"\b(feature|build|refactor|implement|architect|redesign|workflow|system|module|screen|flow)\b"#,
+        options: [.caseInsensitive]
+    )
+
     nonisolated private static func isBroadGoalSignal(_ goal: String) -> Bool {
-        let normalizedGoal = goal.lowercased()
-        return normalizedGoal.range(
-            of: #"\b(feature|build|refactor|implement|architect|redesign|workflow|system|module|screen|flow)\b"#,
-            options: .regularExpression
-        ) != nil
+        let range = NSRange(goal.startIndex..<goal.endIndex, in: goal)
+        return broadGoalSignalRegex.firstMatch(in: goal, options: [], range: range) != nil
     }
 
     private func executeAgentRuntimePlan(

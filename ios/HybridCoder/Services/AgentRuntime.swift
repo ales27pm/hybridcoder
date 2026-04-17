@@ -175,6 +175,30 @@ nonisolated enum AgentRuntime {
         let mergedPreflightFailures = reports.flatMap(\.preflightFailures)
         let mergedBlockers = uniquePreservingOrder(reports.flatMap(\.blockers))
         let didMakeProgress = reports.contains { $0.didMakeMeaningfulWorkspaceProgress }
+        let mergedPhaseTelemetry = uniquePreservingOrder(
+            reports.compactMap { report in
+                guard let phase = report.telemetry?.phase?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !phase.isEmpty else {
+                    return nil
+                }
+                return phase
+            }
+        )
+        let mergedValidationGateTelemetry = uniquePreservingOrder(
+            reports.compactMap { report in
+                guard let validationGateStatus = report.telemetry?.validationGateStatus?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !validationGateStatus.isEmpty else {
+                    return nil
+                }
+                return validationGateStatus
+            }
+        )
+        let mergedTelemetry = AgentRuntimeTelemetry(
+            phase: mergedPhaseTelemetry.isEmpty ? last.telemetry?.phase : mergedPhaseTelemetry.joined(separator: " → "),
+            retryCause: last.telemetry?.retryCause,
+            validationGateStatus: mergedValidationGateTelemetry.isEmpty ? last.telemetry?.validationGateStatus : mergedValidationGateTelemetry.joined(separator: " → "),
+            safetyMode: last.telemetry?.safetyMode
+        )
 
         return AgentRuntimeReport(
             executionPlan: last.executionPlan,
@@ -199,7 +223,7 @@ nonisolated enum AgentRuntime {
             ),
             attemptCount: reports.count,
             retryCount: reports.count - 1,
-            telemetry: last.telemetry
+            telemetry: mergedTelemetry
         )
     }
 
