@@ -450,7 +450,7 @@ nonisolated enum FastIntentPlanner {
         return actions
     }
 
-    static func goalFileOperationIntents(goal: String) -> [GoalFileOperationIntent] {
+    fileprivate static func goalFileOperationIntents(goal: String) -> [GoalFileOperationIntent] {
         parseCreateFolderIntents(goal)
         + parseRenameFolderIntents(goal)
         + parseDeleteFolderIntents(goal)
@@ -1003,7 +1003,7 @@ private enum PlanningRoute {
     case blueprintAware
 }
 
-private enum GoalFileOperationIntent {
+fileprivate enum GoalFileOperationIntent {
     case createFolder(path: String)
     case renameFolder(from: String, to: String)
     case deleteFolder(path: String)

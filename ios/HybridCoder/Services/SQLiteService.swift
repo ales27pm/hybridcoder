@@ -31,7 +31,7 @@ actor SQLiteService {
 
     typealias Row = [String: Value]
 
-    private let db: OpaquePointer
+    nonisolated(unsafe) private let db: OpaquePointer
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "SQLiteService")
     private let dbURL: URL
 
