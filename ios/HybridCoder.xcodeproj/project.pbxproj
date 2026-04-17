@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		A1B2C3D4E5F60123456789AD /* SpeziLLMLocal in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60123456789AC /* SpeziLLMLocal */; };
-		A1B2C3D4E5F60123456789AF /* SpeziLLMLocal in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60123456789AC /* SpeziLLMLocal */; };
 		C0DEC0DEC0DEC0DEC0DEC001 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEC0DEC0DEC0DEC0DEC004 /* AppIntents.framework */; };
 		C0DEC0DEC0DEC0DEC0DEC002 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEC0DEC0DEC0DEC0DEC004 /* AppIntents.framework */; };
 		C0DEC0DEC0DEC0DEC0DEC003 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEC0DEC0DEC0DEC0DEC004 /* AppIntents.framework */; };
@@ -19,8 +18,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/StanfordSpezi/SpeziLLM";
 			requirement = {
-				kind = branch;
-				branch = main;
+				kind = exactVersion;
+				version = 0.9.2;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -90,7 +89,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				C0DEC0DEC0DEC0DEC0DEC002 /* AppIntents.framework in Frameworks */,
-				A1B2C3D4E5F60123456789AF /* SpeziLLMLocal in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -169,7 +167,6 @@
 			);
 			name = HybridCoderTests;
 			packageProductDependencies = (
-				A1B2C3D4E5F60123456789AC /* SpeziLLMLocal */,
 			);
 			productName = HybridCoderTests;
 			productReference = 105FC5892E9EAD3200EA8BCF /* HybridCoderTests.xctest */;
