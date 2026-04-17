@@ -7,6 +7,6 @@ nonisolated enum ValidationScenarioBuilder {
     ) -> BlueprintValidationPlan {
         // TODO: Merge RuntimePhasePlan phasePlan.phases[*].checkpoint.validationScenarios with RuntimeBlueprint.validationPlan.
         let _ = phasePlan
-        blueprint.validationPlan
+        return blueprint.validationPlan
     }
 }
