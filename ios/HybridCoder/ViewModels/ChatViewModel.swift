@@ -32,7 +32,7 @@ final class ChatViewModel {
     private let preservedRecentTurnCount = 6
     private let maxFileOperationSummaries = 8
     private let maxFallbackSummaryCharacters = 900
-    private static let recentContextItemsLimit = ConversationMemoryLimits.pinnedContextItems
+    nonisolated private static let recentContextItemsLimit = ConversationMemoryLimits.pinnedContextItems
 
     private(set) var messages: [ChatMessage] = []
     var inputText: String = ""

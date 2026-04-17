@@ -107,7 +107,11 @@ final class AIOrchestrator {
     ) {
         let registry = ModelRegistry()
         self.modelRegistry = registry
-        self.embeddingService = LlamaEmbeddingService(modelID: registry.activeEmbeddingModelID, registry: registry)
+        self.embeddingService = LlamaEmbeddingService(
+            modelID: registry.activeEmbeddingModelID,
+            registry: registry,
+            bookmarkService: BookmarkService()
+        )
         self.modelDownload = ModelDownloadService(registry: registry)
         self.contextPolicyLoader = ContextPolicyLoader()
         self.promptTemplateService = promptTemplateService
@@ -320,7 +324,7 @@ final class AIOrchestrator {
     }
 
     private func makeQwenCoderService(modelID: String) -> QwenCoderService {
-        QwenCoderService(modelName: modelID)
+        QwenCoderService(modelName: modelID, bookmarkService: BookmarkService())
     }
 
     private func ensureQwenServiceMatchesActiveModel() async -> QwenCoderService {
