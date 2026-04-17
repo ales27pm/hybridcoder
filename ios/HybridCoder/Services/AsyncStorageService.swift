@@ -17,7 +17,7 @@ actor AsyncStorageService {
         }
     }
 
-    private let db: OpaquePointer
+    nonisolated(unsafe) private let db: OpaquePointer
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "AsyncStorageService")
 
     init(name: String = "async_storage.sqlite") throws {
