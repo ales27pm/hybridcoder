@@ -62,11 +62,11 @@ final class ModelRegistry {
     private let activeGenerationKey = "models.active.generation"
     private let activeCodeGenerationKey = "models.active.codeGeneration"
 
-    static let defaultEmbeddingModelID = "jina-embeddings-v3-Q4_K_M.gguf"
+    nonisolated static let defaultEmbeddingModelID = "jina-embeddings-v3-Q4_K_M.gguf"
     private let embeddingID = defaultEmbeddingModelID
-    static let defaultGenerationModelID = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
+    nonisolated static let defaultGenerationModelID = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
     private let generationID = defaultGenerationModelID
-    static let defaultCodeGenerationModelID = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
+    nonisolated static let defaultCodeGenerationModelID = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
     private let codeGenerationID = defaultCodeGenerationModelID
 
     init() {

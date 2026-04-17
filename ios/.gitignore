@@ -22,6 +22,7 @@ xcuserdata/
 .build/
 .swiftpm/
 Package.resolved
+!HybridCoder.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 
 # macOS
 .DS_Store
