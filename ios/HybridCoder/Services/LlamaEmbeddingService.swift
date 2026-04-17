@@ -6,7 +6,7 @@ actor LlamaEmbeddingService {
 
     private let modelID: String
     private let registry: ModelRegistry
-    private let bookmarkService = BookmarkService()
+    private let bookmarkService: BookmarkService
 
     nonisolated enum EmbeddingError: Error, LocalizedError, Sendable {
         case modelNotLoaded
@@ -97,7 +97,6 @@ actor LlamaEmbeddingService {
     private var modelURL: URL?
     private var cachedModelInfo: ModelInfo?
     private let platform = LLMLocalPlatform()
-    private var platformTask: Task<Void, Never>?
     private var session: LLMLocalSession?
     private let embeddingBackend: any EmbeddingBackend
 
@@ -112,10 +111,12 @@ actor LlamaEmbeddingService {
     init(
         modelID: String,
         registry: ModelRegistry,
+        bookmarkService: BookmarkService,
         embeddingBackend: (any EmbeddingBackend)? = nil
     ) {
         self.modelID = modelID
         self.registry = registry
+        self.bookmarkService = bookmarkService
         self.embeddingBackend = embeddingBackend ?? SpeziLLMDeterministicEmbeddingBackend()
     }
 
@@ -198,7 +199,7 @@ actor LlamaEmbeddingService {
 
     func unload() async {
         if let session {
-            await session.offload()
+            session.cancel()
         }
         session = nil
         modelURL = nil
@@ -213,12 +214,7 @@ actor LlamaEmbeddingService {
             return session
         }
 
-        if platformTask == nil {
-            platform.configure()
-            platformTask = Task { [platform] in
-                await platform.run()
-            }
-        }
+        platform.configure()
 
         let modelFileName = modelURL?.lastPathComponent ?? modelID
         let modelIdentifier = modelFileName.hasSuffix(".gguf") ? String(modelFileName.dropLast(5)) : modelFileName
