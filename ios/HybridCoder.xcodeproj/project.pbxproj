@@ -18,8 +18,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/StanfordSpezi/SpeziLLM";
 			requirement = {
-				kind = exactVersion;
-				version = 0.9.2;
+				kind = branch;
+				branch = main;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
