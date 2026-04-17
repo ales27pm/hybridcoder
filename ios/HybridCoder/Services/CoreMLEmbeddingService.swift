@@ -2,7 +2,7 @@ import Foundation
 import SpeziLLM
 import SpeziLLMLocal
 
-actor CoreMLEmbeddingService {
+actor LlamaEmbeddingService {
 
     private let modelID: String
     private let registry: ModelRegistry

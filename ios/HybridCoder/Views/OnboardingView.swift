@@ -110,7 +110,7 @@ struct OnboardingView: View {
                 modelRow(
                     icon: "waveform.badge.magnifyingglass",
                     name: orchestrator.modelRegistry.entry(for: orchestrator.modelRegistry.activeEmbeddingModelID)?.displayName ?? "CodeBERT",
-                    detail: "Semantic code search · llama.cpp embedding model"
+                    detail: "Semantic code search · SpeziLLM llama.cpp"
                 )
 
                 modelRow(

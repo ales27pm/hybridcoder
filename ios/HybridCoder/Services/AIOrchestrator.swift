@@ -56,7 +56,7 @@ final class AIOrchestrator {
 
     let repoAccess = RepoAccessService()
     let modelRegistry: ModelRegistry
-    let embeddingService: CoreMLEmbeddingService
+    let embeddingService: LlamaEmbeddingService
     let modelDownload: ModelDownloadService
     let contextPolicyLoader: ContextPolicyLoader
     let promptTemplateService: PromptTemplateService
@@ -107,7 +107,7 @@ final class AIOrchestrator {
     ) {
         let registry = ModelRegistry()
         self.modelRegistry = registry
-        self.embeddingService = CoreMLEmbeddingService(modelID: registry.activeEmbeddingModelID, registry: registry)
+        self.embeddingService = LlamaEmbeddingService(modelID: registry.activeEmbeddingModelID, registry: registry)
         self.modelDownload = ModelDownloadService(registry: registry)
         self.contextPolicyLoader = ContextPolicyLoader()
         self.promptTemplateService = promptTemplateService

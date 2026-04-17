@@ -8,8 +8,8 @@ struct ModelManagerView: View {
         ScrollView {
             VStack(spacing: 20) {
                 headerSection
-                coreMLModelCard(for: orchestrator.modelRegistry.activeEmbeddingModelID)
-                coreMLModelCard(for: orchestrator.modelRegistry.activeCodeGenerationModelID)
+                modelCard(for: orchestrator.modelRegistry.activeEmbeddingModelID)
+                modelCard(for: orchestrator.modelRegistry.activeCodeGenerationModelID)
                 huggingFaceTokenCard
                 foundationModelCard
             }
@@ -33,7 +33,7 @@ struct ModelManagerView: View {
                     .foregroundStyle(.white)
             }
 
-            Text("All inference runs locally: Apple Foundation Models route/plan, CodeBERT handles retrieval, and Qwen coder handles code generation via SpeziLLM llama.cpp.")
+            Text("All inference runs locally: Apple Foundation Models handle routing/planning, CodeBERT handles retrieval, and Qwen coder handles code generation via SpeziLLM llama.cpp.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
         }
@@ -41,7 +41,7 @@ struct ModelManagerView: View {
     }
 
     @ViewBuilder
-    private func coreMLModelCard(for modelID: String) -> some View {
+    private func modelCard(for modelID: String) -> some View {
         let model = orchestrator.modelRegistry.entry(for: modelID)
         let installState = model?.installState ?? .notInstalled
         let loadState = model?.loadState ?? .unloaded
@@ -59,7 +59,7 @@ struct ModelManagerView: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
 
-                    Text(isEmbedding ? "Semantic code search · llama.cpp embeddings" : "Code generation · SpeziLLM llama.cpp")
+                    Text(isEmbedding ? "Semantic code search · SpeziLLM llama.cpp" : "Code generation · SpeziLLM llama.cpp")
                         .font(.caption2)
                         .foregroundStyle(Theme.dimText)
                 }

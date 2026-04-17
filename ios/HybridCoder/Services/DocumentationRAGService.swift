@@ -27,7 +27,7 @@ actor DocumentationRAGService {
         }
     }
 
-    private let embeddingService: CoreMLEmbeddingService
+    private let embeddingService: LlamaEmbeddingService
     private let store: DocumentationRAGStore?
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "DocumentationRAG")
 
@@ -37,7 +37,7 @@ actor DocumentationRAGService {
     private var indexedSourceIDs: Set<UUID> = []
     private var isEvicted: Bool = false
 
-    init(embeddingService: CoreMLEmbeddingService) {
+    init(embeddingService: LlamaEmbeddingService) {
         self.embeddingService = embeddingService
         do {
             self.store = try DocumentationRAGStore.makeDefault()
