@@ -243,8 +243,21 @@ final class ModelRegistry {
             .appendingPathComponent(scoped, isDirectory: true)
     }
 
+    func isModelInstalledInExternalModelsFolder(modelID: String) -> Bool {
+        guard let entry = entries[modelID], entry.files.isEmpty == false else {
+            return false
+        }
+
+        let modelsDirectory = Self.externalModelsRoot
+        return entry.files.allSatisfy { file in
+            FileManager.default.fileExists(
+                atPath: modelsDirectory.appendingPathComponent(file.localPath).path(percentEncoded: false)
+            )
+        }
+    }
+
     func isCodeGenerationModelInstalled(modelID: String) -> Bool {
-        areCodeGenerationModelFilesInstalled(modelID: modelID)
+        isModelInstalledInExternalModelsFolder(modelID: modelID)
     }
 
     func isCodeGenerationModelMarkedInstalled(modelID: String) -> Bool {
@@ -257,12 +270,7 @@ final class ModelRegistry {
             return false
         }
 
-        let modelsDirectory = Self.externalModelsRoot
-        return entry.files.allSatisfy { file in
-            FileManager.default.fileExists(
-                atPath: modelsDirectory.appendingPathComponent(file.localPath).path(percentEncoded: false)
-            )
-        }
+        return isModelInstalledInExternalModelsFolder(modelID: modelID)
     }
 
     func markCodeGenerationModelInstalled(modelID: String) {

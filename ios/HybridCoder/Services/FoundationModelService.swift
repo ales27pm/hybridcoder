@@ -35,7 +35,7 @@ final class FoundationModelService {
     }
 
     func refreshStatus() {
-        let installed = registry.isCodeGenerationModelInstalled(modelID: modelID)
+        let installed = registry.isModelInstalledInExternalModelsFolder(modelID: modelID)
         isAvailable = installed
 
         if installed {
