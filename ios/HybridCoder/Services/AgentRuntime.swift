@@ -10,6 +10,13 @@ nonisolated struct AgentCoordinatorLayerSummary: Sendable {
     let detail: String
 }
 
+nonisolated struct AgentRuntimeTelemetry: Sendable {
+    let phase: String?
+    let retryCause: String?
+    let validationGateStatus: String?
+    let safetyMode: String?
+}
+
 nonisolated struct AgentRuntimeReport: Sendable {
     let executionPlan: AgentExecutionPlan
     let plannedActions: [AgentPlannedAction]
@@ -26,6 +33,7 @@ nonisolated struct AgentRuntimeReport: Sendable {
     let coordinatorSummary: AgentCoordinatorLayerSummary
     let attemptCount: Int
     let retryCount: Int
+    let telemetry: AgentRuntimeTelemetry?
 
     var didExecuteWorkspaceActions: Bool {
         didMakeMeaningfulWorkspaceProgress
@@ -58,6 +66,20 @@ nonisolated struct AgentRuntimeReport: Sendable {
         lines.append("Planner: \(plannerSummary.strategy).")
         lines.append("Coordinator: \(coordinatorSummary.phase).")
         lines.append("Validation: \(validationOutcome.detail)")
+        if let telemetry {
+            if let phase = telemetry.phase, !phase.isEmpty {
+                lines.append("Phase: \(phase).")
+            }
+            if let retryCause = telemetry.retryCause, !retryCause.isEmpty {
+                lines.append("Retry cause: \(retryCause).")
+            }
+            if let validationGateStatus = telemetry.validationGateStatus, !validationGateStatus.isEmpty {
+                lines.append("Validation gate: \(validationGateStatus).")
+            }
+            if let safetyMode = telemetry.safetyMode, !safetyMode.isEmpty {
+                lines.append("Safety mode: \(safetyMode).")
+            }
+        }
 
         if !changedFiles.isEmpty {
             let preview = changedFiles.prefix(4).joined(separator: ", ")
@@ -73,7 +95,10 @@ nonisolated struct AgentRuntimeReport: Sendable {
 }
 
 nonisolated enum AgentRuntime {
-    static func makeReport(from outcome: AgentExecutionOutcome) -> AgentRuntimeReport {
+    static func makeReport(
+        from outcome: AgentExecutionOutcome,
+        telemetry: AgentRuntimeTelemetry? = nil
+    ) -> AgentRuntimeReport {
         let workspace = outcome.executionPlan.workspace
         let plannedActions = outcome.executionPlan.actions
         let blockedActions = outcome.blockedActions
@@ -133,7 +158,8 @@ nonisolated enum AgentRuntime {
                 detail: "Coordinator inspected files before writes, executed actions in order, collected blockers, and produced validation output."
             ),
             attemptCount: max(1, outcome.attemptCount),
-            retryCount: max(0, outcome.retryCount)
+            retryCount: max(0, outcome.retryCount),
+            telemetry: telemetry
         )
     }
 
@@ -149,6 +175,30 @@ nonisolated enum AgentRuntime {
         let mergedPreflightFailures = reports.flatMap(\.preflightFailures)
         let mergedBlockers = uniquePreservingOrder(reports.flatMap(\.blockers))
         let didMakeProgress = reports.contains { $0.didMakeMeaningfulWorkspaceProgress }
+        let mergedPhaseTelemetry = uniquePreservingOrder(
+            reports.compactMap { report in
+                guard let phase = report.telemetry?.phase?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !phase.isEmpty else {
+                    return nil
+                }
+                return phase
+            }
+        )
+        let mergedValidationGateTelemetry = uniquePreservingOrder(
+            reports.compactMap { report in
+                guard let validationGateStatus = report.telemetry?.validationGateStatus?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !validationGateStatus.isEmpty else {
+                    return nil
+                }
+                return validationGateStatus
+            }
+        )
+        let mergedTelemetry = AgentRuntimeTelemetry(
+            phase: mergedPhaseTelemetry.isEmpty ? last.telemetry?.phase : mergedPhaseTelemetry.joined(separator: " → "),
+            retryCause: last.telemetry?.retryCause,
+            validationGateStatus: mergedValidationGateTelemetry.isEmpty ? last.telemetry?.validationGateStatus : mergedValidationGateTelemetry.joined(separator: " → "),
+            safetyMode: last.telemetry?.safetyMode
+        )
 
         return AgentRuntimeReport(
             executionPlan: last.executionPlan,
@@ -172,7 +222,8 @@ nonisolated enum AgentRuntime {
                 detail: "Coordinator executed \(reports.count) attempt(s) with \(reports.count - 1) replan iteration(s). \(last.coordinatorSummary.detail)"
             ),
             attemptCount: reports.count,
-            retryCount: reports.count - 1
+            retryCount: reports.count - 1,
+            telemetry: mergedTelemetry
         )
     }
 

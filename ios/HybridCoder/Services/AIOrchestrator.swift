@@ -1273,36 +1273,87 @@ final class AIOrchestrator {
 
         let trimmedGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         let safeGoal = trimmedGoal.isEmpty ? "Improve the active workspace" : trimmedGoal
-        let workspace = await agentWorkspaceContext(repoRoot: root)
+        var workspace = await agentWorkspaceContext(repoRoot: root)
+        var runtimeSession = WorkspaceRuntimeSession(
+            goal: safeGoal,
+            workspace: workspace,
+            workspaceRoot: root
+        )
+        let shouldUseGoalDrivenPhases = Self.isBroadGoalSignal(safeGoal)
         let runtimeStart = Date()
         let planningStart = Date()
+        var runtimeBlueprint: RuntimeBlueprint?
+        var runtimePhasePlan: RuntimePhasePlan?
+        if shouldUseGoalDrivenPhases {
+            runtimeBlueprint = await runtimeSession.prepareBlueprint(repoAccess: repoAccess)
+            if let runtimeBlueprint {
+                runtimePhasePlan = PhasePlanner.makePlan(from: runtimeBlueprint)
+            }
+        }
         var executionPlan = try await initialAgentRuntimeExecutionPlan(
             goal: safeGoal,
             workspace: workspace,
-            patchPlanningContext: patchPlanningContext
+            patchPlanningContext: patchPlanningContext,
+            runtimeBlueprint: runtimeBlueprint,
+            runtimePhasePlan: runtimePhasePlan
         )
         recordGoalToPlanLatency(startedAt: planningStart)
         var reports: [AgentRuntimeReport] = []
         var completedWriteActionSignatures: Set<String> = []
+        var latestRetryCause: String?
+        let safetyMode = activeWorkspaceSource == .prototype ? "prototype" : "repository"
 
         for attempt in 1...Self.agentRuntimeMaximumAttempts {
-            let report: AgentRuntimeReport
-            do {
-                report = try await executeAgentRuntimePlan(
-                    executionPlan,
-                    repoRoot: root
-                )
-            } catch {
-                recordWorkspaceSafetyViolationIfNeeded(error)
-                throw error
+            // Intentionally refresh workspace/session each attempt so retries re-evaluate runtime context
+            // against the latest filesystem state after prior phase execution.
+            workspace = await agentWorkspaceContext(repoRoot: root)
+            runtimeSession = WorkspaceRuntimeSession(
+                goal: safeGoal,
+                workspace: workspace,
+                workspaceRoot: root
+            )
+            if shouldUseGoalDrivenPhases {
+                runtimeBlueprint = await runtimeSession.prepareBlueprint(repoAccess: repoAccess)
+                if let runtimeBlueprint {
+                    runtimePhasePlan = PhasePlanner.makePlan(from: runtimeBlueprint)
+                } else {
+                    runtimePhasePlan = nil
+                }
             }
+            executionPlan = AgentExecutionPlan(
+                goal: executionPlan.goal,
+                workspace: workspace,
+                actions: executionPlan.actions,
+                fallbackPatchPlan: executionPlan.fallbackPatchPlan,
+                executionMode: executionPlan.executionMode
+            )
+
+            let phaseReports = try await executeGoalRuntimeAttemptPhases(
+                executionPlan: executionPlan,
+                runtimePhasePlan: runtimePhasePlan,
+                repoRoot: root,
+                retryCause: latestRetryCause,
+                safetyMode: safetyMode
+            )
+            guard !phaseReports.isEmpty else {
+                break
+            }
+            let report = AgentRuntime.mergeReports(phaseReports)
             reports.append(report)
             completedWriteActionSignatures.formUnion(
                 report.succeededActions.compactMap(\.action.retryActionSignature)
             )
 
-            let shouldRetry = attempt < Self.agentRuntimeMaximumAttempts
-                && shouldRetryAgentRuntime(after: report)
+            let classification = RetryPolicyEngine.classifyFailure(
+                report: report,
+                attempt: attempt,
+                maxAttempts: Self.agentRuntimeMaximumAttempts
+            )
+            let retryDecision = RetryPolicyEngine.shouldRetry(
+                classification: classification
+            )
+            latestRetryCause = retryDecision.reason
+            let shouldRetry = retryDecision.shouldRetry && attempt < Self.agentRuntimeMaximumAttempts
 
             guard shouldRetry else { break }
 
@@ -1317,7 +1368,9 @@ final class AIOrchestrator {
                 goal: safeGoal,
                 workspace: workspace,
                 retryPatchPlan: retryPatchPlan,
-                completedWriteActionSignatures: completedWriteActionSignatures
+                completedWriteActionSignatures: completedWriteActionSignatures,
+                runtimeBlueprint: runtimeBlueprint,
+                runtimePhasePlan: runtimePhasePlan
             ) else {
                 break
             }
@@ -1384,12 +1437,16 @@ final class AIOrchestrator {
     private func initialAgentRuntimeExecutionPlan(
         goal: String,
         workspace: AgentWorkspaceContext,
-        patchPlanningContext: String
+        patchPlanningContext: String,
+        runtimeBlueprint: RuntimeBlueprint?,
+        runtimePhasePlan: RuntimePhasePlan?
     ) async throws -> AgentExecutionPlan {
         let goalFirstPlan = IntentPlanner.planActions(
             goal: goal,
             workspace: workspace,
-            patchPlan: nil
+            patchPlan: nil,
+            runtimeBlueprint: runtimeBlueprint,
+            runtimePhasePlan: runtimePhasePlan
         )
         let hasGoalWriteActions = goalFirstPlan.actions.contains { $0.action.isWriteAction }
         if hasGoalWriteActions {
@@ -1401,28 +1458,10 @@ final class AIOrchestrator {
             goal: goal,
             workspace: workspace,
             patchPlan: patchPlan,
-            executionMode: .goalDriven
+            executionMode: .goalDriven,
+            runtimeBlueprint: runtimeBlueprint,
+            runtimePhasePlan: runtimePhasePlan
         )
-    }
-
-    private func shouldRetryAgentRuntime(after report: AgentRuntimeReport) -> Bool {
-        if report.patchResult.updatedPlan.pendingCount > 0 {
-            return true
-        }
-
-        if !report.blockedActions.isEmpty {
-            return true
-        }
-
-        if report.validationOutcome.status == .blocked {
-            return true
-        }
-
-        if !report.patchResult.failures.isEmpty || !report.preflightFailures.isEmpty {
-            return true
-        }
-
-        return false
     }
 
     private func replanPatchForAgentRuntimeRetry(
@@ -1452,13 +1491,17 @@ final class AIOrchestrator {
         goal: String,
         workspace: AgentWorkspaceContext,
         retryPatchPlan: PatchPlan?,
-        completedWriteActionSignatures: Set<String>
+        completedWriteActionSignatures: Set<String>,
+        runtimeBlueprint: RuntimeBlueprint?,
+        runtimePhasePlan: RuntimePhasePlan?
     ) -> AgentExecutionPlan? {
         let planned = IntentPlanner.planActions(
             goal: goal,
             workspace: workspace,
             patchPlan: retryPatchPlan,
-            executionMode: .goalDriven
+            executionMode: .goalDriven,
+            runtimeBlueprint: runtimeBlueprint,
+            runtimePhasePlan: runtimePhasePlan
         )
         let filteredActions = filterRetryActions(
             planned.actions,
@@ -1547,15 +1590,141 @@ final class AIOrchestrator {
         return patchPlanningContext + "\n\n" + executionSummary
     }
 
+    private func executeGoalRuntimeAttemptPhases(
+        executionPlan: AgentExecutionPlan,
+        runtimePhasePlan: RuntimePhasePlan?,
+        repoRoot root: URL,
+        retryCause: String?,
+        safetyMode: String
+    ) async throws -> [AgentRuntimeReport] {
+        let phaseExecutionPlans = Self.phaseExecutionPlans(
+            from: executionPlan,
+            runtimePhasePlan: runtimePhasePlan
+        )
+        var reports: [AgentRuntimeReport] = []
+        reports.reserveCapacity(phaseExecutionPlans.count)
+
+        for phasePlan in phaseExecutionPlans {
+            let telemetry = AgentRuntimeTelemetry(
+                phase: phasePlan.phaseName,
+                retryCause: retryCause,
+                validationGateStatus: phasePlan.validationGateStatus,
+                safetyMode: safetyMode
+            )
+            let report: AgentRuntimeReport
+            do {
+                report = try await executeAgentRuntimePlan(
+                    phasePlan.plan,
+                    repoRoot: root,
+                    telemetry: telemetry
+                )
+            } catch {
+                recordWorkspaceSafetyViolationIfNeeded(error)
+                throw error
+            }
+            reports.append(report)
+            if report.validationOutcome.status == .blocked || !report.blockedActions.isEmpty {
+                logger.warning("agent.runtime.phase.blocked phase=\(phasePlan.phaseName, privacy: .public) validation=\(report.validationOutcome.detail, privacy: .public)")
+                break
+            }
+        }
+
+        return reports
+    }
+
+    nonisolated private static func phaseExecutionPlans(
+        from executionPlan: AgentExecutionPlan,
+        runtimePhasePlan: RuntimePhasePlan?
+    ) -> [(phaseName: String, validationGateStatus: String, plan: AgentExecutionPlan)] {
+        guard let runtimePhasePlan else {
+            return [("Runtime actions", "not_available", executionPlan)]
+        }
+
+        let orderedPhases = runtimePhasePlan.phases.sorted { $0.order < $1.order }
+        guard !orderedPhases.isEmpty else {
+            return [("Runtime actions", "empty_phase_plan", executionPlan)]
+        }
+
+        var usedActionIDs: Set<UUID> = []
+        var plans: [(phaseName: String, validationGateStatus: String, plan: AgentExecutionPlan)] = []
+        plans.reserveCapacity(orderedPhases.count + 1)
+
+        for phase in orderedPhases {
+            let phaseTargetPaths = Set(
+                phase.actions
+                    .flatMap(\.targetPaths)
+                    .map { Self.normalizedWorkspacePath($0) }
+                    .filter { !$0.isEmpty }
+            )
+
+            var phaseActions: [AgentPlannedAction] = []
+            for action in executionPlan.actions {
+                if usedActionIDs.contains(action.id) {
+                    continue
+                }
+                let actionPaths = action.action.targetPaths.map { Self.normalizedWorkspacePath($0) }
+                let actionPathSet = Set(actionPaths.filter { !$0.isEmpty })
+                let shouldMatch = (!phaseTargetPaths.isEmpty && !actionPathSet.isDisjoint(with: phaseTargetPaths))
+                    || (phaseTargetPaths.isEmpty && actionPathSet.isEmpty)
+                if shouldMatch {
+                    phaseActions.append(action)
+                    usedActionIDs.insert(action.id)
+                }
+            }
+
+            guard !phaseActions.isEmpty else { continue }
+
+            plans.append((
+                phaseName: "Phase \(phase.order): \(phase.objective)",
+                validationGateStatus: phase.checkpoint.validationScenarios.isEmpty ? "checkpoint_optional" : "checkpoint_required",
+                plan: AgentExecutionPlan(
+                    goal: executionPlan.goal,
+                    workspace: executionPlan.workspace,
+                    actions: phaseActions,
+                    fallbackPatchPlan: executionPlan.fallbackPatchPlan,
+                    executionMode: executionPlan.executionMode
+                )
+            ))
+        }
+
+        let remainingActions = executionPlan.actions.filter { !usedActionIDs.contains($0.id) }
+        if !remainingActions.isEmpty {
+            plans.append((
+                phaseName: "Phase fallback",
+                validationGateStatus: "checkpoint_optional",
+                plan: AgentExecutionPlan(
+                    goal: executionPlan.goal,
+                    workspace: executionPlan.workspace,
+                    actions: remainingActions,
+                    fallbackPatchPlan: executionPlan.fallbackPatchPlan,
+                    executionMode: executionPlan.executionMode
+                )
+            ))
+        }
+
+        return plans.isEmpty ? [("Runtime actions", "empty_phase_mapping", executionPlan)] : plans
+    }
+
+    nonisolated private static let broadGoalSignalRegex = try! NSRegularExpression(
+        pattern: #"\b(feature|build|refactor|implement|architect|redesign|workflow|system|module|screen|flow)\b"#,
+        options: [.caseInsensitive]
+    )
+
+    nonisolated private static func isBroadGoalSignal(_ goal: String) -> Bool {
+        let range = NSRange(goal.startIndex..<goal.endIndex, in: goal)
+        return broadGoalSignalRegex.firstMatch(in: goal, options: [], range: range) != nil
+    }
+
     private func executeAgentRuntimePlan(
         _ executionPlan: AgentExecutionPlan,
-        repoRoot root: URL
+        repoRoot root: URL,
+        telemetry: AgentRuntimeTelemetry? = nil
     ) async throws -> AgentRuntimeReport {
         let outcome = try await ExecutionCoordinator.executeActionPlan(
             executionPlan,
             dependencies: makeAgentRuntimeDependencies(repoRoot: root)
         )
-        return AgentRuntime.makeReport(from: outcome)
+        return AgentRuntime.makeReport(from: outcome, telemetry: telemetry)
     }
 
     private func makeAgentRuntimeDependencies(repoRoot root: URL) -> ExecutionCoordinator.Dependencies {
