@@ -450,7 +450,7 @@ nonisolated enum FastIntentPlanner {
         return actions
     }
 
-    static func goalFileOperationIntents(goal: String) -> [GoalFileOperationIntent] {
+    fileprivate static func goalFileOperationIntents(goal: String) -> [GoalFileOperationIntent] {
         parseCreateFolderIntents(goal)
         + parseRenameFolderIntents(goal)
         + parseDeleteFolderIntents(goal)
