@@ -2,6 +2,8 @@
 
 Date: 2026-04-03
 
+Runtime summary (as of 2026-04-17): HybridCoder runtime calls map to `QwenCoderService` and `FoundationModelService`, both backed by SpeziLLM/SpeziLLMLocal + llama.cpp, with model discovery anchored to `Files > On My iPhone > Hybrid Coder > Models/` (`ModelRegistry.externalModelsRoot`).
+
 ## Scope reviewed
 
 I reviewed the following upstream sources from `badlogic/pi-mono`:
@@ -15,7 +17,7 @@ I reviewed the following upstream sources from `badlogic/pi-mono`:
 
 ## What is directly reusable for HybridCoder
 
-HybridCoder is an iOS-first Swift app with Foundation Models + CoreML orchestration. We should reuse **patterns and algorithms**, not TypeScript runtime internals.
+HybridCoder is an iOS-first Swift app using SpeziLLM/SpeziLLMLocal + llama.cpp services for local orchestration and generation. We should reuse **patterns and algorithms**, not TypeScript runtime internals.
 
 ### 1) Hierarchical context-file loading (high value, low-medium effort)
 
@@ -70,13 +72,13 @@ HybridCoder is an iOS-first Swift app with Foundation Models + CoreML orchestrat
 
 **Recommended adaptation:**
 - Add a conversation transcript manager with token budget checks.
-- Summarize older turns into a `CompactionEntry` equivalent using Foundation Models.
+- Summarize older turns into a `CompactionEntry` equivalent using the local Qwen runtime services.
 - Preserve recent turns and include a compacted summary segment in future prompts.
 
 ## What we should *not* directly port
 
 - Terminal/TUI command stack, slash-command router, and CLI-specific runtime lifecycle.
-- Provider/account abstractions not needed for our current FoundationModels-only design.
+- Provider/account abstractions not needed for our current SpeziLLM/SpeziLLMLocal + llama.cpp design.
 - Package-manager-driven extension discovery at npm scale (too heavy for current app scope).
 
 ## Suggested implementation order for HybridCoder

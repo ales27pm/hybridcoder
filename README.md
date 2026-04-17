@@ -7,13 +7,15 @@ HybridCoder is an on-device iOS coding studio that is being refocused into a Rea
 - SwiftUI host app
 - local workspace and project state
 - chat-driven local coding workflow
-- Foundation Models orchestration
-- Core ML semantic retrieval
-- Qwen-based code generation
+- SpeziLLM/SpeziLLMLocal orchestration over llama.cpp GGUF runtimes
+- semantic retrieval backed by local embedding models
+- Qwen 2.5 Coder generation and explanation services
 - patch planning and editing flows
 - imported repository and prototype handling
 
 ## What already exists
+
+HybridCoder runtime summary (as of 2026-04-17): the app routes local LLM orchestration through `FoundationModelService` and `QwenCoderService`, both backed by SpeziLLM/SpeziLLMLocal + llama.cpp, with models resolved from `Files > On My iPhone > Hybrid Coder > Models/` via `ModelRegistry.externalModelsRoot`.
 
 The repository already contains a real local LLM coding core:
 

@@ -20,12 +20,14 @@ HybridCoder is currently a SwiftUI iOS app with:
 
 ## What is already implemented in the LLM coding core
 
+Runtime summary (as of 2026-04-17): HybridCoder's active runtime stack is SpeziLLM/SpeziLLMLocal with llama.cpp sessions (`LLMLocalPlatform`/`LLMLocalSession`) behind `QwenCoderService` and `FoundationModelService`, and model files are resolved from `Files > On My iPhone > Hybrid Coder > Models/` through `ModelRegistry.externalModelsRoot`.
+
 The current repo already has a meaningful local coding stack:
 
 1. chat-driven route selection
 2. semantic retrieval over indexed code
-3. Qwen-based code generation and code explanation
-4. Foundation Models-based explanation and patch planning
+3. Qwen 2.5 Coder code generation and code explanation via `QwenCoderService`
+4. local orchestration and patch planning via `FoundationModelService`, running through SpeziLLM/SpeziLLMLocal + llama.cpp
 5. exact-match patch application to the active workspace
 
 This means the repo is already beyond placeholders for the LLM coding core.

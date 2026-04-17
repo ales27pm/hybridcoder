@@ -4,10 +4,12 @@ This document consolidates the context-window investigation and the practical im
 
 ## Current state in HybridCoder
 
+Runtime summary (as of 2026-04-17): the current local runtime stack is SpeziLLM/SpeziLLMLocal + llama.cpp (see `QwenCoderService` and `FoundationModelService`), and runtime model files are expected in `Files > On My iPhone > Hybrid Coder > Models/` via `ModelRegistry.externalModelsRoot`.
+
 HybridCoder now uses a split strategy:
 
-- Apple Foundation Models stay on small, context-sensitive orchestration paths.
-- Qwen via CoreMLPipelines handles code generation and repository-grounded explanations.
+- SpeziLLM/SpeziLLMLocal + llama.cpp power local orchestration and generation paths.
+- Qwen 2.5 Coder services handle code generation, repository-grounded explanations, and patch planning flows.
 - `PromptContextBudget` currently sets:
   - `foundationContextCap = 2000`
   - `qwenContextCap = 32_000`
@@ -29,7 +31,7 @@ This is a better working baseline than the previous safety-first settings, but t
 
 The best practical path is not a single bigger number. It is a layered system:
 
-1. Keep Foundation Models on the smallest orchestration paths.
+1. Keep orchestration prompts compact while staying on the SpeziLLM/SpeziLLMLocal + llama.cpp runtime.
 2. Keep Qwen on code-heavy and repository-heavy work.
 3. Increase effective context before trying to brute-force raw context.
 4. Pack prompts by token budget rather than character count whenever possible.
@@ -54,9 +56,9 @@ Recommended first-pass values:
 
 Notes:
 
-- `550` is the practical Foundation ceiling under the current `foundationContextCap`, `minimumCodeContextBudget`, and `maximumPolicyContextBudget` values.
+- `550` is the practical orchestration ceiling under the current `foundationContextCap`, `minimumCodeContextBudget`, and `maximumPolicyContextBudget` values.
 - Qwen can absorb the full `2400` retained-chat target without starving code context.
-- Larger Foundation conversation slices should wait for Phase 3 token-aware repacking rather than squeezing code budget further with character-based clipping.
+- Larger Orchestration conversation slices should wait for Phase 3 token-aware repacking rather than squeezing code budget further with character-based clipping.
 
 Why:
 
@@ -148,7 +150,7 @@ Potential future extension:
 
 Why:
 
-- Foundation remains the right tool for short structured reasoning.
+- The orchestration path remains the right tool for short structured reasoning.
 - Qwen excels at large code-context work.
 - This preserves stability while raising effective usable context.
 
@@ -213,7 +215,7 @@ Update prompt construction to:
 
 ## What not to do first
 
-Avoid starting by trying to force Foundation Models to carry much larger repo context.
+Avoid starting by trying to force orchestration prompts to carry much larger repo context.
 
 Refrain from model-level RoPE-extension experiments inside app orchestration code.
 
