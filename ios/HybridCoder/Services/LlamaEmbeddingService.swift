@@ -68,7 +68,7 @@ actor LlamaEmbeddingService {
                 response += chunk
             }
 
-            return try decodeEmbeddingPayload(response)
+            return try Self.decodeEmbeddingPayload(response)
         }
 
         nonisolated static func decodeEmbeddingPayload(_ response: String) throws -> [Float] {
@@ -91,10 +91,6 @@ actor LlamaEmbeddingService {
             } catch {
                 throw EmbeddingError.outputParseFailure("Malformed embedding payload: \(error.localizedDescription)")
             }
-        }
-
-        func decodeEmbeddingPayload(_ response: String) throws -> [Float] {
-            try Self.decodeEmbeddingPayload(response)
         }
     }
 
@@ -123,7 +119,7 @@ actor LlamaEmbeddingService {
         self.embeddingBackend = embeddingBackend ?? SpeziLLMDeterministicEmbeddingBackend()
     }
 
-    private let maxSequenceLength = 512
+    private static let defaultMaxSequenceLength = 512
 
     var isLoaded: Bool {
         modelURL != nil && session != nil
@@ -154,7 +150,7 @@ actor LlamaEmbeddingService {
                 inputNames: ["text"],
                 outputNames: ["embedding"],
                 embeddingDimension: metadata?.embeddingDimension ?? 0,
-                maxSequenceLength: metadata?.maxSequenceLength ?? maxSequenceLength
+                maxSequenceLength: metadata?.maxSequenceLength ?? Self.defaultMaxSequenceLength
             )
 
             await MainActor.run {
@@ -280,7 +276,7 @@ actor LlamaEmbeddingService {
             inputNames: ["text"],
             outputNames: ["embedding"],
             embeddingDimension: dimension,
-            maxSequenceLength: maxSequenceLength
+            maxSequenceLength: Self.defaultMaxSequenceLength
         )
     }
 
