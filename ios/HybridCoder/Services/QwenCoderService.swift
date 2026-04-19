@@ -15,7 +15,7 @@ actor QwenCoderService {
     private(set) var tokensPerSecond: Double = 0
     private(set) var loadProgress: Double = 0
 
-    private let platform = LLMLocalPlatform()
+    private var platform: LLMLocalPlatform?
     private var session: LLMLocalSession?
     private var shouldUnloadAfterGeneration: Bool = false
 
@@ -224,10 +224,16 @@ actor QwenCoderService {
             return session
         }
 
-        platform.configure()
+        if platform == nil {
+            platform = LLMLocalPlatform()
+            platform?.configure()
+        }
 
         let modelIdentifier = modelName.hasSuffix(".gguf") ? String(modelName.dropLast(5)) : modelName
         let schema = LLMLocalSchema(model: .custom(id: modelIdentifier), injectIntoContext: false)
+        guard let platform else {
+            throw QwenError.pipelineUnavailable("Failed to initialize llama.cpp platform.")
+        }
         let created = platform(with: schema)
         try await created.setup()
         session = created
@@ -241,6 +247,7 @@ actor QwenCoderService {
 
     private func performUnload() {
         session = nil
+        platform = nil
         isLoaded = false
         isLoading = false
         tokensPerSecond = 0

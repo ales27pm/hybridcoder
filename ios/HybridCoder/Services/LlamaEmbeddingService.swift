@@ -96,7 +96,7 @@ actor LlamaEmbeddingService {
 
     private var modelURL: URL?
     private var cachedModelInfo: ModelInfo?
-    private let platform = LLMLocalPlatform()
+    private var platform: LLMLocalPlatform?
     private var session: LLMLocalSession?
     private let embeddingBackend: any EmbeddingBackend
 
@@ -202,6 +202,7 @@ actor LlamaEmbeddingService {
             session.cancel()
         }
         session = nil
+        platform = nil
         modelURL = nil
         cachedModelInfo = nil
         await MainActor.run {
@@ -214,11 +215,17 @@ actor LlamaEmbeddingService {
             return session
         }
 
-        platform.configure()
+        if platform == nil {
+            platform = LLMLocalPlatform()
+            platform?.configure()
+        }
 
         let modelFileName = modelURL?.lastPathComponent ?? modelID
         let modelIdentifier = modelFileName.hasSuffix(".gguf") ? String(modelFileName.dropLast(5)) : modelFileName
         let schema = LLMLocalSchema(model: .custom(id: modelIdentifier), injectIntoContext: false)
+        guard let platform else {
+            throw EmbeddingError.inferenceFailure("Failed to initialize llama.cpp platform.")
+        }
         let created = platform(with: schema)
         try await created.setup()
         session = created
