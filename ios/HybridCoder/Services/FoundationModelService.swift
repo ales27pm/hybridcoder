@@ -25,7 +25,10 @@ final class FoundationModelService {
     init(registry: ModelRegistry, modelID: String) {
         self.registry = registry
         self.modelID = modelID
-        self.qwenService = QwenCoderService(modelName: modelID, bookmarkService: BookmarkService())
+        self.qwenService = QwenCoderService(
+            modelName: registry.resolvedLocalModelName(for: modelID),
+            bookmarkService: BookmarkService()
+        )
         refreshStatus()
     }
 
