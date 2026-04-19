@@ -207,8 +207,6 @@ final class ModelRegistry {
     }
 
     func hasAnyGenerationModelReady() -> Bool {
-        // Readiness gate for chat execution must align with route resolution
-        // on the active orchestration runtime.
         return isReady(modelID: activeGenerationModelID)
     }
 
@@ -216,12 +214,36 @@ final class ModelRegistry {
         BundledEmbeddingAssets.modelsRootURL
     }
 
-    nonisolated static var externalModelsRoot: URL {
-        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+    nonisolated static var documentsRoot: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        return documents
+    }
+
+    nonisolated static var externalModelsRoot: URL {
+        documentsRoot.appendingPathComponent("Models", isDirectory: true)
+    }
+
+    nonisolated static var legacyExternalModelsRoot: URL {
+        documentsRoot
             .appendingPathComponent("HybridCoder", isDirectory: true)
             .appendingPathComponent("Models", isDirectory: true)
+    }
+
+    nonisolated static func candidateExternalModelsRoots(preferredRoot: URL? = nil) -> [URL] {
+        var urls: [URL] = []
+        if let preferredRoot {
+            urls.append(preferredRoot.standardizedFileURL)
+        }
+        urls.append(externalModelsRoot.standardizedFileURL)
+        urls.append(legacyExternalModelsRoot.standardizedFileURL)
+
+        var seen: Set<String> = []
+        return urls.filter { url in
+            let key = url.path(percentEncoded: false)
+            if seen.contains(key) { return false }
+            seen.insert(key)
+            return true
+        }
     }
 
     func downloadedModelDirectory(for modelID: String) -> URL {
@@ -255,16 +277,17 @@ final class ModelRegistry {
             .appendingPathComponent(scoped, isDirectory: true)
     }
 
-    func isModelInstalledInExternalModelsFolder(modelID: String) -> Bool {
+    func isModelInstalledInExternalModelsFolder(modelID: String, preferredRoot: URL? = nil) -> Bool {
         guard let entry = entries[modelID], entry.files.isEmpty == false else {
             return false
         }
 
-        let modelsDirectory = Self.externalModelsRoot
-        return entry.files.allSatisfy { file in
-            FileManager.default.fileExists(
-                atPath: modelsDirectory.appendingPathComponent(file.localPath).path(percentEncoded: false)
-            )
+        return Self.candidateExternalModelsRoots(preferredRoot: preferredRoot).contains { modelsDirectory in
+            entry.files.allSatisfy { file in
+                FileManager.default.fileExists(
+                    atPath: modelsDirectory.appendingPathComponent(file.localPath).path(percentEncoded: false)
+                )
+            }
         }
     }
 
@@ -297,7 +320,6 @@ final class ModelRegistry {
             try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
             try payload.write(to: markerURL, atomically: true, encoding: .utf8)
         } catch {
-            // Best-effort marker only. The real source of truth is a successful pipeline warm-up.
         }
     }
 
@@ -318,11 +340,13 @@ final class ModelRegistry {
         try? FileManager.default.removeItem(at: codeGenerationSnapshotDirectory(for: modelID))
 
         if let entry = entries[modelID], entry.runtime == .llamaCppGGUF {
-            let modelsDirectory = Self.externalModelsRoot
-            for file in entry.files {
-                let fileURL = modelsDirectory.appendingPathComponent(file.localPath)
-                if FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) {
-                    try? FileManager.default.removeItem(at: fileURL)
+            let candidateRoots = Self.candidateExternalModelsRoots()
+            for modelsDirectory in candidateRoots {
+                for file in entry.files {
+                    let fileURL = modelsDirectory.appendingPathComponent(file.localPath)
+                    if FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) {
+                        try? FileManager.default.removeItem(at: fileURL)
+                    }
                 }
             }
         }
