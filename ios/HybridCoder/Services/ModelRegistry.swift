@@ -63,11 +63,14 @@ final class ModelRegistry {
     private let activeCodeGenerationKey = "models.active.codeGeneration"
 
     nonisolated static let defaultEmbeddingModelID = "jina-embeddings-v3-Q4_K_M.gguf"
-    private let embeddingID = defaultEmbeddingModelID
-    nonisolated static let defaultGenerationModelID = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
-    private let generationID = defaultGenerationModelID
-    nonisolated static let defaultCodeGenerationModelID = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
-    private let codeGenerationID = defaultCodeGenerationModelID
+    nonisolated static let sharedQwenArtifactFilename = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
+    nonisolated static let defaultGenerationModelID = "qwen2.5-coder-3b-orchestration"
+    nonisolated static let defaultCodeGenerationModelID = sharedQwenArtifactFilename
+
+    private let embeddingID = Self.defaultEmbeddingModelID
+    private let generationID = Self.defaultGenerationModelID
+    private let codeGenerationID = Self.defaultCodeGenerationModelID
+    private let legacyGenerationID = Self.sharedQwenArtifactFilename
 
     init() {
         let embeddingFiles: [ModelFile] = [
@@ -75,7 +78,10 @@ final class ModelRegistry {
         ]
 
         let qwenFiles: [ModelFile] = [
-            ModelFile(remotePath: codeGenerationID, localPath: codeGenerationID)
+            ModelFile(
+                remotePath: Self.sharedQwenArtifactFilename,
+                localPath: Self.sharedQwenArtifactFilename
+            )
         ]
 
         let initialEntries: [String: Entry] = [
@@ -121,7 +127,8 @@ final class ModelRegistry {
         let resolvedEmbeddingModelID = initialEntries[savedEmbeddingModelID] == nil ? embeddingID : savedEmbeddingModelID
 
         let savedGenerationModelID = UserDefaults.standard.string(forKey: activeGenerationKey) ?? generationID
-        let resolvedGenerationModelID = initialEntries[savedGenerationModelID]?.capability == .orchestration ? savedGenerationModelID : generationID
+        let normalizedGenerationModelID = savedGenerationModelID == legacyGenerationID ? generationID : savedGenerationModelID
+        let resolvedGenerationModelID = initialEntries[normalizedGenerationModelID]?.capability == .orchestration ? normalizedGenerationModelID : generationID
 
         let savedCodeGenerationModelID = UserDefaults.standard.string(forKey: activeCodeGenerationKey) ?? codeGenerationID
         let resolvedCodeGenerationModelID = initialEntries[savedCodeGenerationModelID]?.capability == .codeGeneration ? savedCodeGenerationModelID : codeGenerationID
@@ -131,6 +138,7 @@ final class ModelRegistry {
         self.activeGenerationModelID = resolvedGenerationModelID
         self.activeCodeGenerationModelID = resolvedCodeGenerationModelID
 
+        UserDefaults.standard.set(resolvedEmbeddingModelID, forKey: activeEmbeddingKey)
         UserDefaults.standard.set(resolvedGenerationModelID, forKey: activeGenerationKey)
         UserDefaults.standard.set(resolvedCodeGenerationModelID, forKey: activeCodeGenerationKey)
     }
@@ -141,6 +149,10 @@ final class ModelRegistry {
 
     func entry(for id: String) -> Entry? {
         entries[id]
+    }
+
+    func resolvedLocalModelName(for modelID: String) -> String {
+        entries[modelID]?.files.first?.localPath ?? modelID
     }
 
     func setActiveEmbeddingModel(id: String) {
