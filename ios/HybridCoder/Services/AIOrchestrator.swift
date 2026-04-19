@@ -1382,6 +1382,9 @@ final class AIOrchestrator {
             executionPlan = retryExecutionPlan
         }
 
+        guard !reports.isEmpty else {
+            throw OrchestratorError.patchApplicationFailed("Agent runtime could not produce an execution report.")
+        }
         let report = AgentRuntime.mergeReports(reports)
         recordGoalRuntimeKPIs(goal: safeGoal, runtimeStartedAt: runtimeStart, report: report)
 
