@@ -7,12 +7,6 @@ struct ModelManagerView: View {
         ScrollView {
             VStack(spacing: 20) {
                 headerSection
-                if let error = orchestrator.modelDownload.downloadError {
-                    Text(error)
-                        .font(.caption2)
-                        .foregroundStyle(.red.opacity(0.8))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
                 modelCard(for: orchestrator.modelRegistry.activeEmbeddingModelID)
                 modelCard(for: orchestrator.modelRegistry.activeCodeGenerationModelID)
                 foundationModelCard
@@ -91,6 +85,13 @@ struct ModelManagerView: View {
                 Text(reason)
                     .font(.caption2)
                     .foregroundStyle(.red.opacity(0.85))
+                    .lineLimit(3)
+            }
+
+            if let error = orchestrator.modelDownload.downloadError(for: modelID) {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(.red.opacity(0.8))
                     .lineLimit(3)
             }
 
@@ -210,7 +211,7 @@ struct ModelManagerView: View {
                 case .installed:
                     return ("Found", Theme.accent.opacity(0.8))
                 case .downloading:
-                    return ("Downloading", .orange)
+                    return ("Preparing", .orange)
                 case .notInstalled:
                     return ("Not found", .orange)
                 }
@@ -232,7 +233,7 @@ struct ModelManagerView: View {
         case (.installed, .unloaded):
             return "Found in Models folder · tap Load to activate"
         case (.installed, .failed):
-            return "Found but load failed"
+            return "Found in Models folder but load failed"
         case (.downloading, _), (_, .loading):
             return "Preparing…"
         case (.notInstalled, _):

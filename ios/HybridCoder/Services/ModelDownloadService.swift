@@ -11,6 +11,7 @@ final class ModelDownloadService {
     private(set) var isDownloading: Bool = false
     private(set) var downloadProgress: Double = 0
     private(set) var downloadError: String?
+    private(set) var downloadErrorModelID: String?
     private(set) var shouldSuggestTokenInput: Bool = false
 
     private let registry: ModelRegistry
@@ -51,6 +52,7 @@ final class ModelDownloadService {
         // User acted on auth guidance (save or clear), so hide stale token prompts/errors.
         shouldSuggestTokenInput = false
         downloadError = nil
+        downloadErrorModelID = nil
     }
 
     func refreshInstallState(modelID: String) async {
@@ -59,6 +61,7 @@ final class ModelDownloadService {
             registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
             if isReady {
                 downloadError = nil
+                downloadErrorModelID = nil
                 shouldSuggestTokenInput = false
             }
             return
@@ -68,6 +71,7 @@ final class ModelDownloadService {
         registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
         if isReady {
             downloadError = nil
+            downloadErrorModelID = nil
             shouldSuggestTokenInput = false
         }
     }
@@ -85,6 +89,7 @@ final class ModelDownloadService {
         guard let entry = registry.entry(for: modelID) else { return }
         guard entry.runtime != .llamaCppGGUF else {
             downloadError = "llama.cpp models are loaded from Files > On My iPhone > HybridCoder > Models/."
+            downloadErrorModelID = modelID
             shouldSuggestTokenInput = false
             let isReady = registry.isModelInstalledInExternalModelsFolder(modelID: modelID)
             registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
@@ -94,6 +99,7 @@ final class ModelDownloadService {
         isDownloading = true
         downloadProgress = 0
         downloadError = nil
+        downloadErrorModelID = nil
         shouldSuggestTokenInput = false
         registry.setInstallState(for: modelID, .downloading(progress: 0))
 
@@ -191,14 +197,17 @@ final class ModelDownloadService {
             registry.setInstallState(for: modelID, .installed)
         } catch is CancellationError {
             downloadError = "Download was cancelled."
+            downloadErrorModelID = modelID
             registry.setInstallState(for: modelID, .notInstalled)
         } catch let error as DownloadError {
             downloadError = error.localizedDescription
+            downloadErrorModelID = modelID
             shouldSuggestTokenInput = error.shouldSuggestHuggingFaceTokenInput
             logger.error("DownloadError modelID=\(modelID, privacy: .public) details=\(error.triageSummary, privacy: .private)")
             registry.setInstallState(for: modelID, .notInstalled)
         } catch {
             downloadError = "Download failed: \(error.localizedDescription)"
+            downloadErrorModelID = modelID
             logger.error("Unexpected download failure modelID=\(modelID, privacy: .public) error=\(error.localizedDescription, privacy: .private)")
             registry.setInstallState(for: modelID, .notInstalled)
         }
@@ -214,6 +223,7 @@ final class ModelDownloadService {
             registry.setLoadState(for: modelID, .unloaded)
             downloadProgress = 0
             downloadError = nil
+            downloadErrorModelID = nil
             return
         }
 
@@ -227,6 +237,12 @@ final class ModelDownloadService {
         registry.setLoadState(for: modelID, .unloaded)
         downloadProgress = 0
         downloadError = nil
+        downloadErrorModelID = nil
+    }
+
+    func downloadError(for modelID: String) -> String? {
+        guard downloadErrorModelID == modelID else { return nil }
+        return downloadError
     }
 
     private func updateProgress(completed: Double, total: Double, modelID: String) {
