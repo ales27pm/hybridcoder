@@ -5,6 +5,15 @@ import Testing
 @MainActor
 struct ModelRegistryTests {
 
+    @Test("Registry keeps orchestration and code-generation model IDs distinct")
+    func generationAndCodeGenerationIDsAreDistinct() {
+        let registry = ModelRegistry()
+
+        #expect(registry.activeGenerationModelID != registry.activeCodeGenerationModelID)
+        #expect(registry.entry(for: registry.activeGenerationModelID)?.capability == .orchestration)
+        #expect(registry.entry(for: registry.activeCodeGenerationModelID)?.capability == .codeGeneration)
+    }
+
     @Test("Code generation model defaults to not installed")
     func codeGenerationDefaultsToNotInstalled() {
         let registry = ModelRegistry()
@@ -23,6 +32,9 @@ struct ModelRegistryTests {
         #expect(entry?.files.contains(where: {
             $0.localPath == "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
         }) == true)
+
+        let orchestrationEntry = registry.entry(for: registry.activeGenerationModelID)
+        #expect(orchestrationEntry?.files == entry?.files)
     }
 
     @Test("External models folder is stored in Documents/HybridCoder/Models")
