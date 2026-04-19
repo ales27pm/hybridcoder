@@ -67,10 +67,10 @@ final class ModelRegistry {
     nonisolated static let defaultGenerationModelID = "qwen2.5-coder-3b-orchestration"
     nonisolated static let defaultCodeGenerationModelID = sharedQwenArtifactFilename
 
-    private let embeddingID = Self.defaultEmbeddingModelID
-    private let generationID = Self.defaultGenerationModelID
-    private let codeGenerationID = Self.defaultCodeGenerationModelID
-    private let legacyGenerationID = Self.sharedQwenArtifactFilename
+    private let embeddingID = ModelRegistry.defaultEmbeddingModelID
+    private let generationID = ModelRegistry.defaultGenerationModelID
+    private let codeGenerationID = ModelRegistry.defaultCodeGenerationModelID
+    private let legacyGenerationID = ModelRegistry.sharedQwenArtifactFilename
 
     init() {
         let embeddingFiles: [ModelFile] = [
@@ -79,8 +79,8 @@ final class ModelRegistry {
 
         let qwenFiles: [ModelFile] = [
             ModelFile(
-                remotePath: Self.sharedQwenArtifactFilename,
-                localPath: Self.sharedQwenArtifactFilename
+                remotePath: ModelRegistry.sharedQwenArtifactFilename,
+                localPath: ModelRegistry.sharedQwenArtifactFilename
             )
         ]
 
