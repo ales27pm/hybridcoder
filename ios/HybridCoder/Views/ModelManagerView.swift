@@ -7,6 +7,12 @@ struct ModelManagerView: View {
         ScrollView {
             VStack(spacing: 20) {
                 headerSection
+                if let error = orchestrator.modelDownload.downloadError {
+                    Text(error)
+                        .font(.caption2)
+                        .foregroundStyle(.red.opacity(0.8))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 modelCard(for: orchestrator.modelRegistry.activeEmbeddingModelID)
                 modelCard(for: orchestrator.modelRegistry.activeCodeGenerationModelID)
                 foundationModelCard
@@ -88,12 +94,6 @@ struct ModelManagerView: View {
                     .lineLimit(3)
             }
 
-            if let error = orchestrator.modelDownload.downloadError {
-                Text(error)
-                    .font(.caption2)
-                    .foregroundStyle(.red.opacity(0.8))
-            }
-
             HStack {
                 Text(installSummary(installState: installState, loadState: loadState, isEmbedding: isEmbedding))
                     .font(.caption2)
@@ -109,7 +109,8 @@ struct ModelManagerView: View {
             }
 
             HStack(spacing: 8) {
-                if installState == .notInstalled && !isBusy(installState: installState, loadState: loadState) {
+                if (installState == .notInstalled || installState == .installed) &&
+                    !isBusy(installState: installState, loadState: loadState) {
                     Button("Refresh") {
                         Task {
                             await orchestrator.modelDownload.refreshInstallState(modelID: modelID)
@@ -207,11 +208,11 @@ struct ModelManagerView: View {
             case .unloaded:
                 switch installState {
                 case .installed:
-                    return ("Downloaded", Theme.accent.opacity(0.8))
+                    return ("Found", Theme.accent.opacity(0.8))
                 case .downloading:
                     return ("Downloading", .orange)
                 case .notInstalled:
-                    return ("Not Downloaded", .orange)
+                    return ("Not found", .orange)
                 }
             }
         }()
@@ -227,11 +228,11 @@ struct ModelManagerView: View {
     private func installSummary(installState: ModelRegistry.InstallState, loadState: ModelRegistry.LoadState, isEmbedding: Bool) -> String {
         switch (installState, loadState) {
         case (_, .loaded):
-            return "Downloaded and loaded · \(isEmbedding ? "llama.cpp runtime" : "SpeziLLM llama.cpp runtime")"
+            return "Found and loaded · \(isEmbedding ? "llama.cpp runtime" : "SpeziLLM llama.cpp runtime")"
         case (.installed, .unloaded):
             return "Found in Models folder · tap Load to activate"
         case (.installed, .failed):
-            return "Downloaded but load failed"
+            return "Found but load failed"
         case (.downloading, _), (_, .loading):
             return "Preparing…"
         case (.notInstalled, _):

@@ -57,11 +57,19 @@ final class ModelDownloadService {
         if registry.entry(for: modelID)?.runtime == .llamaCppGGUF {
             let isReady = registry.isModelInstalledInExternalModelsFolder(modelID: modelID)
             registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
+            if isReady {
+                downloadError = nil
+                shouldSuggestTokenInput = false
+            }
             return
         }
 
         let isReady = await Self.validateDownloadedAssets(modelID: modelID, registry: registry)
         registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
+        if isReady {
+            downloadError = nil
+            shouldSuggestTokenInput = false
+        }
     }
 
     func downloadIfNeeded() async {
