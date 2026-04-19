@@ -229,10 +229,71 @@ final class ModelRegistry {
             .appendingPathComponent("Models", isDirectory: true)
     }
 
+    nonisolated static func normalizedModelsRoot(from rawURL: URL?) -> URL? {
+        guard var url = rawURL?.standardizedFileURL else { return nil }
+
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path(percentEncoded: false), isDirectory: &isDirectory),
+           !isDirectory.boolValue {
+            url = url.deletingLastPathComponent()
+        }
+
+        let lastComponent = url.lastPathComponent.lowercased()
+        if lastComponent == "models" {
+            return url
+        }
+        if lastComponent == "documents" {
+            return url.appendingPathComponent("Models", isDirectory: true)
+        }
+        if lastComponent == "hybridcoder" {
+            return url.appendingPathComponent("Models", isDirectory: true)
+        }
+        return url
+    }
+
+    nonisolated static func ensureExternalModelsDirectoryExists() throws {
+        try FileManager.default.createDirectory(at: externalModelsRoot, withIntermediateDirectories: true)
+    }
+
+    nonisolated static func migrateLegacyExternalModelsIfNeeded() throws {
+        let fm = FileManager.default
+        let source = legacyExternalModelsRoot
+        let destination = externalModelsRoot
+        guard source.path(percentEncoded: false) != destination.path(percentEncoded: false) else { return }
+        guard fm.fileExists(atPath: source.path(percentEncoded: false)) else { return }
+
+        try ensureExternalModelsDirectoryExists()
+        guard let enumerator = fm.enumerator(
+            at: source,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        while let item = enumerator.nextObject() as? URL {
+            let values = try item.resourceValues(forKeys: [.isDirectoryKey])
+            if values.isDirectory == true {
+                continue
+            }
+
+            let relativePath = item.path.replacingOccurrences(of: source.path(percentEncoded: false) + "/", with: "")
+            let destinationURL = destination.appendingPathComponent(relativePath, isDirectory: false)
+            let parent = destinationURL.deletingLastPathComponent()
+            if !fm.fileExists(atPath: parent.path(percentEncoded: false)) {
+                try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+            }
+            if fm.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
+                continue
+            }
+            try fm.moveItem(at: item, to: destinationURL)
+        }
+    }
+
     nonisolated static func candidateExternalModelsRoots(preferredRoot: URL? = nil) -> [URL] {
         var urls: [URL] = []
-        if let preferredRoot {
-            urls.append(preferredRoot.standardizedFileURL)
+        if let normalizedPreferred = normalizedModelsRoot(from: preferredRoot) {
+            urls.append(normalizedPreferred)
         }
         urls.append(externalModelsRoot.standardizedFileURL)
         urls.append(legacyExternalModelsRoot.standardizedFileURL)
@@ -240,10 +301,51 @@ final class ModelRegistry {
         var seen: Set<String> = []
         return urls.filter { url in
             let key = url.path(percentEncoded: false)
-            if seen.contains(key) { return false }
+            if seen.contains(key) {
+                return false
+            }
             seen.insert(key)
             return true
         }
+    }
+
+    nonisolated static func resolveInstalledFile(named fileName: String, preferredRoot: URL? = nil) -> URL? {
+        for modelsRoot in candidateExternalModelsRoots(preferredRoot: preferredRoot) {
+            let direct = modelsRoot.appendingPathComponent(fileName, isDirectory: false)
+            if FileManager.default.fileExists(atPath: direct.path(percentEncoded: false)) {
+                return direct
+            }
+            if let discovered = recursivelyLocate(fileNamed: fileName, under: modelsRoot, maxDepth: 2) {
+                return discovered
+            }
+        }
+        return nil
+    }
+
+    nonisolated private static func recursivelyLocate(fileNamed fileName: String, under root: URL, maxDepth: Int) -> URL? {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: root.path(percentEncoded: false)) else { return nil }
+        guard let enumerator = fm.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        let rootDepth = root.pathComponents.count
+        while let item = enumerator.nextObject() as? URL {
+            let depth = item.pathComponents.count - rootDepth
+            if depth > maxDepth {
+                enumerator.skipDescendants()
+                continue
+            }
+            if item.lastPathComponent == fileName,
+               fm.fileExists(atPath: item.path(percentEncoded: false)) {
+                return item
+            }
+        }
+        return nil
     }
 
     func downloadedModelDirectory(for modelID: String) -> URL {
@@ -282,12 +384,8 @@ final class ModelRegistry {
             return false
         }
 
-        return Self.candidateExternalModelsRoots(preferredRoot: preferredRoot).contains { modelsDirectory in
-            entry.files.allSatisfy { file in
-                FileManager.default.fileExists(
-                    atPath: modelsDirectory.appendingPathComponent(file.localPath).path(percentEncoded: false)
-                )
-            }
+        return entry.files.allSatisfy { file in
+            Self.resolveInstalledFile(named: file.localPath, preferredRoot: preferredRoot) != nil
         }
     }
 
@@ -340,12 +438,11 @@ final class ModelRegistry {
         try? FileManager.default.removeItem(at: codeGenerationSnapshotDirectory(for: modelID))
 
         if let entry = entries[modelID], entry.runtime == .llamaCppGGUF {
-            let candidateRoots = Self.candidateExternalModelsRoots()
-            for modelsDirectory in candidateRoots {
+            for modelsDirectory in Self.candidateExternalModelsRoots() {
                 for file in entry.files {
-                    let fileURL = modelsDirectory.appendingPathComponent(file.localPath)
-                    if FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) {
-                        try? FileManager.default.removeItem(at: fileURL)
+                    let direct = modelsDirectory.appendingPathComponent(file.localPath)
+                    if FileManager.default.fileExists(atPath: direct.path(percentEncoded: false)) {
+                        try? FileManager.default.removeItem(at: direct)
                     }
                 }
             }
