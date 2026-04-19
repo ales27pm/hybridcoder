@@ -37,13 +37,19 @@ struct ModelRegistryTests {
         #expect(orchestrationEntry?.files == entry?.files)
     }
 
-    @Test("External models folder is stored in Documents/HybridCoder/Models")
+    @Test("External models folder defaults to Documents/Models and keeps legacy fallback")
     func externalModelsFolderPathIsInDocuments() {
         let root = ModelRegistry.externalModelsRoot.path(percentEncoded: false)
+        let legacyRoot = ModelRegistry.legacyExternalModelsRoot.path(percentEncoded: false)
+        let roots = ModelRegistry.candidateExternalModelsRoots().map { $0.path(percentEncoded: false) }
 
         #expect(root.contains("Documents"))
-        #expect(root.contains("HybridCoder"))
-        #expect(root.contains("Models"))
+        #expect(root.hasSuffix("/Models"))
+        #expect(legacyRoot.contains("Documents"))
+        #expect(legacyRoot.contains("HybridCoder"))
+        #expect(legacyRoot.hasSuffix("/Models"))
+        #expect(roots.contains(root))
+        #expect(roots.contains(legacyRoot))
     }
 
     @Test("Install marker can be written and cleared")
