@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ModelManagerView: View {
     let orchestrator: AIOrchestrator
-    @State private var huggingFaceToken: String = ""
 
     var body: some View {
         ScrollView {
@@ -10,15 +9,11 @@ struct ModelManagerView: View {
                 headerSection
                 modelCard(for: orchestrator.modelRegistry.activeEmbeddingModelID)
                 modelCard(for: orchestrator.modelRegistry.activeCodeGenerationModelID)
-                huggingFaceTokenCard
                 foundationModelCard
             }
             .padding(16)
         }
         .background(Theme.surfaceBg)
-        .onAppear {
-            huggingFaceToken = orchestrator.modelDownload.huggingFaceToken
-        }
     }
 
     private var headerSection: some View {
@@ -33,7 +28,7 @@ struct ModelManagerView: View {
                     .foregroundStyle(.white)
             }
 
-            Text("All inference runs locally via SpeziLLM llama.cpp. Keep model files in Files > On My iPhone > HybridCoder > Models/.")
+            Text("All inference runs locally via SpeziLLM llama.cpp. Place model files in Files > On My iPhone > HybridCoder > Models/, then tap Refresh.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
         }
@@ -75,28 +70,11 @@ struct ModelManagerView: View {
                         .tint(Theme.accent)
 
                     HStack {
-                        Text(isEmbedding ? "Downloading model…" : "Downloading / warming model…")
+                        Text("Preparing model…")
                             .font(.caption2)
                             .foregroundStyle(Theme.dimText)
                         Spacer()
                         Text("\(Int(progress * 100))%")
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(Theme.accent)
-                    }
-                }
-            }
-
-            if isEmbedding, orchestrator.modelDownload.isDownloading {
-                VStack(spacing: 4) {
-                    ProgressView(value: orchestrator.modelDownload.downloadProgress)
-                        .tint(Theme.accent)
-
-                    HStack {
-                        Text("Downloading model…")
-                            .font(.caption2)
-                            .foregroundStyle(Theme.dimText)
-                        Spacer()
-                        Text("\(Int(orchestrator.modelDownload.downloadProgress * 100))%")
                             .font(.system(.caption2, design: .monospaced))
                             .foregroundStyle(Theme.accent)
                     }
@@ -110,10 +88,11 @@ struct ModelManagerView: View {
                     .lineLimit(3)
             }
 
-            if isEmbedding, let error = orchestrator.modelDownload.downloadError {
+            if let error = orchestrator.modelDownload.downloadError(for: modelID) {
                 Text(error)
                     .font(.caption2)
                     .foregroundStyle(.red.opacity(0.8))
+                    .lineLimit(3)
             }
 
             HStack {
@@ -131,21 +110,15 @@ struct ModelManagerView: View {
             }
 
             HStack(spacing: 8) {
-                if installState == .notInstalled && !isBusy(installState: installState, loadState: loadState) {
-                    Button(isCodeGen ? "Download & Load" : "Download") {
+                if (installState == .notInstalled || installState == .installed) &&
+                    !isBusy(installState: installState, loadState: loadState) {
+                    Button("Refresh") {
                         Task {
-                            if isCodeGen {
-                                do {
-                                    try await orchestrator.warmUpCodeGenerationModel()
-                                } catch {}
-                            } else {
-                                await orchestrator.downloadActiveEmbeddingModel()
-                            }
+                            await orchestrator.modelDownload.refreshInstallState(modelID: modelID)
                         }
                     }
                     .font(.caption.weight(.medium))
-                    .buttonStyle(.borderedProminent)
-                    .tint(Theme.accent)
+                    .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
 
@@ -236,11 +209,11 @@ struct ModelManagerView: View {
             case .unloaded:
                 switch installState {
                 case .installed:
-                    return ("Downloaded", Theme.accent.opacity(0.8))
+                    return ("Found", Theme.accent.opacity(0.8))
                 case .downloading:
-                    return ("Downloading", .orange)
+                    return ("Preparing", .orange)
                 case .notInstalled:
-                    return ("Not Downloaded", .orange)
+                    return ("Not found", .orange)
                 }
             }
         }()
@@ -256,15 +229,15 @@ struct ModelManagerView: View {
     private func installSummary(installState: ModelRegistry.InstallState, loadState: ModelRegistry.LoadState, isEmbedding: Bool) -> String {
         switch (installState, loadState) {
         case (_, .loaded):
-            return "Downloaded and loaded · \(isEmbedding ? "llama.cpp runtime" : "SpeziLLM llama.cpp runtime")"
+            return "Found and loaded · \(isEmbedding ? "llama.cpp runtime" : "SpeziLLM llama.cpp runtime")"
         case (.installed, .unloaded):
-            return "Downloaded · tap Load to activate"
+            return "Found in Models folder · tap Load to activate"
         case (.installed, .failed):
-            return "Downloaded but load failed"
+            return "Found in Models folder but load failed"
         case (.downloading, _), (_, .loading):
-            return "Downloading and preparing…"
+            return "Preparing…"
         case (.notInstalled, _):
-            return "Not downloaded"
+            return "Model file not found in Models folder"
         }
     }
 
@@ -272,55 +245,6 @@ struct ModelManagerView: View {
         if case .downloading = installState { return true }
         if case .loading = loadState { return true }
         return false
-    }
-
-    private var huggingFaceTokenCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "key.fill")
-                    .font(.caption)
-                    .foregroundStyle(Theme.accent)
-                Text("Hugging Face Access Token")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white)
-            }
-
-            Text(tokenGuidanceText)
-                .font(.caption)
-                .foregroundStyle(Theme.dimText)
-
-            SecureField("hf_...", text: $huggingFaceToken)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .font(.system(.caption, design: .monospaced))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(Theme.inputBg, in: .rect(cornerRadius: 8))
-
-            HStack {
-                Button("Save Token") {
-                    orchestrator.modelDownload.setHuggingFaceToken(huggingFaceToken)
-                }
-                .font(.caption.weight(.medium))
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.accent)
-                .controlSize(.small)
-
-                Button("Clear") {
-                    huggingFaceToken = ""
-                    orchestrator.modelDownload.setHuggingFaceToken("")
-                }
-                .font(.caption.weight(.medium))
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-        }
-        .padding(14)
-        .background(Theme.cardBg, in: .rect(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Theme.border, lineWidth: 1)
-        )
     }
 
     private var foundationModelCard: some View {
@@ -358,13 +282,6 @@ struct ModelManagerView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Theme.border, lineWidth: 1)
         )
-    }
-
-    private var tokenGuidanceText: String {
-        if orchestrator.modelDownload.shouldSuggestTokenInput {
-            return "Download access was denied (401/403). Add a Hugging Face read token and retry."
-        }
-        return "Optional for private or gated Hugging Face repositories. Public model downloads usually do not require a token."
     }
 }
 
