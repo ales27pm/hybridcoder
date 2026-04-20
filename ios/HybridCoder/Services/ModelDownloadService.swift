@@ -60,43 +60,32 @@ final class ModelDownloadService {
     }
 
     func refreshInstallState(modelID: String) async {
-        if registry.entry(for: modelID)?.runtime == .llamaCppGGUF {
-            do {
-                try registry.ensureExternalModelsDirectoryExists()
-                try registry.migrateLegacyExternalModelsIfNeeded()
-            } catch {
-                logger.error("Failed to prepare local GGUF storage: \(error.localizedDescription, privacy: .private)")
-                let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
-                let fallbackReady = registry.isModelInstalledInExternalModelsFolder(
-                    modelID: modelID,
-                    preferredRoot: preferredRoot
-                )
-                registry.setInstallState(for: modelID, fallbackReady ? .installed : .notInstalled)
-                if fallbackReady {
-                    downloadError = nil
-                    downloadErrorModelID = nil
-                } else {
-                    downloadError = "Failed to prepare local Models folder. Verify Files > On My iPhone > Hybrid Coder > Models/ is accessible."
-                    downloadErrorModelID = modelID
-                }
-                shouldSuggestTokenInput = false
-                return
-            }
+        do {
+            try registry.ensureExternalModelsDirectoryExists()
+            try registry.migrateLegacyExternalModelsIfNeeded()
+        } catch {
+            logger.error("Failed to prepare local GGUF storage: \(error.localizedDescription, privacy: .private)")
             let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
-            let isReady = registry.isModelInstalledInExternalModelsFolder(
+            let fallbackReady = registry.isModelInstalledInExternalModelsFolder(
                 modelID: modelID,
                 preferredRoot: preferredRoot
             )
-            registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
-            if isReady {
+            registry.setInstallState(for: modelID, fallbackReady ? .installed : .notInstalled)
+            if fallbackReady {
                 downloadError = nil
                 downloadErrorModelID = nil
-                shouldSuggestTokenInput = false
+            } else {
+                downloadError = "Failed to prepare local Models folder. Verify Files > On My iPhone > Hybrid Coder > Models/ is accessible."
+                downloadErrorModelID = modelID
             }
+            shouldSuggestTokenInput = false
             return
         }
-
-        let isReady = await Self.validateDownloadedAssets(modelID: modelID, registry: registry)
+        let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+        let isReady = registry.isModelInstalledInExternalModelsFolder(
+            modelID: modelID,
+            preferredRoot: preferredRoot
+        )
         registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
         if isReady {
             downloadError = nil
@@ -116,75 +105,6 @@ final class ModelDownloadService {
         let modelID = modelID ?? activeEmbeddingModelID
         guard !isDownloading else { return }
         guard let entry = registry.entry(for: modelID) else { return }
-        guard entry.runtime != .llamaCppGGUF else {
-            isDownloading = true
-            downloadProgress = 0
-            downloadError = nil
-            downloadErrorModelID = nil
-            shouldSuggestTokenInput = false
-            registry.setInstallState(for: modelID, .downloading(progress: 0))
-
-            defer {
-                isDownloading = false
-            }
-
-            do {
-                try registry.ensureExternalModelsDirectoryExists()
-                try registry.migrateLegacyExternalModelsIfNeeded()
-                let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
-                let isReady = registry.isModelInstalledInExternalModelsFolder(
-                    modelID: modelID,
-                    preferredRoot: preferredRoot
-                )
-                if isReady {
-                    registry.setInstallState(for: modelID, .installed)
-                    downloadError = nil
-                    downloadErrorModelID = nil
-                    downloadProgress = 1.0
-                    return
-                }
-
-                if let remoteBaseURL = entry.remoteBaseURL {
-                    try await downloadExternalGGUFModel(
-                        modelID: modelID,
-                        entry: entry,
-                        remoteBaseURL: remoteBaseURL,
-                        preferredRoot: preferredRoot
-                    )
-                    registry.setInstallState(for: modelID, .installed)
-                    downloadError = nil
-                    downloadErrorModelID = nil
-                    downloadProgress = 1.0
-                } else {
-                    registry.setInstallState(for: modelID, .notInstalled)
-                    downloadError = "Local llama.cpp GGUF model not found. Place the file in Files > On My iPhone > Hybrid Coder > Models/, then tap Refresh to validate."
-                    downloadErrorModelID = modelID
-                }
-            } catch let error as DownloadError {
-                registry.setInstallState(for: modelID, .notInstalled)
-                downloadError = error.localizedDescription
-                downloadErrorModelID = modelID
-                shouldSuggestTokenInput = error.shouldSuggestHuggingFaceTokenInput
-                logger.error("DownloadError modelID=\(modelID, privacy: .public) details=\(error.triageSummary, privacy: .private)")
-            } catch {
-                logger.error("Failed to prepare/download local GGUF storage: \(error.localizedDescription, privacy: .private)")
-                let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
-                let fallbackReady = registry.isModelInstalledInExternalModelsFolder(
-                    modelID: modelID,
-                    preferredRoot: preferredRoot
-                )
-                registry.setInstallState(for: modelID, fallbackReady ? .installed : .notInstalled)
-                if fallbackReady {
-                    downloadError = nil
-                    downloadErrorModelID = nil
-                } else {
-                    downloadError = "Failed to prepare local Models folder. Verify Files > On My iPhone > Hybrid Coder > Models/ is accessible."
-                    downloadErrorModelID = modelID
-                }
-            }
-            return
-        }
-
         isDownloading = true
         downloadProgress = 0
         downloadError = nil
@@ -192,98 +112,44 @@ final class ModelDownloadService {
         shouldSuggestTokenInput = false
         registry.setInstallState(for: modelID, .downloading(progress: 0))
 
+        defer {
+            isDownloading = false
+        }
+
         do {
-            let fm = FileManager.default
-            let modelDir = registry.downloadedModelDirectory(for: modelID)
-            let tokenizerDir = registry.downloadedTokenizerDirectory(for: modelID)
-
-            try fm.createDirectory(at: modelDir, withIntermediateDirectories: true)
-            try fm.createDirectory(at: tokenizerDir, withIntermediateDirectories: true)
-
-            let allFiles = entry.files.map { file -> (URL, ModelRegistry.ModelFile) in
-                let isModelFile = file.localPath.hasPrefix("model/")
-                return (isModelFile ? modelDir : tokenizerDir, file)
+            try registry.ensureExternalModelsDirectoryExists()
+            try registry.migrateLegacyExternalModelsIfNeeded()
+            let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+            let isReady = registry.isModelInstalledInExternalModelsFolder(
+                modelID: modelID,
+                preferredRoot: preferredRoot
+            )
+            if isReady {
+                registry.setInstallState(for: modelID, .installed)
+                downloadError = nil
+                downloadErrorModelID = nil
+                downloadProgress = 1.0
+                return
             }
 
-            let totalCount = Double(allFiles.count)
-            var completed = 0.0
-
-            for (baseDir, file) in allFiles {
-                try Task.checkCancellation()
-                guard let remoteBaseURL = entry.remoteBaseURL else {
-                    throw DownloadError.modelNotDownloaded("Model \(entry.displayName) does not support remote downloads.")
-                }
-
-                let remoteURL = URL(string: "\(remoteBaseURL)/\(file.remotePath)")!
-                let localURL = baseDir.appendingPathComponent(file.localPath)
-
-                if fm.fileExists(atPath: localURL.path) {
-                    let requiresValidation = Self.shouldRedownloadExistingFile(localURL: localURL, modelFile: file)
-                    let hasInvalidJSON = requiresValidation
-                        ? await Self.isInvalidTokenizerOrManifestJSON(at: localURL)
-                        : false
-                    let shouldRedownload = requiresValidation && hasInvalidJSON
-                    if shouldRedownload {
-                        do {
-                            try fm.removeItem(at: localURL)
-                            logger.warning("Removed invalid cached model artifact path=\(localURL.path, privacy: .private)")
-                        } catch {
-                            logger.error("Failed to remove invalid cached artifact path=\(localURL.path, privacy: .private) error=\(error.localizedDescription, privacy: .private)")
-                            throw DownloadError.fileCorrupt("Failed to remove invalid cached file: \(file.localPath)")
-                        }
-                    } else {
-                        completed += 1
-                        updateProgress(completed: completed, total: totalCount, modelID: modelID)
-                        continue
-                    }
-                }
-
-                var request = URLRequest(url: remoteURL)
-                if remoteURL.host?.contains("huggingface.co") == true {
-                    let token = huggingFaceToken.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !token.isEmpty {
-                        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-                    }
-                }
-
-                let (tempURL, response) = try await URLSession.shared.download(for: request)
-
-                guard let httpResponse = response as? HTTPURLResponse,
-                      (200...299).contains(httpResponse.statusCode) else {
-                    let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-                    throw DownloadError.httpError(
-                        statusCode: code,
-                        remotePath: file.remotePath,
-                        modelID: modelID,
-                        repoBaseURL: entry.remoteBaseURL
-                    )
-                }
-
-                let parentDir = localURL.deletingLastPathComponent()
-                if !fm.fileExists(atPath: parentDir.path) {
-                    try fm.createDirectory(at: parentDir, withIntermediateDirectories: true)
-                }
-
-                if fm.fileExists(atPath: localURL.path) {
-                    try fm.removeItem(at: localURL)
-                }
-                try fm.moveItem(at: tempURL, to: localURL)
-                if Self.shouldValidateJSONArtifact(localPath: file.localPath),
-                   await Self.isInvalidTokenizerOrManifestJSON(at: localURL) {
-                    do {
-                        try fm.removeItem(at: localURL)
-                    } catch {
-                        throw DownloadError.fileCorrupt("Downloaded invalid JSON artifact and failed cleanup: \(file.localPath)")
-                    }
-                    throw DownloadError.fileCorrupt("Downloaded invalid JSON artifact: \(file.localPath)")
-                }
-
-                completed += 1
-                updateProgress(completed: completed, total: totalCount, modelID: modelID)
+            if let remoteBaseURL = entry.remoteBaseURL {
+                try await downloadExternalGGUFModel(
+                    modelID: modelID,
+                    entry: entry,
+                    remoteBaseURL: remoteBaseURL,
+                    preferredRoot: preferredRoot
+                )
+            } else {
+                throw DownloadError.modelNotDownloaded(
+                    "Local llama.cpp GGUF model not found. Place the file in Files > On My iPhone > Hybrid Coder > Models/, then tap Refresh to validate."
+                )
             }
 
             try await Self.validateDownloadedAssetsOrThrow(modelID: modelID, registry: registry)
             registry.setInstallState(for: modelID, .installed)
+            downloadError = nil
+            downloadErrorModelID = nil
+            downloadProgress = 1.0
         } catch is CancellationError {
             downloadError = "Download was cancelled."
             downloadErrorModelID = modelID
@@ -295,13 +161,21 @@ final class ModelDownloadService {
             logger.error("DownloadError modelID=\(modelID, privacy: .public) details=\(error.triageSummary, privacy: .private)")
             registry.setInstallState(for: modelID, .notInstalled)
         } catch {
-            downloadError = "Download failed: \(error.localizedDescription)"
-            downloadErrorModelID = modelID
-            logger.error("Unexpected download failure modelID=\(modelID, privacy: .public) error=\(error.localizedDescription, privacy: .private)")
-            registry.setInstallState(for: modelID, .notInstalled)
+            logger.error("Failed to prepare/download local GGUF storage: \(error.localizedDescription, privacy: .private)")
+            let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+            let fallbackReady = registry.isModelInstalledInExternalModelsFolder(
+                modelID: modelID,
+                preferredRoot: preferredRoot
+            )
+            registry.setInstallState(for: modelID, fallbackReady ? .installed : .notInstalled)
+            if fallbackReady {
+                downloadError = nil
+                downloadErrorModelID = nil
+            } else {
+                downloadError = "Failed to prepare local Models folder. Verify Files > On My iPhone > Hybrid Coder > Models/ is accessible."
+                downloadErrorModelID = modelID
+            }
         }
-
-        isDownloading = false
     }
 
     private func downloadExternalGGUFModel(
@@ -364,23 +238,8 @@ final class ModelDownloadService {
 
     func deleteDownloadedModels(modelID: String? = nil) async {
         let modelID = modelID ?? activeEmbeddingModelID
-        if registry.entry(for: modelID)?.runtime == .llamaCppGGUF {
-            let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
-            registry.deleteCodeGenerationModelAssets(modelID: modelID, preferredRoot: preferredRoot)
-            registry.setInstallState(for: modelID, .notInstalled)
-            registry.setLoadState(for: modelID, .unloaded)
-            downloadProgress = 0
-            downloadError = nil
-            downloadErrorModelID = nil
-            return
-        }
-
-        let fm = FileManager.default
-        let modelDir = registry.downloadedModelDirectory(for: modelID)
-        let tokenizerDir = registry.downloadedTokenizerDirectory(for: modelID)
-        try? fm.removeItem(at: modelDir)
-        try? fm.removeItem(at: tokenizerDir)
-
+        let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+        registry.deleteCodeGenerationModelAssets(modelID: modelID, preferredRoot: preferredRoot)
         registry.setInstallState(for: modelID, .notInstalled)
         registry.setLoadState(for: modelID, .unloaded)
         downloadProgress = 0
@@ -399,43 +258,7 @@ final class ModelDownloadService {
         registry.setInstallState(for: modelID, .downloading(progress: progress))
     }
 
-    private static func shouldRedownloadExistingFile(localURL: URL, modelFile: ModelRegistry.ModelFile) -> Bool {
-        // Guard against stale/corrupt cached tokenizer files (for example HTML error pages)
-        // that can cause tokenizer decode failures while still passing existence checks.
-        let name = localURL.lastPathComponent.lowercased()
-        let jsonArtifactNames: Set<String> = [
-            "tokenizer.json",
-            "tokenizer_config.json",
-            "special_tokens_map.json",
-            "manifest.json",
-            "metadata.json"
-        ]
-
-        if jsonArtifactNames.contains(name) { return true }
-
-        // Fallback to model registry local path in case naming changes after move/rename.
-        let registryPath = modelFile.localPath.lowercased()
-        if registryPath.hasSuffix("tokenizer.json") ||
-            registryPath.hasSuffix("tokenizer_config.json") ||
-            registryPath.hasSuffix("special_tokens_map.json") ||
-            registryPath.hasSuffix("manifest.json") ||
-            registryPath.hasSuffix("metadata.json") { return true }
-
-        return false
-    }
-
-    private static func shouldValidateJSONArtifact(localPath: String) -> Bool {
-        let normalized = localPath.lowercased()
-        return normalized.hasSuffix("tokenizer.json") ||
-            normalized.hasSuffix("tokenizer_config.json") ||
-            normalized.hasSuffix("special_tokens_map.json") ||
-            normalized.hasSuffix("manifest.json") ||
-            normalized.hasSuffix("metadata.json")
-    }
-
-    /// Validation tailored for tokenizer/manifest-style JSON artifacts:
-    /// accepts only top-level JSON objects or arrays of objects.
-    private static func isInvalidTokenizerOrManifestJSON(at url: URL) async -> Bool {
+    private static func isInvalidGGUFPayload(at url: URL) async -> Bool {
         await Task.detached(priority: .utility) {
             guard let data = try? Data(contentsOf: url), data.isEmpty == false else {
                 return true
@@ -449,11 +272,11 @@ final class ModelDownloadService {
                 }
             }
 
-            guard let json = try? JSONSerialization.jsonObject(with: data) else {
+            let ggufMagic = Data([0x47, 0x47, 0x55, 0x46]) // GGUF
+            guard data.count >= ggufMagic.count else {
                 return true
             }
-
-            return !(json is [String: Any] || json is [[String: Any]])
+            return !data.starts(with: ggufMagic)
         }.value
     }
 
@@ -467,30 +290,19 @@ final class ModelDownloadService {
     }
 
     private static func validateDownloadedAssetsOrThrow(modelID: String, registry: ModelRegistry) async throws {
-        let fm = FileManager.default
         guard let entry = registry.entry(for: modelID) else {
             throw DownloadError.fileCorrupt("Missing model registry entry for \(modelID)")
         }
-
-        if entry.runtime == .llamaCppGGUF {
-            guard registry.isModelInstalledInExternalModelsFolder(modelID: modelID) else {
-                throw DownloadError.fileCorrupt("Expected llama.cpp GGUF files in the external Models folder")
-            }
-            return
-        }
-
-        let modelDir = registry.downloadedModelDirectory(for: modelID)
-        let tokenizerDir = registry.downloadedTokenizerDirectory(for: modelID)
+        let preferredRoot = registry.preferredExternalModelsRoot()
+        let fm = FileManager.default
         for expectedFile in entry.files {
-            let baseDir = expectedFile.localPath.hasPrefix("model/") ? modelDir : tokenizerDir
-            let url = baseDir.appendingPathComponent(expectedFile.localPath)
-            guard fm.fileExists(atPath: url.path) else {
+            let url = preferredRoot.appendingPathComponent(expectedFile.localPath, isDirectory: false)
+            guard fm.fileExists(atPath: url.path(percentEncoded: false)) else {
                 throw DownloadError.fileCorrupt(expectedFile.localPath)
             }
-            if shouldValidateJSONArtifact(localPath: expectedFile.localPath),
-               await isInvalidTokenizerOrManifestJSON(at: url) {
+            if await isInvalidGGUFPayload(at: url) {
                 try? fm.removeItem(at: url)
-                throw DownloadError.fileCorrupt("Invalid JSON artifact: \(expectedFile.localPath)")
+                throw DownloadError.fileCorrupt("Invalid GGUF artifact: \(expectedFile.localPath)")
             }
         }
     }
