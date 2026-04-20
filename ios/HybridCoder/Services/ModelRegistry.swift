@@ -261,14 +261,12 @@ final class ModelRegistry {
             return url
         }
         if lastComponent == "documents" {
-            return url
-                .appendingPathComponent("Hybrid Coder", isDirectory: true)
-                .appendingPathComponent("Models", isDirectory: true)
+            return externalModelsRoot
         }
         if lastComponent == "hybridcoder" || lastComponent == "hybrid coder" {
             return url.appendingPathComponent("Models", isDirectory: true)
         }
-        return url
+        return externalModelsRoot
     }
 
     nonisolated static func ensureExternalModelsDirectoryExists() throws {
@@ -276,16 +274,7 @@ final class ModelRegistry {
     }
 
     nonisolated static func migrateLegacyExternalModelsIfNeeded() throws {
-        let destination = externalModelsRoot
         try ensureExternalModelsDirectoryExists()
-
-        try migrateLegacyModelFiles(from: legacyExternalModelsRoot, to: destination, fileManager: .default)
-        try migrateLegacyModelFiles(
-            from: legacyFlatExternalModelsRoot,
-            to: destination,
-            fileManager: .default,
-            movableRelativePaths: Set(defaultArtifactRelativePaths)
-        )
     }
 
     nonisolated static func candidateExternalModelsRoots(preferredRoot: URL? = nil) -> [URL] {
@@ -294,8 +283,6 @@ final class ModelRegistry {
             urls.append(normalizedPreferred)
         }
         urls.append(externalModelsRoot.standardizedFileURL)
-        urls.append(legacyExternalModelsRoot.standardizedFileURL)
-        urls.append(legacyFlatExternalModelsRoot.standardizedFileURL)
 
         var seen: Set<String> = []
         return urls.filter { url in
@@ -451,17 +438,7 @@ final class ModelRegistry {
     }
 
     func migrateLegacyExternalModelsIfNeeded() throws {
-        let destination = effectiveExternalModelsRoot
         try ensureExternalModelsDirectoryExists()
-
-        let movableRelativePaths = Set(entries.values.flatMap { $0.files.map(\.localPath) })
-        try Self.migrateLegacyModelFiles(from: effectiveLegacyExternalModelsRoot, to: destination, fileManager: .default)
-        try Self.migrateLegacyModelFiles(
-            from: effectiveLegacyFlatExternalModelsRoot,
-            to: destination,
-            fileManager: .default,
-            movableRelativePaths: movableRelativePaths
-        )
     }
 
     func deleteCodeGenerationModelAssets(modelID: String, preferredRoot: URL? = nil) {
@@ -486,22 +463,12 @@ final class ModelRegistry {
         externalModelsRootOverride ?? Self.externalModelsRoot
     }
 
-    private var effectiveLegacyExternalModelsRoot: URL {
-        legacyExternalModelsRootOverride ?? Self.legacyExternalModelsRoot
-    }
-
-    private var effectiveLegacyFlatExternalModelsRoot: URL {
-        legacyFlatExternalModelsRootOverride ?? Self.legacyFlatExternalModelsRoot
-    }
-
     private func candidateExternalModelsRoots(preferredRoot: URL? = nil) -> [URL] {
         var urls: [URL] = []
         if let normalizedPreferred = Self.normalizedModelsRoot(from: preferredRoot) {
             urls.append(normalizedPreferred)
         }
         urls.append(effectiveExternalModelsRoot.standardizedFileURL)
-        urls.append(effectiveLegacyExternalModelsRoot.standardizedFileURL)
-        urls.append(effectiveLegacyFlatExternalModelsRoot.standardizedFileURL)
 
         var seen: Set<String> = []
         return urls.filter { url in
@@ -537,67 +504,4 @@ final class ModelRegistry {
         return nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileNoSuchFileError
     }
 
-    private nonisolated static func migrateLegacyModelFiles(
-        from source: URL,
-        to destination: URL,
-        fileManager: FileManager,
-        movableRelativePaths: Set<String>? = nil
-    ) throws {
-        guard source.path(percentEncoded: false) != destination.path(percentEncoded: false) else { return }
-        guard fileManager.fileExists(atPath: source.path(percentEncoded: false)) else { return }
-        guard let enumerator = fileManager.enumerator(
-            at: source,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return
-        }
-
-        while let item = enumerator.nextObject() as? URL {
-            let values = try item.resourceValues(forKeys: [.isDirectoryKey])
-            if values.isDirectory == true {
-                continue
-            }
-            guard let relativePath = relativePath(for: item, under: source) else {
-                continue
-            }
-
-            let destinationURL = destination.appendingPathComponent(relativePath, isDirectory: false)
-            let parent = destinationURL.deletingLastPathComponent()
-            if !fileManager.fileExists(atPath: parent.path(percentEncoded: false)) {
-                try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
-            }
-            if fileManager.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
-                continue
-            }
-            let shouldMove = movableRelativePaths?.contains(relativePath) ?? true
-            if shouldMove {
-                do {
-                    try fileManager.moveItem(at: item, to: destinationURL)
-                } catch {
-                    try fileManager.copyItem(at: item, to: destinationURL)
-                    try fileManager.removeItem(at: item)
-                }
-            } else {
-                try fileManager.copyItem(at: item, to: destinationURL)
-            }
-        }
-    }
-
-    private nonisolated static func relativePath(for item: URL, under root: URL) -> String? {
-        let itemComponents = item.standardizedFileURL.pathComponents
-        let rootComponents = root.standardizedFileURL.pathComponents
-        guard itemComponents.count >= rootComponents.count else { return nil }
-        guard Array(itemComponents.prefix(rootComponents.count)) == rootComponents else { return nil }
-        let relativeComponents = itemComponents.dropFirst(rootComponents.count)
-        guard !relativeComponents.isEmpty else { return nil }
-        return NSString.path(withComponents: Array(relativeComponents))
-    }
-
-    private nonisolated static var defaultArtifactRelativePaths: [String] {
-        [
-            defaultEmbeddingModelID,
-            sharedQwenArtifactFilename
-        ]
-    }
 }
