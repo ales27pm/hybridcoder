@@ -1,7 +1,10 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ModelManagerView: View {
     let orchestrator: AIOrchestrator
+    @State private var isModelsFolderPickerPresented = false
+    @State private var modelsFolderSelectionError: String?
 
     var body: some View {
         ScrollView {
@@ -14,6 +17,12 @@ struct ModelManagerView: View {
             .padding(16)
         }
         .background(Theme.surfaceBg)
+        .fileImporter(
+            isPresented: $isModelsFolderPickerPresented,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false,
+            onCompletion: handleModelsFolderPick
+        )
     }
 
     private var headerSection: some View {
@@ -26,13 +35,46 @@ struct ModelManagerView: View {
                 Text("On-Device Models")
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.white)
+
+                Spacer()
+
+                Button("Browse") {
+                    isModelsFolderPickerPresented = true
+                }
+                .font(.caption.weight(.medium))
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
 
             Text("All inference runs locally via SpeziLLM llama.cpp. Place model files in Files > On My iPhone > Hybrid Coder > Models/, then tap Refresh.")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
+
+            if let modelsFolderSelectionError {
+                Text(modelsFolderSelectionError)
+                    .font(.caption2)
+                    .foregroundStyle(.red.opacity(0.85))
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func handleModelsFolderPick(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let selectedURL = urls.first else { return }
+            Task {
+                do {
+                    try await BookmarkService().saveModelsFolderBookmark(for: selectedURL)
+                    modelsFolderSelectionError = nil
+                    await orchestrator.refreshRegistryInstallState()
+                } catch {
+                    modelsFolderSelectionError = error.localizedDescription
+                }
+            }
+        case .failure(let error):
+            modelsFolderSelectionError = error.localizedDescription
+        }
     }
 
     @ViewBuilder
@@ -174,7 +216,7 @@ struct ModelManagerView: View {
                 }
 
                 if installState == .installed || loadState != .unloaded {
-                    Button("Delete", role: .destructive) {
+                    Button("Clear State") {
                         Task {
                             if isCodeGen {
                                 await orchestrator.resetCodeGenerationModelState()
@@ -231,13 +273,13 @@ struct ModelManagerView: View {
         case (_, .loaded):
             return "Found and loaded · \(isEmbedding ? "llama.cpp runtime" : "SpeziLLM llama.cpp runtime")"
         case (.installed, .unloaded):
-            return "Found in Models folder · tap Load to activate"
+            return "Found in external Models folder · tap Load to activate"
         case (.installed, .failed):
-            return "Found in Models folder but load failed"
+            return "Found in external Models folder but load failed"
         case (.downloading, _), (_, .loading):
             return "Preparing…"
         case (.notInstalled, _):
-            return "Model file not found in Models folder"
+            return "Model file not found in external Models folder"
         }
     }
 

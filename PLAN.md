@@ -21,10 +21,10 @@ Address the critical/blocking issues identified in the codebase audit: fix the m
 **What changes:**
 
 - The Qwen registry entry currently has empty `remoteBaseURL` and `files`, so it can't be downloaded through the same pipeline as CodeBERT.
-- Populate the registry with the correct Hugging Face URL for `finnvoorhees/coreml-Qwen2.5-Coder-1.5B-Instruct-4bit` and list its required model files (the CoreMLPipelines `.mlpackage` or `.mlmodelc` files, tokenizer configs).
-- `ModelDownloadService` gets a new method `downloadCodeGenerationModel()` that handles the Qwen-specific download flow — downloading the model artifacts first, then handing off to `QwenCoderService.warmUp()` for compilation/prewarm.
-- The Model Manager screen's "Download & Warm Up" button will now go through the proper download → compile → warm-up flow with real progress tracking, instead of relying solely on CoreMLPipelines' internal auto-download (which provides no progress feedback and fails silently without auth tokens).
-- If auto-download via CoreMLPipelines still works (e.g. the model is already cached by the framework), the warm-up path remains as a fallback.
+- Populate the registry with the correct GGUF-based Qwen model metadata and list required files expected in `Files > On My iPhone > Hybrid Coder > Models/` (GGUF weights plus tokenizer assets).
+- `ModelDownloadService` validates and indexes externally managed Qwen model assets from the Files app location, then hands off to `QwenCoderService.warmUp()` for llama.cpp session prewarm.
+- The Model Manager screen's runtime flow now focuses on refresh/validation + warm-up for local llama.cpp models in the external Files app folder, with explicit availability and health feedback.
+- No Core ML pipeline fallback remains; runtime availability depends on GGUF model files being present in the external Models folder.
 
 ---
 
@@ -32,7 +32,7 @@ Address the critical/blocking issues identified in the codebase audit: fix the m
 
 **What changes:**
 
-- The `SemanticSearchIndex` already stores and queries embedding vectors via `CoreMLEmbeddingService` — this is working correctly. The search uses both vector similarity (dot product on CodeBERT embeddings) and lexical BM25 search, fused via Reciprocal Rank Fusion.
+- The `SemanticSearchIndex` already stores and queries embedding vectors via `LlamaEmbeddingService` — this is working correctly. The search uses both vector similarity and lexical BM25 search, fused via Reciprocal Rank Fusion.
 - **Fix:** The `gatherContext()` method in `AIOrchestrator` silently swallows search failures. If the embedding model isn't loaded, it falls back to just sampling random files — with no indication to the user that semantic search wasn't used.
 - Add a `contextSources` field to `AssistantResponse` that records which files/chunks were retrieved and whether semantic search vs. fallback was used.
 - When the embedding model is not loaded but the index exists, show a clear warning in the chat: "Semantic search unavailable — using file sampling. Download the embedding model for better results."

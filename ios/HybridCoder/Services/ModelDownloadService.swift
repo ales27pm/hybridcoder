@@ -28,6 +28,8 @@ final class ModelDownloadService {
         Task { [weak self] in
             guard let self else { return }
             await self.refreshInstallState(modelID: registry.activeEmbeddingModelID)
+            await self.refreshInstallState(modelID: registry.activeGenerationModelID)
+            await self.refreshInstallState(modelID: registry.activeCodeGenerationModelID)
         }
     }
 
@@ -74,7 +76,7 @@ final class ModelDownloadService {
                     downloadError = nil
                     downloadErrorModelID = nil
                 } else {
-                    downloadError = "Failed to prepare local Models folder. Verify Files > On My Device > Hybrid Coder > Models/ is accessible."
+                    downloadError = "Failed to prepare local Models folder. Verify Files > On My iPhone > Hybrid Coder > Models/ is accessible."
                     downloadErrorModelID = modelID
                 }
                 shouldSuggestTokenInput = false
@@ -130,7 +132,7 @@ final class ModelDownloadService {
                     downloadError = nil
                     downloadErrorModelID = nil
                 } else {
-                    downloadError = "Failed to prepare local Models folder. Verify Files > On My Device > Hybrid Coder > Models/ is accessible."
+                    downloadError = "Failed to prepare local Models folder. Verify Files > On My iPhone > Hybrid Coder > Models/ is accessible."
                     downloadErrorModelID = modelID
                 }
                 shouldSuggestTokenInput = false
@@ -147,7 +149,7 @@ final class ModelDownloadService {
                 downloadError = nil
                 downloadErrorModelID = nil
             } else {
-                downloadError = "Local llama.cpp GGUF model not found. Place the file in Files > On My Device > Hybrid Coder > Models/, then tap Refresh to validate."
+                downloadError = "Local llama.cpp GGUF model not found. Place the file in Files > On My iPhone > Hybrid Coder > Models/, then tap Refresh to validate."
                 downloadErrorModelID = modelID
             }
             shouldSuggestTokenInput = false
