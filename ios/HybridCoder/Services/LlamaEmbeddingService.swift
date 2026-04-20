@@ -136,11 +136,10 @@ actor LlamaEmbeddingService {
         }
 
         do {
-            let root = await bookmarkService.resolveModelsFolderBookmark() ?? ModelRegistry.externalModelsRoot
-            let resolved = root.appendingPathComponent(modelID, isDirectory: false)
-
-            guard FileManager.default.fileExists(atPath: resolved.path(percentEncoded: false)) else {
-                throw EmbeddingError.modelArtifactsMissing(path: resolved.path)
+            let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+            guard let resolved = ModelRegistry.resolveInstalledFile(named: modelID, preferredRoot: preferredRoot) else {
+                let expectedRoot = ModelRegistry.normalizedModelsRoot(from: preferredRoot) ?? ModelRegistry.externalModelsRoot
+                throw EmbeddingError.modelArtifactsMissing(path: expectedRoot.appendingPathComponent(modelID, isDirectory: false).path)
             }
 
             self.modelURL = resolved
