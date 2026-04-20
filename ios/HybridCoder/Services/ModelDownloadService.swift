@@ -15,13 +15,15 @@ final class ModelDownloadService {
     private(set) var shouldSuggestTokenInput: Bool = false
 
     private let registry: ModelRegistry
+    private let bookmarkService: BookmarkService
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "com.hybridcoder",
         category: "ModelDownloadService"
     )
 
-    init(registry: ModelRegistry) {
+    init(registry: ModelRegistry, bookmarkService: BookmarkService = BookmarkService()) {
         self.registry = registry
+        self.bookmarkService = bookmarkService
         BundledEmbeddingAssets.migrateFromDocumentsIfNeeded()
         Task { [weak self] in
             guard let self else { return }
@@ -57,7 +59,22 @@ final class ModelDownloadService {
 
     func refreshInstallState(modelID: String) async {
         if registry.entry(for: modelID)?.runtime == .llamaCppGGUF {
-            let isReady = registry.isModelInstalledInExternalModelsFolder(modelID: modelID)
+            do {
+                try registry.ensureExternalModelsDirectoryExists()
+                try registry.migrateLegacyExternalModelsIfNeeded()
+            } catch {
+                logger.error("Failed to prepare local GGUF storage: \(error.localizedDescription, privacy: .private)")
+                downloadError = "Failed to prepare local Models folder. Verify Files > On My Device > HybridCoder > Models/ is accessible."
+                downloadErrorModelID = modelID
+                shouldSuggestTokenInput = false
+                registry.setInstallState(for: modelID, .notInstalled)
+                return
+            }
+            let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+            let isReady = registry.isModelInstalledInExternalModelsFolder(
+                modelID: modelID,
+                preferredRoot: preferredRoot
+            )
             registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
             if isReady {
                 downloadError = nil
@@ -88,11 +105,32 @@ final class ModelDownloadService {
         guard !isDownloading else { return }
         guard let entry = registry.entry(for: modelID) else { return }
         guard entry.runtime != .llamaCppGGUF else {
-            downloadError = "llama.cpp models are loaded from Files > On My iPhone > HybridCoder > Models/."
-            downloadErrorModelID = modelID
-            shouldSuggestTokenInput = false
-            let isReady = registry.isModelInstalledInExternalModelsFolder(modelID: modelID)
+            do {
+                try registry.ensureExternalModelsDirectoryExists()
+                try registry.migrateLegacyExternalModelsIfNeeded()
+            } catch {
+                logger.error("Failed to prepare local GGUF storage: \(error.localizedDescription, privacy: .private)")
+                downloadError = "Failed to prepare local Models folder. Verify Files > On My Device > HybridCoder > Models/ is accessible."
+                downloadErrorModelID = modelID
+                shouldSuggestTokenInput = false
+                registry.setInstallState(for: modelID, .notInstalled)
+                return
+            }
+
+            let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+            let isReady = registry.isModelInstalledInExternalModelsFolder(
+                modelID: modelID,
+                preferredRoot: preferredRoot
+            )
             registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
+            if isReady {
+                downloadError = nil
+                downloadErrorModelID = nil
+            } else {
+                downloadError = "Local llama.cpp GGUF model not found. Place the file in Files > On My Device > HybridCoder > Models/, then tap Refresh to validate."
+                downloadErrorModelID = modelID
+            }
+            shouldSuggestTokenInput = false
             return
         }
 
@@ -215,10 +253,11 @@ final class ModelDownloadService {
         isDownloading = false
     }
 
-    func deleteDownloadedModels(modelID: String? = nil) {
+    func deleteDownloadedModels(modelID: String? = nil) async {
         let modelID = modelID ?? activeEmbeddingModelID
         if registry.entry(for: modelID)?.runtime == .llamaCppGGUF {
-            registry.deleteCodeGenerationModelAssets(modelID: modelID)
+            let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+            registry.deleteCodeGenerationModelAssets(modelID: modelID, preferredRoot: preferredRoot)
             registry.setInstallState(for: modelID, .notInstalled)
             registry.setLoadState(for: modelID, .unloaded)
             downloadProgress = 0

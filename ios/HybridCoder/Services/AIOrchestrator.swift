@@ -312,7 +312,7 @@ final class AIOrchestrator {
 
     func deleteActiveEmbeddingModel() async {
         await embeddingService.unload()
-        modelDownload.deleteDownloadedModels(modelID: modelRegistry.activeEmbeddingModelID)
+        await modelDownload.deleteDownloadedModels(modelID: modelRegistry.activeEmbeddingModelID)
     }
 
     func refreshRegistryInstallState() async {

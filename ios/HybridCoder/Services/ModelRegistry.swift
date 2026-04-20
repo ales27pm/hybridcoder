@@ -71,8 +71,15 @@ final class ModelRegistry {
     private let generationID = ModelRegistry.defaultGenerationModelID
     private let codeGenerationID = ModelRegistry.defaultCodeGenerationModelID
     private let legacyGenerationID = ModelRegistry.sharedQwenArtifactFilename
+    private let externalModelsRootOverride: URL?
+    private let legacyExternalModelsRootOverride: URL?
 
-    init() {
+    init(
+        externalModelsRootOverride: URL? = nil,
+        legacyExternalModelsRootOverride: URL? = nil
+    ) {
+        self.externalModelsRootOverride = externalModelsRootOverride?.standardizedFileURL
+        self.legacyExternalModelsRootOverride = legacyExternalModelsRootOverride?.standardizedFileURL
         let embeddingFiles: [ModelFile] = [
             ModelFile(remotePath: embeddingID, localPath: embeddingID)
         ]
@@ -322,6 +329,19 @@ final class ModelRegistry {
         return nil
     }
 
+    nonisolated static func resolveInstalledFile(named fileName: String, roots: [URL]) -> URL? {
+        for modelsRoot in roots {
+            let direct = modelsRoot.appendingPathComponent(fileName, isDirectory: false)
+            if FileManager.default.fileExists(atPath: direct.path(percentEncoded: false)) {
+                return direct
+            }
+            if let discovered = recursivelyLocate(fileNamed: fileName, under: modelsRoot, maxDepth: 2) {
+                return discovered
+            }
+        }
+        return nil
+    }
+
     nonisolated private static func recursivelyLocate(fileNamed fileName: String, under root: URL, maxDepth: Int) -> URL? {
         let fm = FileManager.default
         guard fm.fileExists(atPath: root.path(percentEncoded: false)) else { return nil }
@@ -374,7 +394,7 @@ final class ModelRegistry {
 
     func codeGenerationSnapshotDirectory(for modelID: String) -> URL {
         let scoped = modelID.replacingOccurrences(of: "/", with: "__")
-        return Self.externalModelsRoot
+        return effectiveExternalModelsRoot
             .appendingPathComponent(".hybridcoder-markers", isDirectory: true)
             .appendingPathComponent(scoped, isDirectory: true)
     }
@@ -384,8 +404,9 @@ final class ModelRegistry {
             return false
         }
 
+        let roots = candidateExternalModelsRoots(preferredRoot: preferredRoot)
         return entry.files.allSatisfy { file in
-            Self.resolveInstalledFile(named: file.localPath, preferredRoot: preferredRoot) != nil
+            Self.resolveInstalledFile(named: file.localPath, roots: roots) != nil
         }
     }
 
@@ -433,12 +454,51 @@ final class ModelRegistry {
         }
     }
 
-    func deleteCodeGenerationModelAssets(modelID: String) {
+    func ensureExternalModelsDirectoryExists() throws {
+        try FileManager.default.createDirectory(at: effectiveExternalModelsRoot, withIntermediateDirectories: true)
+    }
+
+    func migrateLegacyExternalModelsIfNeeded() throws {
+        let fm = FileManager.default
+        let source = effectiveLegacyExternalModelsRoot
+        let destination = effectiveExternalModelsRoot
+        guard source.path(percentEncoded: false) != destination.path(percentEncoded: false) else { return }
+        guard fm.fileExists(atPath: source.path(percentEncoded: false)) else { return }
+
+        try ensureExternalModelsDirectoryExists()
+        guard let enumerator = fm.enumerator(
+            at: source,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        while let item = enumerator.nextObject() as? URL {
+            let values = try item.resourceValues(forKeys: [.isDirectoryKey])
+            if values.isDirectory == true {
+                continue
+            }
+
+            let relativePath = item.path.replacingOccurrences(of: source.path(percentEncoded: false) + "/", with: "")
+            let destinationURL = destination.appendingPathComponent(relativePath, isDirectory: false)
+            let parent = destinationURL.deletingLastPathComponent()
+            if !fm.fileExists(atPath: parent.path(percentEncoded: false)) {
+                try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+            }
+            if fm.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
+                continue
+            }
+            try fm.moveItem(at: item, to: destinationURL)
+        }
+    }
+
+    func deleteCodeGenerationModelAssets(modelID: String, preferredRoot: URL? = nil) {
         clearCodeGenerationInstallMarker(modelID: modelID)
         try? FileManager.default.removeItem(at: codeGenerationSnapshotDirectory(for: modelID))
 
         if let entry = entries[modelID], entry.runtime == .llamaCppGGUF {
-            for modelsDirectory in Self.candidateExternalModelsRoots() {
+            for modelsDirectory in candidateExternalModelsRoots(preferredRoot: preferredRoot) {
                 for file in entry.files {
                     let direct = modelsDirectory.appendingPathComponent(file.localPath)
                     if FileManager.default.fileExists(atPath: direct.path(percentEncoded: false)) {
@@ -456,5 +516,32 @@ final class ModelRegistry {
         guard var entry = entries[modelID] else { return }
         update(&entry)
         entries[modelID] = entry
+    }
+
+    private var effectiveExternalModelsRoot: URL {
+        externalModelsRootOverride ?? Self.externalModelsRoot
+    }
+
+    private var effectiveLegacyExternalModelsRoot: URL {
+        legacyExternalModelsRootOverride ?? Self.legacyExternalModelsRoot
+    }
+
+    private func candidateExternalModelsRoots(preferredRoot: URL? = nil) -> [URL] {
+        var urls: [URL] = []
+        if let normalizedPreferred = Self.normalizedModelsRoot(from: preferredRoot) {
+            urls.append(normalizedPreferred)
+        }
+        urls.append(effectiveExternalModelsRoot.standardizedFileURL)
+        urls.append(effectiveLegacyExternalModelsRoot.standardizedFileURL)
+
+        var seen: Set<String> = []
+        return urls.filter { url in
+            let key = url.path(percentEncoded: false)
+            if seen.contains(key) {
+                return false
+            }
+            seen.insert(key)
+            return true
+        }
     }
 }
