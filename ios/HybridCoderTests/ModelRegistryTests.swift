@@ -121,19 +121,39 @@ struct ModelRegistryTests {
         let primaryRoot = ModelRegistry.externalModelsRoot
         try fm.createDirectory(at: primaryRoot, withIntermediateDirectories: true)
         let primaryFile = primaryRoot.appendingPathComponent(fileName, isDirectory: false)
-        try Data().write(to: primaryFile)
+        let primaryExisted = fm.fileExists(atPath: primaryFile.path(percentEncoded: false))
+        let primaryBackup = primaryExisted ? (try? Data(contentsOf: primaryFile)) : nil
+        if !primaryExisted {
+            try Data().write(to: primaryFile)
+        }
 
         #expect(registry.isModelInstalledInExternalModelsFolder(modelID: modelID))
 
-        try? fm.removeItem(at: primaryFile)
+        if primaryExisted {
+            if let primaryBackup {
+                try? primaryBackup.write(to: primaryFile)
+            }
+        } else {
+            try? fm.removeItem(at: primaryFile)
+        }
         let legacyRoot = ModelRegistry.legacyExternalModelsRoot
         try fm.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
         let legacyFile = legacyRoot.appendingPathComponent(fileName, isDirectory: false)
-        try Data().write(to: legacyFile)
+        let legacyExisted = fm.fileExists(atPath: legacyFile.path(percentEncoded: false))
+        let legacyBackup = legacyExisted ? (try? Data(contentsOf: legacyFile)) : nil
+        if !legacyExisted {
+            try Data().write(to: legacyFile)
+        }
 
         #expect(registry.isModelInstalledInExternalModelsFolder(modelID: modelID))
 
         try? fm.removeItem(at: preferredDocuments.deletingLastPathComponent())
-        try? fm.removeItem(at: legacyFile)
+        if legacyExisted {
+            if let legacyBackup {
+                try? legacyBackup.write(to: legacyFile)
+            }
+        } else {
+            try? fm.removeItem(at: legacyFile)
+        }
     }
 }

@@ -8,7 +8,10 @@ struct BookmarkServiceTests {
     @Test("Models folder bookmark normalizes file, Documents, HybridCoder, and Models URLs")
     func modelsBookmarkNormalizationVariants() async throws {
         let secureStore = SecureStoreService(serviceName: "com.hybridcoder.tests.bookmarks.\(UUID().uuidString)")
-        let service = BookmarkService(secureStore: secureStore)
+        let defaultsSuite = "com.hybridcoder.tests.bookmarks.defaults.\(UUID().uuidString)"
+        let testDefaults = UserDefaults(suiteName: defaultsSuite)!
+        testDefaults.removePersistentDomain(forName: defaultsSuite)
+        let service = BookmarkService(secureStore: secureStore, userDefaults: testDefaults)
         let fm = FileManager.default
 
         let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -40,13 +43,17 @@ struct BookmarkServiceTests {
         #expect(resolvedFromModels?.path(percentEncoded: false) == models.path(percentEncoded: false))
 
         try? await secureStore.deleteAll()
+        testDefaults.removePersistentDomain(forName: defaultsSuite)
         try? fm.removeItem(at: sandboxRoot)
     }
 
     @Test("Resolving models bookmark rewrites non-normalized bookmark data")
     func resolveBookmarkRewritesNonNormalizedEntry() async throws {
         let secureStore = SecureStoreService(serviceName: "com.hybridcoder.tests.bookmarks.rewrite.\(UUID().uuidString)")
-        let service = BookmarkService(secureStore: secureStore)
+        let defaultsSuite = "com.hybridcoder.tests.bookmarks.rewrite.defaults.\(UUID().uuidString)"
+        let testDefaults = UserDefaults(suiteName: defaultsSuite)!
+        testDefaults.removePersistentDomain(forName: defaultsSuite)
+        let service = BookmarkService(secureStore: secureStore, userDefaults: testDefaults)
         let fm = FileManager.default
 
         let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -80,6 +87,7 @@ struct BookmarkServiceTests {
         }
 
         try? await secureStore.deleteAll()
+        testDefaults.removePersistentDomain(forName: defaultsSuite)
         try? fm.removeItem(at: sandboxRoot)
     }
 }

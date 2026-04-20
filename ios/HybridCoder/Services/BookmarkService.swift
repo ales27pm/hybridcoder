@@ -5,12 +5,12 @@ import OSLog
 @MainActor
 final class BookmarkService {
     nonisolated enum BookmarkError: Error, LocalizedError, Sendable {
-        case invalidModelsFolderURL
+        case invalidModelsFolderURL(key: String, path: String)
 
         nonisolated var errorDescription: String? {
             switch self {
-            case .invalidModelsFolderURL:
-                return "Invalid models folder URL."
+            case .invalidModelsFolderURL(let key, let path):
+                return "Failed to normalize models folder bookmark for key '\(key)' from path '\(path)'."
             }
         }
     }
@@ -18,11 +18,16 @@ final class BookmarkService {
     private let secureStoreKey = "savedRepositoryBookmarks"
     nonisolated static let modelsFolderBookmarkKey = "savedModelsFolderBookmark"
     private let secureStore: SecureStoreService
+    private let userDefaults: UserDefaults
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "BookmarkService")
     var repositories: [Repository] = []
 
-    init(secureStore: SecureStoreService = SecureStoreService(serviceName: "com.hybridcoder.repos")) {
+    init(
+        secureStore: SecureStoreService = SecureStoreService(serviceName: "com.hybridcoder.repos"),
+        userDefaults: UserDefaults = .standard
+    ) {
         self.secureStore = secureStore
+        self.userDefaults = userDefaults
         loadRepositories()
     }
 
@@ -77,7 +82,10 @@ final class BookmarkService {
     func saveModelsFolderBookmark(for url: URL) async throws {
         guard let normalizedURL = Self.normalizedModelsFolderURL(from: url) else {
             logger.error("Failed to normalize models folder bookmark path=\(url.path(percentEncoded: false), privacy: .private)")
-            throw BookmarkError.invalidModelsFolderURL
+            throw BookmarkError.invalidModelsFolderURL(
+                key: Self.modelsFolderBookmarkKey,
+                path: url.path(percentEncoded: false)
+            )
         }
 
         let bookmarkData = try normalizedURL.bookmarkData(
@@ -109,6 +117,11 @@ final class BookmarkService {
 
         guard let normalizedURL = Self.normalizedModelsFolderURL(from: url) else {
             logger.error("Failed to normalize resolved models folder bookmark path=\(url.path(percentEncoded: false), privacy: .private)")
+            do {
+                try await secureStore.deleteItem(Self.modelsFolderBookmarkKey)
+            } catch {
+                logger.error("Failed to clear invalid models folder bookmark key=\(Self.modelsFolderBookmarkKey, privacy: .public) error=\(error.localizedDescription, privacy: .private)")
+            }
             return nil
         }
 
@@ -150,11 +163,11 @@ final class BookmarkService {
 
     private func migrateFromUserDefaults() {
         let legacyKey = "savedRepositoryBookmarks"
-        guard let data = UserDefaults.standard.data(forKey: legacyKey),
+        guard let data = userDefaults.data(forKey: legacyKey),
               let decoded = try? JSONDecoder().decode([Repository].self, from: data) else { return }
         repositories = decoded
         persistRepositories()
-        UserDefaults.standard.removeObject(forKey: legacyKey)
+        userDefaults.removeObject(forKey: legacyKey)
         logger.info("Migrated \(decoded.count) repositories from UserDefaults to Keychain")
     }
 
@@ -170,12 +183,13 @@ final class BookmarkService {
 
     nonisolated static func normalizedModelsFolderURL(from rawURL: URL?) -> URL? {
         guard let rawURL else { return nil }
-        guard let normalized = ModelRegistry.normalizedModelsRoot(from: rawURL)?.standardizedFileURL else {
-            return nil
-        }
+        let standardized = rawURL.standardizedFileURL
+        let normalizedCandidate = ModelRegistry.normalizedModelsRoot(from: standardized) ?? standardized
+        let normalized = normalizedCandidate.standardizedFileURL
         if normalized.lastPathComponent.caseInsensitiveCompare("models") == .orderedSame {
             return normalized
         }
-        return normalized.appendingPathComponent("Models", isDirectory: true).standardizedFileURL
+        let appended = normalized.appendingPathComponent("Models", isDirectory: true).standardizedFileURL
+        return ModelRegistry.normalizedModelsRoot(from: appended) ?? appended
     }
 }
