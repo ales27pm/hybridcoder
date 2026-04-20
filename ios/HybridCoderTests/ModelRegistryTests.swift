@@ -67,4 +67,73 @@ struct ModelRegistryTests {
         registry.clearCodeGenerationInstallMarker(modelID: modelID)
         #expect(registry.isCodeGenerationModelMarkedInstalled(modelID: modelID) == false)
     }
+
+    @Test("normalizedModelsRoot normalizes file, Documents, HybridCoder, and Models URLs")
+    func normalizedModelsRootVariants() throws {
+        let fm = FileManager.default
+        let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let documents = sandboxRoot.appendingPathComponent("Documents", isDirectory: true)
+        let models = documents.appendingPathComponent("Models", isDirectory: true)
+        let hybridCoder = documents.appendingPathComponent("HybridCoder", isDirectory: true)
+        let hybridModels = hybridCoder.appendingPathComponent("Models", isDirectory: true)
+        try fm.createDirectory(at: models, withIntermediateDirectories: true)
+        try fm.createDirectory(at: hybridModels, withIntermediateDirectories: true)
+
+        let ggufFile = models.appendingPathComponent("sample.gguf", isDirectory: false)
+        try Data("gguf".utf8).write(to: ggufFile)
+
+        let fileNormalized = ModelRegistry.normalizedModelsRoot(from: ggufFile)
+        let documentsNormalized = ModelRegistry.normalizedModelsRoot(from: documents)
+        let hybridNormalized = ModelRegistry.normalizedModelsRoot(from: hybridCoder)
+        let modelsNormalized = ModelRegistry.normalizedModelsRoot(from: models)
+
+        #expect(fileNormalized?.path(percentEncoded: false) == models.path(percentEncoded: false))
+        #expect(documentsNormalized?.path(percentEncoded: false) == models.path(percentEncoded: false))
+        #expect(hybridNormalized?.path(percentEncoded: false) == hybridModels.path(percentEncoded: false))
+        #expect(modelsNormalized?.path(percentEncoded: false) == models.path(percentEncoded: false))
+
+        try? fm.removeItem(at: sandboxRoot)
+    }
+
+    @Test("GGUF install detection resolves in preferred, primary, and legacy roots")
+    func ggufInstallDetectionAcrossRoots() throws {
+        let fm = FileManager.default
+        let registry = ModelRegistry()
+        let modelID = registry.activeEmbeddingModelID
+        let fileName = registry.resolvedLocalModelName(for: modelID)
+
+        let preferredDocuments = fm.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("Documents", isDirectory: true)
+        let preferredRoot = preferredDocuments.appendingPathComponent("Models", isDirectory: true)
+        try fm.createDirectory(at: preferredRoot, withIntermediateDirectories: true)
+        let preferredFile = preferredRoot.appendingPathComponent(fileName, isDirectory: false)
+        try Data().write(to: preferredFile)
+
+        #expect(
+            registry.isModelInstalledInExternalModelsFolder(
+                modelID: modelID,
+                preferredRoot: preferredDocuments
+            )
+        )
+
+        try? fm.removeItem(at: preferredFile)
+        let primaryRoot = ModelRegistry.externalModelsRoot
+        try fm.createDirectory(at: primaryRoot, withIntermediateDirectories: true)
+        let primaryFile = primaryRoot.appendingPathComponent(fileName, isDirectory: false)
+        try Data().write(to: primaryFile)
+
+        #expect(registry.isModelInstalledInExternalModelsFolder(modelID: modelID))
+
+        try? fm.removeItem(at: primaryFile)
+        let legacyRoot = ModelRegistry.legacyExternalModelsRoot
+        try fm.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
+        let legacyFile = legacyRoot.appendingPathComponent(fileName, isDirectory: false)
+        try Data().write(to: legacyFile)
+
+        #expect(registry.isModelInstalledInExternalModelsFolder(modelID: modelID))
+
+        try? fm.removeItem(at: preferredDocuments.deletingLastPathComponent())
+        try? fm.removeItem(at: legacyFile)
+    }
 }

@@ -5,12 +5,13 @@ import OSLog
 @MainActor
 final class BookmarkService {
     private let secureStoreKey = "savedRepositoryBookmarks"
-    private let modelsFolderBookmarkKey = "savedModelsFolderBookmark"
-    private let secureStore = SecureStoreService(serviceName: "com.hybridcoder.repos")
+    nonisolated static let modelsFolderBookmarkKey = "savedModelsFolderBookmark"
+    private let secureStore: SecureStoreService
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "BookmarkService")
     var repositories: [Repository] = []
 
-    init() {
+    init(secureStore: SecureStoreService = SecureStoreService(serviceName: "com.hybridcoder.repos")) {
+        self.secureStore = secureStore
         loadRepositories()
     }
 
@@ -63,19 +64,23 @@ final class BookmarkService {
 
 
     func saveModelsFolderBookmark(for url: URL) async throws {
-        let bookmarkData = try url.bookmarkData(
+        guard let normalizedURL = Self.normalizedModelsFolderURL(from: url) else {
+            return
+        }
+
+        let bookmarkData = try normalizedURL.bookmarkData(
             options: .minimalBookmark,
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
 
-        try await secureStore.setData(modelsFolderBookmarkKey, value: bookmarkData)
+        try await secureStore.setData(Self.modelsFolderBookmarkKey, value: bookmarkData)
     }
 
     func resolveModelsFolderBookmark() async -> URL? {
         let bookmarkData: Data
         do {
-            guard let stored = try await secureStore.getData(modelsFolderBookmarkKey) else { return nil }
+            guard let stored = try await secureStore.getData(Self.modelsFolderBookmarkKey) else { return nil }
             bookmarkData = stored
         } catch {
             logger.error("Failed to load models folder bookmark: \(error.localizedDescription)")
@@ -90,11 +95,17 @@ final class BookmarkService {
             bookmarkDataIsStale: &isStale
         ) else { return nil }
 
-        if isStale {
-            try? await saveModelsFolderBookmark(for: url)
+        guard let normalizedURL = Self.normalizedModelsFolderURL(from: url) else {
+            return nil
         }
 
-        return url
+        let resolvedPath = url.standardizedFileURL.path(percentEncoded: false)
+        let normalizedPath = normalizedURL.standardizedFileURL.path(percentEncoded: false)
+        if isStale || resolvedPath != normalizedPath {
+            try? await saveModelsFolderBookmark(for: normalizedURL)
+        }
+
+        return normalizedURL
     }
 
     func removeRepository(_ repository: Repository) {
@@ -142,5 +153,17 @@ final class BookmarkService {
                 logger.error("Failed to persist repositories to Keychain: \(error.localizedDescription)")
             }
         }
+    }
+
+    nonisolated static func normalizedModelsFolderURL(from rawURL: URL?) -> URL? {
+        guard let rawURL else { return nil }
+        let standardized = rawURL.standardizedFileURL
+        let normalizedCandidate = ModelRegistry.normalizedModelsRoot(from: standardized) ?? standardized
+        let normalized = normalizedCandidate.standardizedFileURL
+        let leaf = normalized.lastPathComponent.lowercased()
+        if leaf == "models" {
+            return normalized
+        }
+        return ModelRegistry.normalizedModelsRoot(from: normalized.appendingPathComponent("Models", isDirectory: true))
     }
 }
