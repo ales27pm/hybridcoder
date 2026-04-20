@@ -453,17 +453,17 @@ struct SettingsView: View {
     private var developerSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Diagnosis")
+                Text(String(localized: "settings.developer.diagnosis.title", defaultValue: "Diagnosis"))
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
-                Text("Run on-device diagnosis from this section when simulator-only runs are not enough.")
+                    .foregroundStyle(.primary)
+                Text(String(localized: "settings.developer.diagnosis.description", defaultValue: "Run on-device diagnosis from this section when simulator-only runs are not enough."))
                     .font(.caption)
                     .foregroundStyle(Theme.dimText)
             }
 
             diagnosticsContent
         } header: {
-            Text("Developer")
+            Text(String(localized: "settings.developer.section.title", defaultValue: "Developer"))
         }
     }
 
