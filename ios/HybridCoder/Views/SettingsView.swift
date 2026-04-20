@@ -21,7 +21,7 @@ struct SettingsView: View {
                 if let sessionManager {
                     sessionSection(sessionManager)
                 }
-                diagnosticsSection
+                developerSection
                 aboutSection
             }
             .listStyle(.insetGrouped)
@@ -450,23 +450,37 @@ struct SettingsView: View {
         }
     }
 
-    private var diagnosticsSection: some View {
+    private var developerSection: some View {
         Section {
-            if orchestrator.discoveryDiagnostics.isEmpty {
-                Text("No diagnostics")
-                    .font(.subheadline)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(String(localized: "settings.developer.diagnosis.title", defaultValue: "Diagnosis"))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(String(localized: "settings.developer.diagnosis.description", defaultValue: "Run on-device diagnosis from this section when simulator-only runs are not enough."))
+                    .font(.caption)
                     .foregroundStyle(Theme.dimText)
-            } else {
-                if !orchestrator.templateDiagnostics.isEmpty {
-                    diagnosticsGroup(title: "Prompt Templates", diagnostics: orchestrator.templateDiagnostics)
-                }
-
-                if !orchestrator.contextPolicyDiagnostics.isEmpty {
-                    diagnosticsGroup(title: "Context Policies", diagnostics: orchestrator.contextPolicyDiagnostics)
-                }
             }
+
+            diagnosticsContent
         } header: {
-            Text("Diagnostics")
+            Text(String(localized: "settings.developer.section.title", defaultValue: "Developer"))
+        }
+    }
+
+    @ViewBuilder
+    private var diagnosticsContent: some View {
+        if orchestrator.discoveryDiagnostics.isEmpty {
+            Text("No diagnostics")
+                .font(.subheadline)
+                .foregroundStyle(Theme.dimText)
+        } else {
+            if !orchestrator.templateDiagnostics.isEmpty {
+                diagnosticsGroup(title: "Prompt Templates", diagnostics: orchestrator.templateDiagnostics)
+            }
+
+            if !orchestrator.contextPolicyDiagnostics.isEmpty {
+                diagnosticsGroup(title: "Context Policies", diagnostics: orchestrator.contextPolicyDiagnostics)
+            }
         }
     }
 
