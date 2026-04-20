@@ -87,7 +87,7 @@ struct ChatView: View {
                     Label("No AI model available", systemImage: "exclamationmark.circle")
                         .font(.caption)
                         .foregroundStyle(.orange)
-                    Text("Use a device with Apple Intelligence enabled and complete model setup in the Models tab.")
+                    Text("Complete model setup in the Models tab and place GGUF files in Files > On My iPhone > Hybrid Coder > Models/.")
                         .font(.caption2)
                         .foregroundStyle(Theme.dimText)
                         .multilineTextAlignment(.center)
