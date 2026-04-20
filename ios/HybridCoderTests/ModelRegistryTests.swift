@@ -169,4 +169,50 @@ struct ModelRegistryTests {
         try? fm.removeItem(at: preferredDocuments.deletingLastPathComponent())
         try? fm.removeItem(at: sandboxRoot)
     }
+
+    @Test("Flat legacy migration moves registered artifacts and preserves unrelated files")
+    func flatLegacyMigrationPreservesUnrelatedFiles() throws {
+        let fm = FileManager.default
+        let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let destinationRoot = sandboxRoot
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent("Hybrid Coder", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        let legacyRoot = sandboxRoot
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent("HybridCoder", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        let legacyFlatRoot = sandboxRoot
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+
+        try fm.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
+        try fm.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
+        try fm.createDirectory(at: legacyFlatRoot, withIntermediateDirectories: true)
+
+        let registry = ModelRegistry(
+            externalModelsRootOverride: destinationRoot,
+            legacyExternalModelsRootOverride: legacyRoot,
+            legacyFlatExternalModelsRootOverride: legacyFlatRoot
+        )
+
+        let artifactFileName = registry.resolvedLocalModelName(for: registry.activeEmbeddingModelID)
+        let artifactSource = legacyFlatRoot.appendingPathComponent(artifactFileName, isDirectory: false)
+        try Data("artifact".utf8).write(to: artifactSource)
+
+        let unrelatedSource = legacyFlatRoot.appendingPathComponent("notes.txt", isDirectory: false)
+        try Data("unrelated".utf8).write(to: unrelatedSource)
+
+        try registry.migrateLegacyExternalModelsIfNeeded()
+
+        let artifactDestination = destinationRoot.appendingPathComponent(artifactFileName, isDirectory: false)
+        let unrelatedDestination = destinationRoot.appendingPathComponent("notes.txt", isDirectory: false)
+
+        #expect(fm.fileExists(atPath: artifactDestination.path(percentEncoded: false)))
+        #expect(fm.fileExists(atPath: unrelatedDestination.path(percentEncoded: false)))
+        #expect(fm.fileExists(atPath: unrelatedSource.path(percentEncoded: false)))
+        #expect(!fm.fileExists(atPath: artifactSource.path(percentEncoded: false)))
+
+        try? fm.removeItem(at: sandboxRoot)
+    }
 }

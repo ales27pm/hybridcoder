@@ -277,10 +277,13 @@ final class ModelRegistry {
         let destination = externalModelsRoot
         try ensureExternalModelsDirectoryExists()
 
-        let sources = [legacyExternalModelsRoot, legacyFlatExternalModelsRoot]
-        for source in sources {
-            try migrateLegacyModelFiles(from: source, to: destination, fileManager: .default)
-        }
+        try migrateLegacyModelFiles(from: legacyExternalModelsRoot, to: destination, fileManager: .default)
+        try migrateLegacyModelFiles(
+            from: legacyFlatExternalModelsRoot,
+            to: destination,
+            fileManager: .default,
+            movableRelativePaths: Set(defaultArtifactRelativePaths)
+        )
     }
 
     nonisolated static func candidateExternalModelsRoots(preferredRoot: URL? = nil) -> [URL] {
@@ -449,10 +452,14 @@ final class ModelRegistry {
         let destination = effectiveExternalModelsRoot
         try ensureExternalModelsDirectoryExists()
 
-        let sources = [effectiveLegacyExternalModelsRoot, effectiveLegacyFlatExternalModelsRoot]
-        for source in sources {
-            try Self.migrateLegacyModelFiles(from: source, to: destination, fileManager: .default)
-        }
+        let movableRelativePaths = Set(entries.values.flatMap { $0.files.map(\.localPath) })
+        try Self.migrateLegacyModelFiles(from: effectiveLegacyExternalModelsRoot, to: destination, fileManager: .default)
+        try Self.migrateLegacyModelFiles(
+            from: effectiveLegacyFlatExternalModelsRoot,
+            to: destination,
+            fileManager: .default,
+            movableRelativePaths: movableRelativePaths
+        )
     }
 
     func deleteCodeGenerationModelAssets(modelID: String, preferredRoot: URL? = nil) {
@@ -538,7 +545,8 @@ final class ModelRegistry {
     private nonisolated static func migrateLegacyModelFiles(
         from source: URL,
         to destination: URL,
-        fileManager: FileManager
+        fileManager: FileManager,
+        movableRelativePaths: Set<String>? = nil
     ) throws {
         guard source.path(percentEncoded: false) != destination.path(percentEncoded: false) else { return }
         guard fileManager.fileExists(atPath: source.path(percentEncoded: false)) else { return }
@@ -567,11 +575,16 @@ final class ModelRegistry {
             if fileManager.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
                 continue
             }
-            do {
-                try fileManager.moveItem(at: item, to: destinationURL)
-            } catch {
+            let shouldMove = movableRelativePaths?.contains(relativePath) ?? true
+            if shouldMove {
+                do {
+                    try fileManager.moveItem(at: item, to: destinationURL)
+                } catch {
+                    try fileManager.copyItem(at: item, to: destinationURL)
+                    try fileManager.removeItem(at: item)
+                }
+            } else {
                 try fileManager.copyItem(at: item, to: destinationURL)
-                try fileManager.removeItem(at: item)
             }
         }
     }
@@ -584,5 +597,12 @@ final class ModelRegistry {
         let relativeComponents = itemComponents.dropFirst(rootComponents.count)
         guard !relativeComponents.isEmpty else { return nil }
         return NSString.path(withComponents: Array(relativeComponents))
+    }
+
+    private nonisolated static var defaultArtifactRelativePaths: [String] {
+        [
+            defaultEmbeddingModelID,
+            sharedQwenArtifactFilename
+        ]
     }
 }
