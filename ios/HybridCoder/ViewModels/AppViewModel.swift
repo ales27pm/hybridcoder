@@ -241,6 +241,8 @@ final class AppViewModel {
         let skipLastRepositoryRestore = isUITestMode || environment["HYBRIDCODER_SKIP_LAST_REPOSITORY"] == "1"
 
         Task {
+            await prepareExternalModelsStorage()
+
             if !disableWarmUp {
                 await orchestrator.warmUp()
             }
@@ -251,5 +253,27 @@ final class AppViewModel {
            let lastRepo = bookmarkService.repositories.sorted(by: { $0.lastOpened > $1.lastOpened }).first {
             openRepository(lastRepo)
         }
+    }
+
+    private func prepareExternalModelsStorage() async {
+        await Task.detached(priority: .utility) {
+            do {
+                try ModelRegistry.ensureExternalModelsDirectoryExists()
+                try ModelRegistry.migrateLegacyExternalModelsIfNeeded()
+                return
+            } catch {
+                let fm = FileManager.default
+                let fallbackRoots = [
+                    ModelRegistry.externalModelsRoot.deletingLastPathComponent(),
+                    ModelRegistry.externalModelsRoot,
+                    ModelRegistry.legacyExternalModelsRoot,
+                    ModelRegistry.legacyFlatExternalModelsRoot
+                ]
+                for root in fallbackRoots {
+                    try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+                }
+                try? ModelRegistry.migrateLegacyExternalModelsIfNeeded()
+            }
+        }.value
     }
 }

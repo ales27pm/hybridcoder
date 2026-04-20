@@ -20,7 +20,7 @@ struct OnboardingView: View {
     }
 
     private var modelsFolderHint: String {
-        "Files > On My iPhone > HybridCoder > Models/"
+        "Files > On My iPhone > Hybrid Coder > Models/"
     }
 
     var body: some View {

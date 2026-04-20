@@ -64,10 +64,20 @@ final class ModelDownloadService {
                 try registry.migrateLegacyExternalModelsIfNeeded()
             } catch {
                 logger.error("Failed to prepare local GGUF storage: \(error.localizedDescription, privacy: .private)")
-                downloadError = "Failed to prepare local Models folder. Verify Files > On My Device > HybridCoder > Models/ is accessible."
-                downloadErrorModelID = modelID
+                let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+                let fallbackReady = registry.isModelInstalledInExternalModelsFolder(
+                    modelID: modelID,
+                    preferredRoot: preferredRoot
+                )
+                registry.setInstallState(for: modelID, fallbackReady ? .installed : .notInstalled)
+                if fallbackReady {
+                    downloadError = nil
+                    downloadErrorModelID = nil
+                } else {
+                    downloadError = "Failed to prepare local Models folder. Verify Files > On My Device > Hybrid Coder > Models/ is accessible."
+                    downloadErrorModelID = modelID
+                }
                 shouldSuggestTokenInput = false
-                registry.setInstallState(for: modelID, .notInstalled)
                 return
             }
             let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
@@ -110,10 +120,20 @@ final class ModelDownloadService {
                 try registry.migrateLegacyExternalModelsIfNeeded()
             } catch {
                 logger.error("Failed to prepare local GGUF storage: \(error.localizedDescription, privacy: .private)")
-                downloadError = "Failed to prepare local Models folder. Verify Files > On My Device > HybridCoder > Models/ is accessible."
-                downloadErrorModelID = modelID
+                let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+                let fallbackReady = registry.isModelInstalledInExternalModelsFolder(
+                    modelID: modelID,
+                    preferredRoot: preferredRoot
+                )
+                registry.setInstallState(for: modelID, fallbackReady ? .installed : .notInstalled)
+                if fallbackReady {
+                    downloadError = nil
+                    downloadErrorModelID = nil
+                } else {
+                    downloadError = "Failed to prepare local Models folder. Verify Files > On My Device > Hybrid Coder > Models/ is accessible."
+                    downloadErrorModelID = modelID
+                }
                 shouldSuggestTokenInput = false
-                registry.setInstallState(for: modelID, .notInstalled)
                 return
             }
 
@@ -127,7 +147,7 @@ final class ModelDownloadService {
                 downloadError = nil
                 downloadErrorModelID = nil
             } else {
-                downloadError = "Local llama.cpp GGUF model not found. Place the file in Files > On My Device > HybridCoder > Models/, then tap Refresh to validate."
+                downloadError = "Local llama.cpp GGUF model not found. Place the file in Files > On My Device > Hybrid Coder > Models/, then tap Refresh to validate."
                 downloadErrorModelID = modelID
             }
             shouldSuggestTokenInput = false

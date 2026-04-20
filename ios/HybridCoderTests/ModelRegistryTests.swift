@@ -37,19 +37,24 @@ struct ModelRegistryTests {
         #expect(orchestrationEntry?.files == entry?.files)
     }
 
-    @Test("External models folder defaults to Documents/Models and keeps legacy fallback")
+    @Test("External models folder defaults to Documents/Hybrid Coder/Models and keeps legacy fallbacks")
     func externalModelsFolderPathIsInDocuments() {
         let root = ModelRegistry.externalModelsRoot.path(percentEncoded: false)
         let legacyRoot = ModelRegistry.legacyExternalModelsRoot.path(percentEncoded: false)
+        let legacyFlatRoot = ModelRegistry.legacyFlatExternalModelsRoot.path(percentEncoded: false)
         let roots = ModelRegistry.candidateExternalModelsRoots().map { $0.path(percentEncoded: false) }
 
         #expect(root.contains("Documents"))
+        #expect(root.contains("Hybrid Coder"))
         #expect(root.hasSuffix("/Models"))
         #expect(legacyRoot.contains("Documents"))
         #expect(legacyRoot.contains("HybridCoder"))
         #expect(legacyRoot.hasSuffix("/Models"))
+        #expect(legacyFlatRoot.contains("Documents"))
+        #expect(legacyFlatRoot.hasSuffix("/Models"))
         #expect(roots.contains(root))
         #expect(roots.contains(legacyRoot))
+        #expect(roots.contains(legacyFlatRoot))
     }
 
     @Test("Install marker can be written and cleared")
@@ -68,12 +73,15 @@ struct ModelRegistryTests {
         #expect(registry.isCodeGenerationModelMarkedInstalled(modelID: modelID) == false)
     }
 
-    @Test("normalizedModelsRoot normalizes file, Documents, HybridCoder, and Models URLs")
+    @Test("normalizedModelsRoot normalizes file, Documents, Hybrid Coder, HybridCoder, and Models URLs")
     func normalizedModelsRootVariants() throws {
         let fm = FileManager.default
         let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let documents = sandboxRoot.appendingPathComponent("Documents", isDirectory: true)
-        let models = documents.appendingPathComponent("Models", isDirectory: true)
+        let models = documents
+            .appendingPathComponent("Hybrid Coder", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        let hybridCoderSpaced = documents.appendingPathComponent("Hybrid Coder", isDirectory: true)
         let hybridCoder = documents.appendingPathComponent("HybridCoder", isDirectory: true)
         let hybridModels = hybridCoder.appendingPathComponent("Models", isDirectory: true)
         try fm.createDirectory(at: models, withIntermediateDirectories: true)
@@ -84,18 +92,20 @@ struct ModelRegistryTests {
 
         let fileNormalized = ModelRegistry.normalizedModelsRoot(from: ggufFile)
         let documentsNormalized = ModelRegistry.normalizedModelsRoot(from: documents)
+        let hybridSpacedNormalized = ModelRegistry.normalizedModelsRoot(from: hybridCoderSpaced)
         let hybridNormalized = ModelRegistry.normalizedModelsRoot(from: hybridCoder)
         let modelsNormalized = ModelRegistry.normalizedModelsRoot(from: models)
 
         #expect(fileNormalized?.path(percentEncoded: false) == models.path(percentEncoded: false))
         #expect(documentsNormalized?.path(percentEncoded: false) == models.path(percentEncoded: false))
+        #expect(hybridSpacedNormalized?.path(percentEncoded: false) == models.path(percentEncoded: false))
         #expect(hybridNormalized?.path(percentEncoded: false) == hybridModels.path(percentEncoded: false))
         #expect(modelsNormalized?.path(percentEncoded: false) == models.path(percentEncoded: false))
 
         try? fm.removeItem(at: sandboxRoot)
     }
 
-    @Test("GGUF install detection resolves in preferred, primary, and legacy roots")
+    @Test("GGUF install detection resolves in preferred, primary, legacy, and flat legacy roots")
     func ggufInstallDetectionAcrossRoots() throws {
         let fm = FileManager.default
         let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -106,12 +116,17 @@ struct ModelRegistryTests {
             .appendingPathComponent("Legacy", isDirectory: true)
             .appendingPathComponent("HybridCoder", isDirectory: true)
             .appendingPathComponent("Models", isDirectory: true)
+        let legacyFlatRoot = sandboxRoot
+            .appendingPathComponent("LegacyFlat", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
         try fm.createDirectory(at: primaryRoot, withIntermediateDirectories: true)
         try fm.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
+        try fm.createDirectory(at: legacyFlatRoot, withIntermediateDirectories: true)
 
         let registry = ModelRegistry(
             externalModelsRootOverride: primaryRoot,
-            legacyExternalModelsRootOverride: legacyRoot
+            legacyExternalModelsRootOverride: legacyRoot,
+            legacyFlatExternalModelsRootOverride: legacyFlatRoot
         )
         let modelID = registry.activeEmbeddingModelID
         let fileName = registry.resolvedLocalModelName(for: modelID)
@@ -119,7 +134,9 @@ struct ModelRegistryTests {
         let preferredDocuments = fm.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
             .appendingPathComponent("Documents", isDirectory: true)
-        let preferredRoot = preferredDocuments.appendingPathComponent("Models", isDirectory: true)
+        let preferredRoot = preferredDocuments
+            .appendingPathComponent("Hybrid Coder", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
         try fm.createDirectory(at: preferredRoot, withIntermediateDirectories: true)
         let preferredFile = preferredRoot.appendingPathComponent(fileName, isDirectory: false)
         try Data().write(to: preferredFile)
@@ -143,7 +160,59 @@ struct ModelRegistryTests {
 
         #expect(registry.isModelInstalledInExternalModelsFolder(modelID: modelID))
 
+        try? fm.removeItem(at: legacyFile)
+        let legacyFlatFile = legacyFlatRoot.appendingPathComponent(fileName, isDirectory: false)
+        try Data().write(to: legacyFlatFile)
+
+        #expect(registry.isModelInstalledInExternalModelsFolder(modelID: modelID))
+
         try? fm.removeItem(at: preferredDocuments.deletingLastPathComponent())
+        try? fm.removeItem(at: sandboxRoot)
+    }
+
+    @Test("Flat legacy migration moves registered artifacts and preserves unrelated files")
+    func flatLegacyMigrationPreservesUnrelatedFiles() throws {
+        let fm = FileManager.default
+        let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let destinationRoot = sandboxRoot
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent("Hybrid Coder", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        let legacyRoot = sandboxRoot
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent("HybridCoder", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        let legacyFlatRoot = sandboxRoot
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+
+        try fm.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
+        try fm.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
+        try fm.createDirectory(at: legacyFlatRoot, withIntermediateDirectories: true)
+
+        let registry = ModelRegistry(
+            externalModelsRootOverride: destinationRoot,
+            legacyExternalModelsRootOverride: legacyRoot,
+            legacyFlatExternalModelsRootOverride: legacyFlatRoot
+        )
+
+        let artifactFileName = registry.resolvedLocalModelName(for: registry.activeEmbeddingModelID)
+        let artifactSource = legacyFlatRoot.appendingPathComponent(artifactFileName, isDirectory: false)
+        try Data("artifact".utf8).write(to: artifactSource)
+
+        let unrelatedSource = legacyFlatRoot.appendingPathComponent("notes.txt", isDirectory: false)
+        try Data("unrelated".utf8).write(to: unrelatedSource)
+
+        try registry.migrateLegacyExternalModelsIfNeeded()
+
+        let artifactDestination = destinationRoot.appendingPathComponent(artifactFileName, isDirectory: false)
+        let unrelatedDestination = destinationRoot.appendingPathComponent("notes.txt", isDirectory: false)
+
+        #expect(fm.fileExists(atPath: artifactDestination.path(percentEncoded: false)))
+        #expect(fm.fileExists(atPath: unrelatedDestination.path(percentEncoded: false)))
+        #expect(fm.fileExists(atPath: unrelatedSource.path(percentEncoded: false)))
+        #expect(!fm.fileExists(atPath: artifactSource.path(percentEncoded: false)))
+
         try? fm.removeItem(at: sandboxRoot)
     }
 }

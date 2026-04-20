@@ -35,7 +35,7 @@ struct ModelDownloadServiceTests {
         let error = service.downloadError(for: modelID)
 
         #expect(error?.contains("Local llama.cpp GGUF model not found") == true)
-        #expect(error?.contains("Files > On My Device > HybridCoder > Models/") == true)
+        #expect(error?.contains("Files > On My Device > Hybrid Coder > Models/") == true)
         #expect(error?.localizedCaseInsensitiveContains("hugging face") == false)
         #expect(error?.localizedCaseInsensitiveContains("http") == false)
 
