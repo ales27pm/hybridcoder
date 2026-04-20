@@ -10,12 +10,11 @@ final class ModelRegistry {
     }
 
     enum Provider: String, Sendable {
-        case apple = "Apple"
         case huggingFace = "Hugging Face"
+        case customURL = "Custom URL"
     }
 
     enum Runtime: String, Sendable {
-        case builtInApple
         case llamaCppGGUF
     }
 
