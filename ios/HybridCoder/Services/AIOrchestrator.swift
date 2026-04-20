@@ -317,10 +317,8 @@ final class AIOrchestrator {
 
     func refreshRegistryInstallState() async {
         await modelDownload.refreshInstallState(modelID: modelRegistry.activeEmbeddingModelID)
-
-        let codeGenerationModelID = modelRegistry.activeCodeGenerationModelID
-        let qwenInstalled = modelRegistry.isCodeGenerationModelInstalled(modelID: codeGenerationModelID)
-        modelRegistry.setInstallState(for: codeGenerationModelID, qwenInstalled ? .installed : .notInstalled)
+        await modelDownload.refreshInstallState(modelID: modelRegistry.activeGenerationModelID)
+        await modelDownload.refreshInstallState(modelID: modelRegistry.activeCodeGenerationModelID)
     }
 
     private func makeQwenCoderService(modelID: String) -> QwenCoderService {

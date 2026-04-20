@@ -215,4 +215,31 @@ struct ModelRegistryTests {
 
         try? fm.removeItem(at: sandboxRoot)
     }
+
+    @Test("Deleting model state does not remove external GGUF artifacts")
+    func deletingModelStatePreservesExternalArtifacts() throws {
+        let fm = FileManager.default
+        let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let modelsRoot = sandboxRoot
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent("Hybrid Coder", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        try fm.createDirectory(at: modelsRoot, withIntermediateDirectories: true)
+
+        let registry = ModelRegistry(
+            externalModelsRootOverride: modelsRoot,
+            legacyExternalModelsRootOverride: modelsRoot,
+            legacyFlatExternalModelsRootOverride: modelsRoot
+        )
+        let modelID = registry.activeCodeGenerationModelID
+        let fileName = registry.resolvedLocalModelName(for: modelID)
+        let artifact = modelsRoot.appendingPathComponent(fileName, isDirectory: false)
+        try Data("artifact".utf8).write(to: artifact)
+        #expect(fm.fileExists(atPath: artifact.path(percentEncoded: false)))
+
+        registry.deleteCodeGenerationModelAssets(modelID: modelID)
+
+        #expect(fm.fileExists(atPath: artifact.path(percentEncoded: false)))
+        try? fm.removeItem(at: sandboxRoot)
+    }
 }
