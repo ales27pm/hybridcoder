@@ -9,9 +9,10 @@ final class ModelRegistry {
         case codeGeneration
     }
 
-    enum Provider: String, Sendable {
+    enum Provider: String, Sendable, Codable {
         case huggingFace = "Hugging Face"
         case customURL = "Custom URL"
+        case builtIn = "Built-in"
     }
 
     enum Runtime: String, Sendable {
@@ -50,7 +51,7 @@ final class ModelRegistry {
         var loadState: LoadState
     }
 
-    private(set) var entries: [String: Entry]
+    var entries: [String: Entry]
     var activeEmbeddingModelID: String
     var activeGenerationModelID: String
     var activeCodeGenerationModelID: String
@@ -170,6 +171,29 @@ final class ModelRegistry {
         guard entries[id]?.capability == .embedding else { return }
         activeEmbeddingModelID = id
         UserDefaults.standard.set(id, forKey: activeEmbeddingKey)
+    }
+
+    func registerCustomModel(_ entry: Entry) {
+        entries[entry.id] = entry
+    }
+
+    func removeCustomModel(id: String) {
+        guard entries[id] != nil else { return }
+        entries.removeValue(forKey: id)
+        if activeEmbeddingModelID == id {
+            setActiveEmbeddingModel(id: Self.defaultEmbeddingModelID)
+        }
+        if activeCodeGenerationModelID == id {
+            setActiveCodeGenerationModel(id: Self.defaultCodeGenerationModelID)
+        }
+    }
+
+    var embeddingModels: [Entry] {
+        entries.values.filter { $0.capability == .embedding }.sorted { $0.displayName < $1.displayName }
+    }
+
+    var codeGenerationModels: [Entry] {
+        entries.values.filter { $0.capability == .codeGeneration }.sorted { $0.displayName < $1.displayName }
     }
 
     func setActiveGenerationModel(id: String) {
