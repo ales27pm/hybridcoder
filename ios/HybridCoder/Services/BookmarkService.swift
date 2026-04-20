@@ -191,7 +191,10 @@ final class BookmarkService {
         }
 
         let leaf = normalized.lastPathComponent.lowercased()
-        if leaf == "documents" || leaf == "hybridcoder" || leaf == "hybrid coder" {
+        if leaf == "documents" {
+            return ModelRegistry.normalizedModelsRoot(from: normalized)
+        }
+        if leaf == "hybridcoder" || leaf == "hybrid coder" {
             let appended = normalized.appendingPathComponent("Models", isDirectory: true).standardizedFileURL
             return ModelRegistry.normalizedModelsRoot(from: appended) ?? appended
         }

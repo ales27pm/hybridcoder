@@ -270,54 +270,16 @@ final class ModelRegistry {
     }
 
     nonisolated static func ensureExternalModelsDirectoryExists() throws {
-        let fm = FileManager.default
-        do {
-            try fm.createDirectory(at: externalModelsRoot, withIntermediateDirectories: true)
-        } catch {
-            try fm.createDirectory(at: externalModelsRoot.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.createDirectory(at: externalModelsRoot, withIntermediateDirectories: true)
-        }
+        try createDirectoryWithParentRetry(at: externalModelsRoot, fileManager: .default)
     }
 
     nonisolated static func migrateLegacyExternalModelsIfNeeded() throws {
-        let fm = FileManager.default
         let destination = externalModelsRoot
         try ensureExternalModelsDirectoryExists()
 
         let sources = [legacyExternalModelsRoot, legacyFlatExternalModelsRoot]
         for source in sources {
-            guard source.path(percentEncoded: false) != destination.path(percentEncoded: false) else { continue }
-            guard fm.fileExists(atPath: source.path(percentEncoded: false)) else { continue }
-            guard let enumerator = fm.enumerator(
-                at: source,
-                includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            ) else {
-                continue
-            }
-
-            while let item = enumerator.nextObject() as? URL {
-                let values = try item.resourceValues(forKeys: [.isDirectoryKey])
-                if values.isDirectory == true {
-                    continue
-                }
-
-                let relativePath = item.path.replacingOccurrences(of: source.path(percentEncoded: false) + "/", with: "")
-                let destinationURL = destination.appendingPathComponent(relativePath, isDirectory: false)
-                let parent = destinationURL.deletingLastPathComponent()
-                if !fm.fileExists(atPath: parent.path(percentEncoded: false)) {
-                    try fm.createDirectory(at: parent, withIntermediateDirectories: true)
-                }
-                if fm.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
-                    continue
-                }
-                do {
-                    try fm.moveItem(at: item, to: destinationURL)
-                } catch {
-                    try fm.copyItem(at: item, to: destinationURL)
-                    try fm.removeItem(at: item)
-                }
-            }
+            try migrateLegacyModelFiles(from: source, to: destination, fileManager: .default)
         }
     }
 
@@ -480,54 +442,16 @@ final class ModelRegistry {
     }
 
     func ensureExternalModelsDirectoryExists() throws {
-        let fm = FileManager.default
-        do {
-            try fm.createDirectory(at: effectiveExternalModelsRoot, withIntermediateDirectories: true)
-        } catch {
-            try fm.createDirectory(at: effectiveExternalModelsRoot.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.createDirectory(at: effectiveExternalModelsRoot, withIntermediateDirectories: true)
-        }
+        try Self.createDirectoryWithParentRetry(at: effectiveExternalModelsRoot, fileManager: .default)
     }
 
     func migrateLegacyExternalModelsIfNeeded() throws {
-        let fm = FileManager.default
         let destination = effectiveExternalModelsRoot
         try ensureExternalModelsDirectoryExists()
 
         let sources = [effectiveLegacyExternalModelsRoot, effectiveLegacyFlatExternalModelsRoot]
         for source in sources {
-            guard source.path(percentEncoded: false) != destination.path(percentEncoded: false) else { continue }
-            guard fm.fileExists(atPath: source.path(percentEncoded: false)) else { continue }
-            guard let enumerator = fm.enumerator(
-                at: source,
-                includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            ) else {
-                continue
-            }
-
-            while let item = enumerator.nextObject() as? URL {
-                let values = try item.resourceValues(forKeys: [.isDirectoryKey])
-                if values.isDirectory == true {
-                    continue
-                }
-
-                let relativePath = item.path.replacingOccurrences(of: source.path(percentEncoded: false) + "/", with: "")
-                let destinationURL = destination.appendingPathComponent(relativePath, isDirectory: false)
-                let parent = destinationURL.deletingLastPathComponent()
-                if !fm.fileExists(atPath: parent.path(percentEncoded: false)) {
-                    try fm.createDirectory(at: parent, withIntermediateDirectories: true)
-                }
-                if fm.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
-                    continue
-                }
-                do {
-                    try fm.moveItem(at: item, to: destinationURL)
-                } catch {
-                    try fm.copyItem(at: item, to: destinationURL)
-                    try fm.removeItem(at: item)
-                }
-            }
+            try Self.migrateLegacyModelFiles(from: source, to: destination, fileManager: .default)
         }
     }
 
@@ -586,5 +510,79 @@ final class ModelRegistry {
             seen.insert(key)
             return true
         }
+    }
+
+    private nonisolated static func createDirectoryWithParentRetry(
+        at url: URL,
+        fileManager: FileManager
+    ) throws {
+        do {
+            try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+        } catch {
+            guard shouldRetryDirectoryCreation(error) else {
+                throw error
+            }
+            try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+    }
+
+    private nonisolated static func shouldRetryDirectoryCreation(_ error: Error) -> Bool {
+        if let cocoaError = error as? CocoaError {
+            return cocoaError.code == .fileNoSuchFile
+        }
+        let nsError = error as NSError
+        return nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileNoSuchFileError
+    }
+
+    private nonisolated static func migrateLegacyModelFiles(
+        from source: URL,
+        to destination: URL,
+        fileManager: FileManager
+    ) throws {
+        guard source.path(percentEncoded: false) != destination.path(percentEncoded: false) else { return }
+        guard fileManager.fileExists(atPath: source.path(percentEncoded: false)) else { return }
+        guard let enumerator = fileManager.enumerator(
+            at: source,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        while let item = enumerator.nextObject() as? URL {
+            let values = try item.resourceValues(forKeys: [.isDirectoryKey])
+            if values.isDirectory == true {
+                continue
+            }
+            guard let relativePath = relativePath(for: item, under: source) else {
+                continue
+            }
+
+            let destinationURL = destination.appendingPathComponent(relativePath, isDirectory: false)
+            let parent = destinationURL.deletingLastPathComponent()
+            if !fileManager.fileExists(atPath: parent.path(percentEncoded: false)) {
+                try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+            }
+            if fileManager.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
+                continue
+            }
+            do {
+                try fileManager.moveItem(at: item, to: destinationURL)
+            } catch {
+                try fileManager.copyItem(at: item, to: destinationURL)
+                try fileManager.removeItem(at: item)
+            }
+        }
+    }
+
+    private nonisolated static func relativePath(for item: URL, under root: URL) -> String? {
+        let itemComponents = item.standardizedFileURL.pathComponents
+        let rootComponents = root.standardizedFileURL.pathComponents
+        guard itemComponents.count >= rootComponents.count else { return nil }
+        guard Array(itemComponents.prefix(rootComponents.count)) == rootComponents else { return nil }
+        let relativeComponents = itemComponents.dropFirst(rootComponents.count)
+        guard !relativeComponents.isEmpty else { return nil }
+        return NSString.path(withComponents: Array(relativeComponents))
     }
 }
