@@ -59,8 +59,16 @@ final class ModelDownloadService {
 
     func refreshInstallState(modelID: String) async {
         if registry.entry(for: modelID)?.runtime == .llamaCppGGUF {
-            try? ModelRegistry.ensureExternalModelsDirectoryExists()
-            try? ModelRegistry.migrateLegacyExternalModelsIfNeeded()
+            do {
+                try ModelRegistry.ensureExternalModelsDirectoryExists()
+            } catch {
+                logger.error("Failed to ensure external models directory exists: \(error.localizedDescription, privacy: .private)")
+            }
+            do {
+                try ModelRegistry.migrateLegacyExternalModelsIfNeeded()
+            } catch {
+                logger.error("Failed to migrate legacy external models directory: \(error.localizedDescription, privacy: .private)")
+            }
             let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
             let isReady = registry.isModelInstalledInExternalModelsFolder(
                 modelID: modelID,
@@ -96,8 +104,16 @@ final class ModelDownloadService {
         guard !isDownloading else { return }
         guard let entry = registry.entry(for: modelID) else { return }
         guard entry.runtime != .llamaCppGGUF else {
-            try? ModelRegistry.ensureExternalModelsDirectoryExists()
-            try? ModelRegistry.migrateLegacyExternalModelsIfNeeded()
+            do {
+                try ModelRegistry.ensureExternalModelsDirectoryExists()
+            } catch {
+                logger.error("Failed to ensure external models directory exists: \(error.localizedDescription, privacy: .private)")
+            }
+            do {
+                try ModelRegistry.migrateLegacyExternalModelsIfNeeded()
+            } catch {
+                logger.error("Failed to migrate legacy external models directory: \(error.localizedDescription, privacy: .private)")
+            }
 
             let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
             let isReady = registry.isModelInstalledInExternalModelsFolder(

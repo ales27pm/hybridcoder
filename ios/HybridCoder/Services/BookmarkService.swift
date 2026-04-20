@@ -4,6 +4,17 @@ import OSLog
 @Observable
 @MainActor
 final class BookmarkService {
+    nonisolated enum BookmarkError: Error, LocalizedError, Sendable {
+        case invalidModelsFolderURL
+
+        nonisolated var errorDescription: String? {
+            switch self {
+            case .invalidModelsFolderURL:
+                return "Invalid models folder URL."
+            }
+        }
+    }
+
     private let secureStoreKey = "savedRepositoryBookmarks"
     nonisolated static let modelsFolderBookmarkKey = "savedModelsFolderBookmark"
     private let secureStore: SecureStoreService
@@ -65,7 +76,8 @@ final class BookmarkService {
 
     func saveModelsFolderBookmark(for url: URL) async throws {
         guard let normalizedURL = Self.normalizedModelsFolderURL(from: url) else {
-            return
+            logger.error("Failed to normalize models folder bookmark path=\(url.path(percentEncoded: false), privacy: .private)")
+            throw BookmarkError.invalidModelsFolderURL
         }
 
         let bookmarkData = try normalizedURL.bookmarkData(
@@ -96,6 +108,7 @@ final class BookmarkService {
         ) else { return nil }
 
         guard let normalizedURL = Self.normalizedModelsFolderURL(from: url) else {
+            logger.error("Failed to normalize resolved models folder bookmark path=\(url.path(percentEncoded: false), privacy: .private)")
             return nil
         }
 
@@ -157,13 +170,12 @@ final class BookmarkService {
 
     nonisolated static func normalizedModelsFolderURL(from rawURL: URL?) -> URL? {
         guard let rawURL else { return nil }
-        let standardized = rawURL.standardizedFileURL
-        let normalizedCandidate = ModelRegistry.normalizedModelsRoot(from: standardized) ?? standardized
-        let normalized = normalizedCandidate.standardizedFileURL
-        let leaf = normalized.lastPathComponent.lowercased()
-        if leaf == "models" {
+        guard let normalized = ModelRegistry.normalizedModelsRoot(from: rawURL)?.standardizedFileURL else {
+            return nil
+        }
+        if normalized.lastPathComponent.caseInsensitiveCompare("models") == .orderedSame {
             return normalized
         }
-        return ModelRegistry.normalizedModelsRoot(from: normalized.appendingPathComponent("Models", isDirectory: true))
+        return normalized.appendingPathComponent("Models", isDirectory: true).standardizedFileURL
     }
 }
