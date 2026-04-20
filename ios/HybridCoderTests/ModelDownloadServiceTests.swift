@@ -6,13 +6,13 @@ import Testing
 struct ModelDownloadServiceTests {
 
     @Test("Local GGUF refresh and validate messaging does not present remote download wording")
-    func localGGUFFlowUsesLocalValidationMessaging() async {
+    func localGGUFFlowUsesLocalValidationMessaging() async throws {
         let fm = FileManager.default
         let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let primaryRoot = sandboxRoot.appendingPathComponent("Documents", isDirectory: true).appendingPathComponent("Models", isDirectory: true)
         let legacyRoot = sandboxRoot.appendingPathComponent("Documents", isDirectory: true).appendingPathComponent("HybridCoder", isDirectory: true).appendingPathComponent("Models", isDirectory: true)
-        try? fm.createDirectory(at: primaryRoot, withIntermediateDirectories: true)
-        try? fm.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
+        try fm.createDirectory(at: primaryRoot, withIntermediateDirectories: true)
+        try fm.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
 
         let registry = ModelRegistry(
             externalModelsRootOverride: primaryRoot,
