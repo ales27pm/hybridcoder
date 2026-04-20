@@ -27,7 +27,7 @@ struct ModelRegistryTests {
         let modelID = registry.activeCodeGenerationModelID
         let entry = registry.entry(for: modelID)
 
-        #expect(entry?.remoteBaseURL == nil)
+        #expect(entry?.remoteBaseURL == ModelRegistry.qwenRemoteBaseURL)
         #expect(entry?.runtime == .llamaCppGGUF)
         #expect(entry?.files.contains(where: {
             $0.localPath == "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
@@ -35,6 +35,10 @@ struct ModelRegistryTests {
 
         let orchestrationEntry = registry.entry(for: registry.activeGenerationModelID)
         #expect(orchestrationEntry?.files == entry?.files)
+        #expect(orchestrationEntry?.remoteBaseURL == ModelRegistry.qwenRemoteBaseURL)
+
+        let embeddingEntry = registry.entry(for: registry.activeEmbeddingModelID)
+        #expect(embeddingEntry?.remoteBaseURL == ModelRegistry.embeddingRemoteBaseURL)
     }
 
     @Test("External models folder defaults to Documents/Hybrid Coder/Models and keeps legacy fallbacks")
@@ -213,6 +217,33 @@ struct ModelRegistryTests {
         #expect(fm.fileExists(atPath: unrelatedSource.path(percentEncoded: false)))
         #expect(!fm.fileExists(atPath: artifactSource.path(percentEncoded: false)))
 
+        try? fm.removeItem(at: sandboxRoot)
+    }
+
+    @Test("Deleting model state does not remove external GGUF artifacts")
+    func deletingModelStatePreservesExternalArtifacts() throws {
+        let fm = FileManager.default
+        let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let modelsRoot = sandboxRoot
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent("Hybrid Coder", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        try fm.createDirectory(at: modelsRoot, withIntermediateDirectories: true)
+
+        let registry = ModelRegistry(
+            externalModelsRootOverride: modelsRoot,
+            legacyExternalModelsRootOverride: modelsRoot,
+            legacyFlatExternalModelsRootOverride: modelsRoot
+        )
+        let modelID = registry.activeCodeGenerationModelID
+        let fileName = registry.resolvedLocalModelName(for: modelID)
+        let artifact = modelsRoot.appendingPathComponent(fileName, isDirectory: false)
+        try Data("artifact".utf8).write(to: artifact)
+        #expect(fm.fileExists(atPath: artifact.path(percentEncoded: false)))
+
+        registry.deleteCodeGenerationModelAssets(modelID: modelID)
+
+        #expect(fm.fileExists(atPath: artifact.path(percentEncoded: false)))
         try? fm.removeItem(at: sandboxRoot)
     }
 }

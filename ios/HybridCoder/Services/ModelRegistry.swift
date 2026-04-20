@@ -64,6 +64,8 @@ final class ModelRegistry {
 
     nonisolated static let defaultEmbeddingModelID = "jina-embeddings-v3-Q4_K_M.gguf"
     nonisolated static let sharedQwenArtifactFilename = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
+    nonisolated static let embeddingRemoteBaseURL = "https://huggingface.co/lmstudio-community/jina-embeddings-v3-GGUF/resolve/main"
+    nonisolated static let qwenRemoteBaseURL = "https://huggingface.co/bartowski/Qwen2.5-Coder-3B-Instruct-abliterated-GGUF/resolve/main"
     nonisolated static let defaultGenerationModelID = "qwen2.5-coder-3b-orchestration"
     nonisolated static let defaultCodeGenerationModelID = sharedQwenArtifactFilename
 
@@ -101,7 +103,7 @@ final class ModelRegistry {
                 capability: .embedding,
                 provider: .huggingFace,
                 runtime: .llamaCppGGUF,
-                remoteBaseURL: nil,
+                remoteBaseURL: Self.embeddingRemoteBaseURL,
                 files: embeddingFiles,
                 isAvailable: true,
                 installState: .notInstalled,
@@ -113,7 +115,7 @@ final class ModelRegistry {
                 capability: .orchestration,
                 provider: .huggingFace,
                 runtime: .llamaCppGGUF,
-                remoteBaseURL: nil,
+                remoteBaseURL: Self.qwenRemoteBaseURL,
                 files: qwenFiles,
                 isAvailable: true,
                 installState: .notInstalled,
@@ -125,7 +127,7 @@ final class ModelRegistry {
                 capability: .codeGeneration,
                 provider: .huggingFace,
                 runtime: .llamaCppGGUF,
-                remoteBaseURL: nil,
+                remoteBaseURL: Self.qwenRemoteBaseURL,
                 files: qwenFiles,
                 isAvailable: true,
                 installState: .notInstalled,
@@ -466,19 +468,12 @@ final class ModelRegistry {
         clearCodeGenerationInstallMarker(modelID: modelID)
         try? FileManager.default.removeItem(at: codeGenerationSnapshotDirectory(for: modelID))
 
-        if let entry = entries[modelID], entry.runtime == .llamaCppGGUF {
-            for modelsDirectory in candidateExternalModelsRoots(preferredRoot: preferredRoot) {
-                for file in entry.files {
-                    let direct = modelsDirectory.appendingPathComponent(file.localPath)
-                    if FileManager.default.fileExists(atPath: direct.path(percentEncoded: false)) {
-                        try? FileManager.default.removeItem(at: direct)
-                    }
-                }
-            }
-        }
-
         try? FileManager.default.removeItem(at: downloadedModelDirectory(for: modelID))
         try? FileManager.default.removeItem(at: downloadedTokenizerDirectory(for: modelID))
+    }
+
+    func preferredExternalModelsRoot(preferredRoot: URL? = nil) -> URL {
+        candidateExternalModelsRoots(preferredRoot: preferredRoot).first ?? effectiveExternalModelsRoot
     }
 
     private func mutate(modelID: String, _ update: (inout Entry) -> Void) {
