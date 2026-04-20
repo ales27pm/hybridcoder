@@ -19,6 +19,10 @@ struct OnboardingView: View {
         case failed
     }
 
+    private var modelsFolderHint: String {
+        "Files > On My iPhone > HybridCoder > Models/"
+    }
+
     var body: some View {
         ZStack {
             Theme.surfaceBg.ignoresSafeArea()
@@ -91,7 +95,7 @@ struct OnboardingView: View {
                     .font(.system(size: 32, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
 
-                Text("Local-first AI coding assistant.\nAll models run on-device — no cloud needed.")
+                Text("Local-first AI coding assistant.\nPlace GGUF models in \(modelsFolderHint) and warm them on-device.")
                     .font(.subheadline)
                     .foregroundStyle(Theme.dimText)
                     .multilineTextAlignment(.center)
@@ -132,8 +136,8 @@ struct OnboardingView: View {
                 beginSetup()
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "arrow.down.circle.fill")
-                    Text("Download Models")
+                    Image(systemName: "folder.badge.gearshape")
+                    Text("Prepare Models Folder")
                         .fontWeight(.semibold)
                 }
                 .frame(maxWidth: .infinity)
@@ -200,7 +204,7 @@ struct OnboardingView: View {
                 )
             }
 
-            Text("This may take a few minutes depending\non your connection and device.\nModels load from Files > On My iPhone > HybridCoder > Models/.")
+            Text("We prepare the local models folder, scan installed artifacts, then warm the runtimes.\nExpected location: \(modelsFolderHint)")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
                 .multilineTextAlignment(.center)
@@ -253,7 +257,7 @@ struct OnboardingView: View {
                 Text(error)
                     .font(.caption2)
                     .foregroundStyle(.red.opacity(0.8))
-                    .lineLimit(2)
+                    .lineLimit(3)
             }
         }
         .padding(14)
@@ -323,7 +327,7 @@ struct OnboardingView: View {
                     .font(.system(size: 24, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
 
-                Text("Models couldn't be downloaded.\nYou can retry from the Models tab.")
+                Text("The models folder was prepared, but one or more runtimes could not be warmed.\nYou can retry from the Models tab.")
                     .font(.subheadline)
                     .foregroundStyle(Theme.dimText)
                     .multilineTextAlignment(.center)
@@ -335,7 +339,7 @@ struct OnboardingView: View {
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "arrow.clockwise")
-                        Text("Retry Download")
+                        Text("Retry Setup")
                             .fontWeight(.semibold)
                     }
                     .frame(maxWidth: .infinity)
@@ -371,34 +375,48 @@ struct OnboardingView: View {
     }
 
     private func downloadAll() async {
+        try? ModelRegistry.ensureExternalModelsDirectoryExists()
+        try? ModelRegistry.migrateLegacyExternalModelsIfNeeded()
+        await orchestrator.refreshRegistryInstallState()
+
         await downloadEmbedding()
         await downloadQwen()
 
-        let anySuccess = embeddingComplete || qwenComplete
         let allFailed = !embeddingComplete && !qwenComplete
 
         try? await Task.sleep(for: .milliseconds(600))
 
         withAnimation(.spring(duration: 0.5)) {
-            if allFailed {
-                phase = .failed
-            } else {
-                phase = .done
-            }
+            phase = allFailed ? .failed : .done
         }
     }
 
     private func downloadEmbedding() async {
-        await orchestrator.downloadActiveEmbeddingModel()
+        let modelID = orchestrator.modelRegistry.activeEmbeddingModelID
+        guard orchestrator.modelRegistry.entry(for: modelID)?.installState == .installed else {
+            embeddingError = "Place \(modelID) in \(modelsFolderHint)"
+            return
+        }
 
-        if orchestrator.modelDownload.isModelReady {
-            withAnimation { embeddingComplete = true }
-        } else {
-            embeddingError = orchestrator.modelDownload.downloadError ?? "Download failed"
+        do {
+            try await orchestrator.embeddingService.load()
+            if await orchestrator.embeddingService.isLoaded {
+                withAnimation { embeddingComplete = true }
+                return
+            }
+            embeddingError = "Embedding runtime failed to load"
+        } catch {
+            embeddingError = error.localizedDescription
         }
     }
 
     private func downloadQwen() async {
+        let modelID = orchestrator.modelRegistry.activeCodeGenerationModelID
+        guard orchestrator.modelRegistry.entry(for: modelID)?.installState == .installed else {
+            qwenError = "Place \(modelID) in \(modelsFolderHint)"
+            return
+        }
+
         do {
             try await orchestrator.warmUpCodeGenerationModel { progress in
                 self.qwenProgress = progress
@@ -411,13 +429,13 @@ struct OnboardingView: View {
 
     private var modelSetupSummary: String {
         if embeddingComplete && qwenComplete {
-            return "All models are loaded.\nImport a repository to start coding."
+            return "All local models are ready.\nImport a repository to start coding."
         } else if embeddingComplete {
-            return "CodeBERT is ready. Qwen can be set up later\nfrom the Models tab."
+            return "The embedding pipeline is ready. Add the Qwen GGUF to \(modelsFolderHint) to enable code generation."
         } else if qwenComplete {
-            return "Qwen is ready. CodeBERT can be set up later\nfrom the Models tab."
+            return "The Qwen runtime is ready. Add the embedding GGUF to \(modelsFolderHint) to enable semantic search."
         }
-        return "Import a repository to start coding."
+        return "The models folder is ready. Add GGUF files to \(modelsFolderHint), then refresh from the Models tab."
     }
 
     private func completeOnboarding() {
