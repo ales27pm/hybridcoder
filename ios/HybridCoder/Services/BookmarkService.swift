@@ -189,6 +189,18 @@ final class BookmarkService {
         if normalized.lastPathComponent.caseInsensitiveCompare("models") == .orderedSame {
             return normalized
         }
+
+        let leaf = normalized.lastPathComponent.lowercased()
+        if leaf == "documents" || leaf == "hybridcoder" {
+            let appended = normalized.appendingPathComponent("Models", isDirectory: true).standardizedFileURL
+            return ModelRegistry.normalizedModelsRoot(from: appended) ?? appended
+        }
+
+        // Avoid turning unresolved file-like bookmarks into bogus ".../<file>/Models" paths.
+        guard normalized.pathExtension.isEmpty || normalized.hasDirectoryPath else {
+            return nil
+        }
+
         let appended = normalized.appendingPathComponent("Models", isDirectory: true).standardizedFileURL
         return ModelRegistry.normalizedModelsRoot(from: appended) ?? appended
     }

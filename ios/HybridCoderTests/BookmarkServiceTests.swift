@@ -90,4 +90,29 @@ struct BookmarkServiceTests {
         testDefaults.removePersistentDomain(forName: defaultsSuite)
         try? fm.removeItem(at: sandboxRoot)
     }
+
+    @Test("File-like bookmark paths that do not normalize to a models directory fail loudly")
+    func missingFileLikeBookmarkPathFailsNormalization() async throws {
+        let secureStore = SecureStoreService(serviceName: "com.hybridcoder.tests.bookmarks.invalid.\(UUID().uuidString)")
+        let defaultsSuite = "com.hybridcoder.tests.bookmarks.invalid.defaults.\(UUID().uuidString)"
+        let testDefaults = UserDefaults(suiteName: defaultsSuite)!
+        testDefaults.removePersistentDomain(forName: defaultsSuite)
+        let service = BookmarkService(secureStore: secureStore, userDefaults: testDefaults)
+        let fm = FileManager.default
+
+        let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: sandboxRoot, withIntermediateDirectories: true)
+        let missingGGUF = sandboxRoot.appendingPathComponent("missing.gguf", isDirectory: false)
+
+        await #expect(throws: BookmarkService.BookmarkError.self) {
+            try await service.saveModelsFolderBookmark(for: missingGGUF)
+        }
+
+        let resolved = await service.resolveModelsFolderBookmark()
+        #expect(resolved == nil)
+
+        try? await secureStore.deleteAll()
+        testDefaults.removePersistentDomain(forName: defaultsSuite)
+        try? fm.removeItem(at: sandboxRoot)
+    }
 }
