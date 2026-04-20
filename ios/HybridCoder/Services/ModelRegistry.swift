@@ -73,13 +73,16 @@ final class ModelRegistry {
     private let legacyGenerationID = ModelRegistry.sharedQwenArtifactFilename
     private let externalModelsRootOverride: URL?
     private let legacyExternalModelsRootOverride: URL?
+    private let legacyFlatExternalModelsRootOverride: URL?
 
     init(
         externalModelsRootOverride: URL? = nil,
-        legacyExternalModelsRootOverride: URL? = nil
+        legacyExternalModelsRootOverride: URL? = nil,
+        legacyFlatExternalModelsRootOverride: URL? = nil
     ) {
         self.externalModelsRootOverride = externalModelsRootOverride?.standardizedFileURL
         self.legacyExternalModelsRootOverride = legacyExternalModelsRootOverride?.standardizedFileURL
+        self.legacyFlatExternalModelsRootOverride = legacyFlatExternalModelsRootOverride?.standardizedFileURL
         let embeddingFiles: [ModelFile] = [
             ModelFile(remotePath: embeddingID, localPath: embeddingID)
         ]
@@ -227,13 +230,19 @@ final class ModelRegistry {
     }
 
     nonisolated static var externalModelsRoot: URL {
-        documentsRoot.appendingPathComponent("Models", isDirectory: true)
+        documentsRoot
+            .appendingPathComponent("Hybrid Coder", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
     }
 
     nonisolated static var legacyExternalModelsRoot: URL {
         documentsRoot
             .appendingPathComponent("HybridCoder", isDirectory: true)
             .appendingPathComponent("Models", isDirectory: true)
+    }
+
+    nonisolated static var legacyFlatExternalModelsRoot: URL {
+        documentsRoot.appendingPathComponent("Models", isDirectory: true)
     }
 
     nonisolated static func normalizedModelsRoot(from rawURL: URL?) -> URL? {
@@ -250,50 +259,65 @@ final class ModelRegistry {
             return url
         }
         if lastComponent == "documents" {
-            return url.appendingPathComponent("Models", isDirectory: true)
+            return url
+                .appendingPathComponent("Hybrid Coder", isDirectory: true)
+                .appendingPathComponent("Models", isDirectory: true)
         }
-        if lastComponent == "hybridcoder" {
+        if lastComponent == "hybridcoder" || lastComponent == "hybrid coder" {
             return url.appendingPathComponent("Models", isDirectory: true)
         }
         return url
     }
 
     nonisolated static func ensureExternalModelsDirectoryExists() throws {
-        try FileManager.default.createDirectory(at: externalModelsRoot, withIntermediateDirectories: true)
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(at: externalModelsRoot, withIntermediateDirectories: true)
+        } catch {
+            try fm.createDirectory(at: externalModelsRoot.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.createDirectory(at: externalModelsRoot, withIntermediateDirectories: true)
+        }
     }
 
     nonisolated static func migrateLegacyExternalModelsIfNeeded() throws {
         let fm = FileManager.default
-        let source = legacyExternalModelsRoot
         let destination = externalModelsRoot
-        guard source.path(percentEncoded: false) != destination.path(percentEncoded: false) else { return }
-        guard fm.fileExists(atPath: source.path(percentEncoded: false)) else { return }
-
         try ensureExternalModelsDirectoryExists()
-        guard let enumerator = fm.enumerator(
-            at: source,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return
-        }
 
-        while let item = enumerator.nextObject() as? URL {
-            let values = try item.resourceValues(forKeys: [.isDirectoryKey])
-            if values.isDirectory == true {
+        let sources = [legacyExternalModelsRoot, legacyFlatExternalModelsRoot]
+        for source in sources {
+            guard source.path(percentEncoded: false) != destination.path(percentEncoded: false) else { continue }
+            guard fm.fileExists(atPath: source.path(percentEncoded: false)) else { continue }
+            guard let enumerator = fm.enumerator(
+                at: source,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            ) else {
                 continue
             }
 
-            let relativePath = item.path.replacingOccurrences(of: source.path(percentEncoded: false) + "/", with: "")
-            let destinationURL = destination.appendingPathComponent(relativePath, isDirectory: false)
-            let parent = destinationURL.deletingLastPathComponent()
-            if !fm.fileExists(atPath: parent.path(percentEncoded: false)) {
-                try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+            while let item = enumerator.nextObject() as? URL {
+                let values = try item.resourceValues(forKeys: [.isDirectoryKey])
+                if values.isDirectory == true {
+                    continue
+                }
+
+                let relativePath = item.path.replacingOccurrences(of: source.path(percentEncoded: false) + "/", with: "")
+                let destinationURL = destination.appendingPathComponent(relativePath, isDirectory: false)
+                let parent = destinationURL.deletingLastPathComponent()
+                if !fm.fileExists(atPath: parent.path(percentEncoded: false)) {
+                    try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+                }
+                if fm.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
+                    continue
+                }
+                do {
+                    try fm.moveItem(at: item, to: destinationURL)
+                } catch {
+                    try fm.copyItem(at: item, to: destinationURL)
+                    try fm.removeItem(at: item)
+                }
             }
-            if fm.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
-                continue
-            }
-            try fm.moveItem(at: item, to: destinationURL)
         }
     }
 
@@ -304,6 +328,7 @@ final class ModelRegistry {
         }
         urls.append(externalModelsRoot.standardizedFileURL)
         urls.append(legacyExternalModelsRoot.standardizedFileURL)
+        urls.append(legacyFlatExternalModelsRoot.standardizedFileURL)
 
         var seen: Set<String> = []
         return urls.filter { url in
@@ -455,41 +480,54 @@ final class ModelRegistry {
     }
 
     func ensureExternalModelsDirectoryExists() throws {
-        try FileManager.default.createDirectory(at: effectiveExternalModelsRoot, withIntermediateDirectories: true)
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(at: effectiveExternalModelsRoot, withIntermediateDirectories: true)
+        } catch {
+            try fm.createDirectory(at: effectiveExternalModelsRoot.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.createDirectory(at: effectiveExternalModelsRoot, withIntermediateDirectories: true)
+        }
     }
 
     func migrateLegacyExternalModelsIfNeeded() throws {
         let fm = FileManager.default
-        let source = effectiveLegacyExternalModelsRoot
         let destination = effectiveExternalModelsRoot
-        guard source.path(percentEncoded: false) != destination.path(percentEncoded: false) else { return }
-        guard fm.fileExists(atPath: source.path(percentEncoded: false)) else { return }
-
         try ensureExternalModelsDirectoryExists()
-        guard let enumerator = fm.enumerator(
-            at: source,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return
-        }
 
-        while let item = enumerator.nextObject() as? URL {
-            let values = try item.resourceValues(forKeys: [.isDirectoryKey])
-            if values.isDirectory == true {
+        let sources = [effectiveLegacyExternalModelsRoot, effectiveLegacyFlatExternalModelsRoot]
+        for source in sources {
+            guard source.path(percentEncoded: false) != destination.path(percentEncoded: false) else { continue }
+            guard fm.fileExists(atPath: source.path(percentEncoded: false)) else { continue }
+            guard let enumerator = fm.enumerator(
+                at: source,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            ) else {
                 continue
             }
 
-            let relativePath = item.path.replacingOccurrences(of: source.path(percentEncoded: false) + "/", with: "")
-            let destinationURL = destination.appendingPathComponent(relativePath, isDirectory: false)
-            let parent = destinationURL.deletingLastPathComponent()
-            if !fm.fileExists(atPath: parent.path(percentEncoded: false)) {
-                try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+            while let item = enumerator.nextObject() as? URL {
+                let values = try item.resourceValues(forKeys: [.isDirectoryKey])
+                if values.isDirectory == true {
+                    continue
+                }
+
+                let relativePath = item.path.replacingOccurrences(of: source.path(percentEncoded: false) + "/", with: "")
+                let destinationURL = destination.appendingPathComponent(relativePath, isDirectory: false)
+                let parent = destinationURL.deletingLastPathComponent()
+                if !fm.fileExists(atPath: parent.path(percentEncoded: false)) {
+                    try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+                }
+                if fm.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
+                    continue
+                }
+                do {
+                    try fm.moveItem(at: item, to: destinationURL)
+                } catch {
+                    try fm.copyItem(at: item, to: destinationURL)
+                    try fm.removeItem(at: item)
+                }
             }
-            if fm.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
-                continue
-            }
-            try fm.moveItem(at: item, to: destinationURL)
         }
     }
 
@@ -526,6 +564,10 @@ final class ModelRegistry {
         legacyExternalModelsRootOverride ?? Self.legacyExternalModelsRoot
     }
 
+    private var effectiveLegacyFlatExternalModelsRoot: URL {
+        legacyFlatExternalModelsRootOverride ?? Self.legacyFlatExternalModelsRoot
+    }
+
     private func candidateExternalModelsRoots(preferredRoot: URL? = nil) -> [URL] {
         var urls: [URL] = []
         if let normalizedPreferred = Self.normalizedModelsRoot(from: preferredRoot) {
@@ -533,6 +575,7 @@ final class ModelRegistry {
         }
         urls.append(effectiveExternalModelsRoot.standardizedFileURL)
         urls.append(effectiveLegacyExternalModelsRoot.standardizedFileURL)
+        urls.append(effectiveLegacyFlatExternalModelsRoot.standardizedFileURL)
 
         var seen: Set<String> = []
         return urls.filter { url in

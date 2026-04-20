@@ -5,7 +5,7 @@ import Testing
 @MainActor
 struct BookmarkServiceTests {
 
-    @Test("Models folder bookmark normalizes file, Documents, HybridCoder, and Models URLs")
+    @Test("Models folder bookmark normalizes file, Documents, Hybrid Coder, HybridCoder, and Models URLs")
     func modelsBookmarkNormalizationVariants() async throws {
         let secureStore = SecureStoreService(serviceName: "com.hybridcoder.tests.bookmarks.\(UUID().uuidString)")
         let defaultsSuite = "com.hybridcoder.tests.bookmarks.defaults.\(UUID().uuidString)"
@@ -16,7 +16,10 @@ struct BookmarkServiceTests {
 
         let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let documents = sandboxRoot.appendingPathComponent("Documents", isDirectory: true)
-        let models = documents.appendingPathComponent("Models", isDirectory: true)
+        let models = documents
+            .appendingPathComponent("Hybrid Coder", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        let hybridCoderSpaced = documents.appendingPathComponent("Hybrid Coder", isDirectory: true)
         let hybridCoder = documents.appendingPathComponent("HybridCoder", isDirectory: true)
         let hybridModels = hybridCoder.appendingPathComponent("Models", isDirectory: true)
 
@@ -33,6 +36,10 @@ struct BookmarkServiceTests {
         try await service.saveModelsFolderBookmark(for: documents)
         let resolvedFromDocuments = await service.resolveModelsFolderBookmark()
         #expect(resolvedFromDocuments?.path(percentEncoded: false) == models.path(percentEncoded: false))
+
+        try await service.saveModelsFolderBookmark(for: hybridCoderSpaced)
+        let resolvedFromHybridCoderSpaced = await service.resolveModelsFolderBookmark()
+        #expect(resolvedFromHybridCoderSpaced?.path(percentEncoded: false) == models.path(percentEncoded: false))
 
         try await service.saveModelsFolderBookmark(for: hybridCoder)
         let resolvedFromHybridCoder = await service.resolveModelsFolderBookmark()
@@ -58,7 +65,9 @@ struct BookmarkServiceTests {
 
         let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let documents = sandboxRoot.appendingPathComponent("Documents", isDirectory: true)
-        let models = documents.appendingPathComponent("Models", isDirectory: true)
+        let models = documents
+            .appendingPathComponent("Hybrid Coder", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
         try fm.createDirectory(at: models, withIntermediateDirectories: true)
 
         let rawBookmark = try documents.bookmarkData(
