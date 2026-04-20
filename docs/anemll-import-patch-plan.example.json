@@ -1,0 +1,32 @@
+{
+  "xcode_packages": {
+    "add": [
+      {
+        "url": "https://github.com/jpsim/Yams.git",
+        "product": "Yams"
+      },
+      {
+        "existing_package": "swift-transformers",
+        "product": "Tokenizers"
+      }
+    ]
+  },
+  "registry": {
+    "runtime_case": "anemll",
+    "model_id": "anemll/imported-bundle",
+    "display_name": "ANEMLL Imported Bundle"
+  },
+  "orchestrator": {
+    "new_service": "ANEMLLCoderService",
+    "required_methods": [
+      "warmUpCodeGenerationModel branching by runtime",
+      "unloadCodeGenerationModel branching by runtime",
+      "generateCode branching by runtime",
+      "generateCodeExplanation branching by runtime",
+      "streaming code generation branching by runtime"
+    ]
+  },
+  "ui": {
+    "model_manager": "render all code-generation runtimes and allow switching the active runtime"
+  }
+}
