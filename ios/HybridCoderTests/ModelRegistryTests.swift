@@ -98,7 +98,21 @@ struct ModelRegistryTests {
     @Test("GGUF install detection resolves in preferred, primary, and legacy roots")
     func ggufInstallDetectionAcrossRoots() throws {
         let fm = FileManager.default
-        let registry = ModelRegistry()
+        let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let primaryRoot = sandboxRoot
+            .appendingPathComponent("Primary", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        let legacyRoot = sandboxRoot
+            .appendingPathComponent("Legacy", isDirectory: true)
+            .appendingPathComponent("HybridCoder", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        try fm.createDirectory(at: primaryRoot, withIntermediateDirectories: true)
+        try fm.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
+
+        let registry = ModelRegistry(
+            externalModelsRootOverride: primaryRoot,
+            legacyExternalModelsRootOverride: legacyRoot
+        )
         let modelID = registry.activeEmbeddingModelID
         let fileName = registry.resolvedLocalModelName(for: modelID)
 
@@ -118,42 +132,18 @@ struct ModelRegistryTests {
         )
 
         try? fm.removeItem(at: preferredFile)
-        let primaryRoot = ModelRegistry.externalModelsRoot
-        try fm.createDirectory(at: primaryRoot, withIntermediateDirectories: true)
         let primaryFile = primaryRoot.appendingPathComponent(fileName, isDirectory: false)
-        let primaryExisted = fm.fileExists(atPath: primaryFile.path(percentEncoded: false))
-        let primaryBackup = primaryExisted ? (try? Data(contentsOf: primaryFile)) : nil
-        if !primaryExisted {
-            try Data().write(to: primaryFile)
-        }
+        try Data().write(to: primaryFile)
 
         #expect(registry.isModelInstalledInExternalModelsFolder(modelID: modelID))
 
-        if primaryExisted {
-            if let primaryBackup {
-                try? primaryBackup.write(to: primaryFile)
-            }
-        } else {
-            try? fm.removeItem(at: primaryFile)
-        }
-        let legacyRoot = ModelRegistry.legacyExternalModelsRoot
-        try fm.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
+        try? fm.removeItem(at: primaryFile)
         let legacyFile = legacyRoot.appendingPathComponent(fileName, isDirectory: false)
-        let legacyExisted = fm.fileExists(atPath: legacyFile.path(percentEncoded: false))
-        let legacyBackup = legacyExisted ? (try? Data(contentsOf: legacyFile)) : nil
-        if !legacyExisted {
-            try Data().write(to: legacyFile)
-        }
+        try Data().write(to: legacyFile)
 
         #expect(registry.isModelInstalledInExternalModelsFolder(modelID: modelID))
 
         try? fm.removeItem(at: preferredDocuments.deletingLastPathComponent())
-        if legacyExisted {
-            if let legacyBackup {
-                try? legacyBackup.write(to: legacyFile)
-            }
-        } else {
-            try? fm.removeItem(at: legacyFile)
-        }
+        try? fm.removeItem(at: sandboxRoot)
     }
 }

@@ -60,14 +60,15 @@ final class ModelDownloadService {
     func refreshInstallState(modelID: String) async {
         if registry.entry(for: modelID)?.runtime == .llamaCppGGUF {
             do {
-                try ModelRegistry.ensureExternalModelsDirectoryExists()
+                try registry.ensureExternalModelsDirectoryExists()
+                try registry.migrateLegacyExternalModelsIfNeeded()
             } catch {
-                logger.error("Failed to ensure external models directory exists: \(error.localizedDescription, privacy: .private)")
-            }
-            do {
-                try ModelRegistry.migrateLegacyExternalModelsIfNeeded()
-            } catch {
-                logger.error("Failed to migrate legacy external models directory: \(error.localizedDescription, privacy: .private)")
+                logger.error("Failed to prepare local GGUF storage: \(error.localizedDescription, privacy: .private)")
+                downloadError = "Failed to prepare local Models folder. Verify Files > On My Device > HybridCoder > Models/ is accessible."
+                downloadErrorModelID = modelID
+                shouldSuggestTokenInput = false
+                registry.setInstallState(for: modelID, .notInstalled)
+                return
             }
             let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
             let isReady = registry.isModelInstalledInExternalModelsFolder(
@@ -105,14 +106,15 @@ final class ModelDownloadService {
         guard let entry = registry.entry(for: modelID) else { return }
         guard entry.runtime != .llamaCppGGUF else {
             do {
-                try ModelRegistry.ensureExternalModelsDirectoryExists()
+                try registry.ensureExternalModelsDirectoryExists()
+                try registry.migrateLegacyExternalModelsIfNeeded()
             } catch {
-                logger.error("Failed to ensure external models directory exists: \(error.localizedDescription, privacy: .private)")
-            }
-            do {
-                try ModelRegistry.migrateLegacyExternalModelsIfNeeded()
-            } catch {
-                logger.error("Failed to migrate legacy external models directory: \(error.localizedDescription, privacy: .private)")
+                logger.error("Failed to prepare local GGUF storage: \(error.localizedDescription, privacy: .private)")
+                downloadError = "Failed to prepare local Models folder. Verify Files > On My Device > HybridCoder > Models/ is accessible."
+                downloadErrorModelID = modelID
+                shouldSuggestTokenInput = false
+                registry.setInstallState(for: modelID, .notInstalled)
+                return
             }
 
             let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
@@ -251,10 +253,11 @@ final class ModelDownloadService {
         isDownloading = false
     }
 
-    func deleteDownloadedModels(modelID: String? = nil) {
+    func deleteDownloadedModels(modelID: String? = nil) async {
         let modelID = modelID ?? activeEmbeddingModelID
         if registry.entry(for: modelID)?.runtime == .llamaCppGGUF {
-            registry.deleteCodeGenerationModelAssets(modelID: modelID)
+            let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+            registry.deleteCodeGenerationModelAssets(modelID: modelID, preferredRoot: preferredRoot)
             registry.setInstallState(for: modelID, .notInstalled)
             registry.setLoadState(for: modelID, .unloaded)
             downloadProgress = 0
