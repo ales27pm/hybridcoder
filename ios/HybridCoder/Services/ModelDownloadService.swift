@@ -117,11 +117,57 @@ final class ModelDownloadService {
         guard !isDownloading else { return }
         guard let entry = registry.entry(for: modelID) else { return }
         guard entry.runtime != .llamaCppGGUF else {
+            isDownloading = true
+            downloadProgress = 0
+            downloadError = nil
+            downloadErrorModelID = nil
+            shouldSuggestTokenInput = false
+            registry.setInstallState(for: modelID, .downloading(progress: 0))
+
+            defer {
+                isDownloading = false
+            }
+
             do {
                 try registry.ensureExternalModelsDirectoryExists()
                 try registry.migrateLegacyExternalModelsIfNeeded()
+                let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+                let isReady = registry.isModelInstalledInExternalModelsFolder(
+                    modelID: modelID,
+                    preferredRoot: preferredRoot
+                )
+                if isReady {
+                    registry.setInstallState(for: modelID, .installed)
+                    downloadError = nil
+                    downloadErrorModelID = nil
+                    downloadProgress = 1.0
+                    return
+                }
+
+                if let remoteBaseURL = entry.remoteBaseURL {
+                    try await downloadExternalGGUFModel(
+                        modelID: modelID,
+                        entry: entry,
+                        remoteBaseURL: remoteBaseURL,
+                        preferredRoot: preferredRoot
+                    )
+                    registry.setInstallState(for: modelID, .installed)
+                    downloadError = nil
+                    downloadErrorModelID = nil
+                    downloadProgress = 1.0
+                } else {
+                    registry.setInstallState(for: modelID, .notInstalled)
+                    downloadError = "Local llama.cpp GGUF model not found. Place the file in Files > On My iPhone > Hybrid Coder > Models/, then tap Refresh to validate."
+                    downloadErrorModelID = modelID
+                }
+            } catch let error as DownloadError {
+                registry.setInstallState(for: modelID, .notInstalled)
+                downloadError = error.localizedDescription
+                downloadErrorModelID = modelID
+                shouldSuggestTokenInput = error.shouldSuggestHuggingFaceTokenInput
+                logger.error("DownloadError modelID=\(modelID, privacy: .public) details=\(error.triageSummary, privacy: .private)")
             } catch {
-                logger.error("Failed to prepare local GGUF storage: \(error.localizedDescription, privacy: .private)")
+                logger.error("Failed to prepare/download local GGUF storage: \(error.localizedDescription, privacy: .private)")
                 let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
                 let fallbackReady = registry.isModelInstalledInExternalModelsFolder(
                     modelID: modelID,
@@ -135,24 +181,7 @@ final class ModelDownloadService {
                     downloadError = "Failed to prepare local Models folder. Verify Files > On My iPhone > Hybrid Coder > Models/ is accessible."
                     downloadErrorModelID = modelID
                 }
-                shouldSuggestTokenInput = false
-                return
             }
-
-            let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
-            let isReady = registry.isModelInstalledInExternalModelsFolder(
-                modelID: modelID,
-                preferredRoot: preferredRoot
-            )
-            registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
-            if isReady {
-                downloadError = nil
-                downloadErrorModelID = nil
-            } else {
-                downloadError = "Local llama.cpp GGUF model not found. Place the file in Files > On My iPhone > Hybrid Coder > Models/, then tap Refresh to validate."
-                downloadErrorModelID = modelID
-            }
-            shouldSuggestTokenInput = false
             return
         }
 
@@ -273,6 +302,64 @@ final class ModelDownloadService {
         }
 
         isDownloading = false
+    }
+
+    private func downloadExternalGGUFModel(
+        modelID: String,
+        entry: ModelRegistry.Entry,
+        remoteBaseURL: String,
+        preferredRoot: URL?
+    ) async throws {
+        let fm = FileManager.default
+        let targetRoot = registry.preferredExternalModelsRoot(preferredRoot: preferredRoot)
+        try fm.createDirectory(at: targetRoot, withIntermediateDirectories: true)
+
+        let totalCount = Double(entry.files.count)
+        var completed = 0.0
+        for file in entry.files {
+            try Task.checkCancellation()
+            let localURL = targetRoot.appendingPathComponent(file.localPath, isDirectory: false)
+            if fm.fileExists(atPath: localURL.path(percentEncoded: false)) {
+                completed += 1
+                updateProgress(completed: completed, total: totalCount, modelID: modelID)
+                continue
+            }
+
+            guard let remoteURL = URL(string: "\(remoteBaseURL)/\(file.remotePath)") else {
+                throw DownloadError.modelNotDownloaded("Invalid remote URL for \(file.remotePath)")
+            }
+            var request = URLRequest(url: remoteURL)
+            if remoteURL.host?.contains("huggingface.co") == true {
+                let token = huggingFaceToken.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !token.isEmpty {
+                    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                }
+            }
+
+            let (tempURL, response) = try await URLSession.shared.download(for: request)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+                throw DownloadError.httpError(
+                    statusCode: code,
+                    remotePath: file.remotePath,
+                    modelID: modelID,
+                    repoBaseURL: remoteBaseURL
+                )
+            }
+
+            let parentDir = localURL.deletingLastPathComponent()
+            if !fm.fileExists(atPath: parentDir.path(percentEncoded: false)) {
+                try fm.createDirectory(at: parentDir, withIntermediateDirectories: true)
+            }
+            if fm.fileExists(atPath: localURL.path(percentEncoded: false)) {
+                try fm.removeItem(at: localURL)
+            }
+            try fm.moveItem(at: tempURL, to: localURL)
+
+            completed += 1
+            updateProgress(completed: completed, total: totalCount, modelID: modelID)
+        }
     }
 
     func deleteDownloadedModels(modelID: String? = nil) async {

@@ -27,7 +27,7 @@ struct ModelRegistryTests {
         let modelID = registry.activeCodeGenerationModelID
         let entry = registry.entry(for: modelID)
 
-        #expect(entry?.remoteBaseURL == nil)
+        #expect(entry?.remoteBaseURL == ModelRegistry.qwenRemoteBaseURL)
         #expect(entry?.runtime == .llamaCppGGUF)
         #expect(entry?.files.contains(where: {
             $0.localPath == "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
@@ -35,6 +35,10 @@ struct ModelRegistryTests {
 
         let orchestrationEntry = registry.entry(for: registry.activeGenerationModelID)
         #expect(orchestrationEntry?.files == entry?.files)
+        #expect(orchestrationEntry?.remoteBaseURL == ModelRegistry.qwenRemoteBaseURL)
+
+        let embeddingEntry = registry.entry(for: registry.activeEmbeddingModelID)
+        #expect(embeddingEntry?.remoteBaseURL == ModelRegistry.embeddingRemoteBaseURL)
     }
 
     @Test("External models folder defaults to Documents/Hybrid Coder/Models and keeps legacy fallbacks")

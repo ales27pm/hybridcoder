@@ -73,7 +73,12 @@ struct ModelManagerView: View {
                 }
             }
         case .failure(let error):
-            modelsFolderSelectionError = error.localizedDescription
+            let nsError = error as NSError
+            if nsError.domain == NSCocoaErrorDomain, nsError.code == NSFileReadNoSuchFileError {
+                modelsFolderSelectionError = "Selected folder is unavailable. Choose Files > On My iPhone > Hybrid Coder > Models/."
+            } else {
+                modelsFolderSelectionError = error.localizedDescription
+            }
         }
     }
 
@@ -154,6 +159,19 @@ struct ModelManagerView: View {
             HStack(spacing: 8) {
                 if (installState == .notInstalled || installState == .installed) &&
                     !isBusy(installState: installState, loadState: loadState) {
+                    if installState == .notInstalled, model?.remoteBaseURL != nil {
+                        Button("Download") {
+                            Task {
+                                await orchestrator.modelDownload.download(modelID: modelID)
+                                await orchestrator.modelDownload.refreshInstallState(modelID: modelID)
+                            }
+                        }
+                        .font(.caption.weight(.medium))
+                        .buttonStyle(.borderedProminent)
+                        .tint(Theme.accent)
+                        .controlSize(.small)
+                    }
+
                     Button("Refresh") {
                         Task {
                             await orchestrator.modelDownload.refreshInstallState(modelID: modelID)
