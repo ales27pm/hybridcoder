@@ -43,7 +43,6 @@ actor QwenCoderService {
             throw QwenError.pipelineUnavailable("Missing model file at \(modelURL.path(percentEncoded: false)).")
         }
 
-
         _ = try await loadSessionIfNeeded()
         loadProgress = 1.0
         progressHandler?(1.0)
@@ -241,8 +240,13 @@ actor QwenCoderService {
     }
 
     private func resolveModelURL() async throws -> URL {
-        let modelsRoot = await bookmarkService.resolveModelsFolderBookmark() ?? ModelRegistry.externalModelsRoot
-        return modelsRoot.appendingPathComponent(modelName, isDirectory: false)
+        let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+        if let resolved = ModelRegistry.resolveInstalledFile(named: modelName, preferredRoot: preferredRoot) {
+            return resolved
+        }
+
+        let expectedRoot = ModelRegistry.normalizedModelsRoot(from: preferredRoot) ?? ModelRegistry.externalModelsRoot
+        return expectedRoot.appendingPathComponent(modelName, isDirectory: false)
     }
 
     private func performUnload() {
