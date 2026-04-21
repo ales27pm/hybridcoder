@@ -22,6 +22,20 @@ nonisolated struct RouteResolution: Sendable, Equatable {
     let confidence: Int
 }
 
+/// Thin facade that forwards to focused services.
+///
+/// This type exists only to avoid breaking call sites during the split of
+/// the original monolithic orchestrator into:
+///
+/// - `WorkspaceLifecycleServicing` — repo/prototype, indexing, policies
+/// - `ContextAssemblyService`       — prompt context assembly
+/// - `RuntimeExecutionServicing`    — agent runtime, mutations, KPIs
+/// - `ModelRuntimeCoordinating`     — model lifecycles, memory pressure
+///
+/// All real logic is being migrated to those services behind their protocols.
+/// New code should depend on the specific protocol it needs, not this class.
+// TODO(orchestrator-split): remove once every call site has migrated to the
+// narrow service protocols.
 @Observable
 @MainActor
 final class AIOrchestrator {
@@ -65,7 +79,14 @@ final class AIOrchestrator {
 
     private(set) var searchIndex: SemanticSearchIndex?
     private(set) var patchEngine: PatchEngine?
+    // TODO(orchestrator-split): moves to ModelRuntimeCoordinator.
     private(set) var foundationModel: AnyObject?
+
+    /// Canonical accessor. `foundationModel` is kept as a deprecated
+    /// untyped alias for legacy call sites.
+    var localOrchestrationModel: LocalOrchestrationModel? {
+        foundationModel as? LocalOrchestrationModel
+    }
     private(set) var qwenCoderService: QwenCoderService?
     private(set) var contextPolicySnapshot: ContextPolicySnapshot = .init(files: [])
     private(set) var templateDiagnostics: [DiscoveryDiagnostic] = []

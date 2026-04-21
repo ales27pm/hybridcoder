@@ -1,115 +1,84 @@
-# Fix Critical Gaps: Model Pipeline, Semantic Search, Patch Preview, Context Sources & Syntax Highlighting
+# Refactor AI stack: split orchestrator, structured router, rename FM service, unify model storage, agent-centered mutations
 
-## Summary
+## Goal
 
-Address the critical/blocking issues identified in the codebase audit: fix the model download pipeline, wire true semantic search with CodeBERT embeddings, add proper patch diff previews, show context sources in chat, add syntax highlighting to the file viewer, and wire conversation memory summarization properly.
+Five coordinated refactors across the AI stack. `AIOrchestrator` stays as a deprecated thin facade so no call sites break, but real logic moves into focused services. The weakest seams — keyword-based route classification, naming of the "Foundation" model, the overlapping model storage worlds, and patching as the conceptual backbone — all get cleaned up.
 
----
+## 1. Split `AIOrchestrator` into four services
 
-## 1. Model Storage Migration (Documents → Application Support)
+New services, each with a single responsibility:
 
-**What changes:**
+- `**WorkspaceLifecycleService**` — owns `repoRoot`, `repoFiles`, `activeWorkspaceSource`, `activePrototypeProject`, indexing (`SemanticSearchIndex`), context policies, template diagnostics, prototype materialization, and all `importRepo` / `closeRepo` / `openPrototypeWorkspace` flows.
+- `**ContextAssemblyService**` — owns `gatherContextWithSources`, `buildPromptContext`, `matchRelevantFiles`, `buildRetrievalQuery`, doc RAG integration, and all budget math (`PromptContextBudget`). Pure assembly — no workspace I/O beyond what the lifecycle service exposes via a small read-only protocol.
+- `**RuntimeExecutionService**` — owns the agent runtime loop: `executeGoalWithAgentRuntime`, `executePatchPlanWithAgentRuntime`, phase execution, retry planning, workspace file mutation callbacks, validation hookup, and KPI recording. This becomes the single mutation entry (see §5).
+- `**ModelRuntimeCoordinator**` — owns model lifecycles: warm-up/unload/reset of embedding + code-generation models, memory pressure eviction, Qwen idle timers, and bridging to the renamed orchestration model (see §4).
 
-- Downloaded models currently go to `Documents/EmbeddingModels/`. They'll move to `Application Support/HybridCoder/Models/` instead — this is the correct location for app-managed data that shouldn't be visible to the user.
-- Automatic migration: on first launch after the update, existing models in the old location are moved to the new location seamlessly.
-- `ModelRegistry.downloadedModelsRoot` and `BundledEmbeddingAssets` updated to point to Application Support.
+`AIOrchestrator` is kept but marked deprecated:
 
----
+- Internally it holds all four services and forwards every existing public method/property.
+- Each forwarded method carries a `// TODO(orchestrator-split):` marker pointing to the owning service.
+- Doc comment on the class explains it exists only for call-site migration and will be removed.
+- Tests that reach into `AIOrchestrator.*` static helpers continue to work because those statics move onto the new services and `AIOrchestrator` re-exposes them as `@available(*, deprecated)` typealiases/forwarders.
 
-## 2. Qwen Model Registry & Download Pipeline
+## 2. Structured route classifier with scored heuristic impl
 
-**What changes:**
+Replace `FoundationModelService.classifyRoute`'s keyword switch with:
 
-- The Qwen registry entry currently has empty `remoteBaseURL` and `files`, so it can't be downloaded through the same pipeline as CodeBERT.
-- Populate the registry with the correct GGUF-based Qwen model metadata and list required files expected in `Files > On My iPhone > Hybrid Coder > Models/` (GGUF weights plus tokenizer assets).
-- `ModelDownloadService` validates and indexes externally managed Qwen model assets from the Files app location, then hands off to `QwenCoderService.warmUp()` for llama.cpp session prewarm.
-- The Model Manager screen's runtime flow now focuses on refresh/validation + warm-up for local llama.cpp models in the external Files app folder, with explicit availability and health feedback.
-- No Core ML pipeline fallback remains; runtime availability depends on GGUF model files being present in the external Models folder.
+- `**RouteClassifier` protocol** — `func classify(query:, fileList:) async throws -> RouteDecision`. Single contract every classifier must satisfy (heuristic today, FoundationModels / on-device LLM later).
+- `**ScoredIntentRouteClassifier**` — the default implementation. For each candidate route it computes a weighted score from multiple independent signals:
+  - verb/intent signals (write/edit/apply vs. read/explain vs. locate)
+  - object signals (file paths, symbol-like tokens, `.swift`/`.ts` extensions)
+  - structural signals (query length, imperative mood, presence of code fences)
+  - workspace signals (file hints that match repo paths)
+  - negative signals (questions starting with "why/how/what" penalize write routes)
+  Winning route must beat runner-up by a configurable margin — otherwise falls back to `.explanation`. Confidence = normalized margin.
+- The old keyword `if/else` chain is deleted. `RuntimeExecutionService` and `ContextAssemblyService` consume the protocol, not the implementation.
+- Full unit tests for the scorer covering each signal class and the tie-break/fallback behavior.
 
----
+## 3. Rename `FoundationModelService` → `LocalOrchestrationModel`
 
-## 3. Semantic Search: Wire CodeBERT Embeddings Properly
+- File renamed to `LocalOrchestrationModel.swift`.
+- Class renamed. Logger category updated. Tests updated.
+- Doc comment at the top states plainly: *"Local orchestration LLM. Backed by the Qwen runtime (`QwenCoderService`); runs answer generation, patch-plan generation, conversation summarization, and hosts the route-classifier contract. Name deliberately does not reference Apple FoundationModels — this is a local model."*
+- Session IDs (`fm-route-classifier`, `fm-explanation`, etc.) renamed to `local-orch-*` to match.
+- `AIOrchestrator.foundationModel` property kept as a deprecated alias returning the renamed type so existing views compile; a new `localOrchestrationModel` property is added as the canonical accessor.
+- All references across `ChatView`, `SettingsView`, tests, etc. updated to the new name; the deprecated alias covers anything missed.
 
-**What changes:**
+## 4. Unify model storage with one canonical resolver
 
-- The `SemanticSearchIndex` already stores and queries embedding vectors via `LlamaEmbeddingService` — this is working correctly. The search uses both vector similarity and lexical BM25 search, fused via Reciprocal Rank Fusion.
-- **Fix:** The `gatherContext()` method in `AIOrchestrator` silently swallows search failures. If the embedding model isn't loaded, it falls back to just sampling random files — with no indication to the user that semantic search wasn't used.
-- Add a `contextSources` field to `AssistantResponse` that records which files/chunks were retrieved and whether semantic search vs. fallback was used.
-- When the embedding model is not loaded but the index exists, show a clear warning in the chat: "Semantic search unavailable — using file sampling. Download the embedding model for better results."
-- Expose index health in the chat empty state: whether embeddings are loaded, how many chunks are indexed, and the last index time.
+New `**ModelLocationResolver**` service:
 
----
+- Single public method: `func locate(modelID:) -> ResolvedModelLocation?` returning `{ url, sizeBytes, lastVerified }`. Callers never have to know whether the file was downloaded by the app or placed manually in Files.
+- Internally consults one canonical manifest (`Documents/Models/.manifest.json`) that tracks every known `.gguf` the app is aware of — entries added both by `ModelDownloadService` (after successful download) and by a new "scan on launch" step that catalogs any user-placed files in `Documents/Models/`.
+- All existing call sites migrate:
+  - `ModelRegistry.isModelInstalledInExternalModelsFolder(modelID:)` and `resolvedLocalModelName(for:)` become thin wrappers over the resolver, marked deprecated.
+  - `LocalOrchestrationModel.refreshStatus` uses the resolver.
+  - `ModelDownloadService` writes to the resolver's manifest after a completed download instead of maintaining its own state.
+  - `QwenCoderService` receives a resolved URL from the coordinator instead of building its own path.
+- Old layouts (Application Support, `EmbeddingModels/`, scoped subfolders) are migrated and then removed on first launch — already partially in place, extended so the resolver owns it end-to-end.
+- Tests: resolver returns the same `ResolvedModelLocation` regardless of whether the file arrived via download flow or was dropped into Files, with both paths exercised.
 
-## 4. Context Sources in Chat UI
+## 5. Agent runtime as the center; patching as one action strategy
 
-**What changes:**
+- New `**AgentActionStrategy` protocol** with variants implemented as concrete strategies: `CreateFileStrategy`, `UpdateFileStrategy`, `RenameStrategy`, `DeleteStrategy`, `PatchStrategy`. Each strategy knows how to execute its action against the workspace through a shared mutation context.
+- `PatchEngine` becomes the backend of `PatchStrategy` only — it is no longer called directly from `AIOrchestrator`/`RuntimeExecutionService`. Every workspace mutation funnels through `AgentRuntime` → strategy dispatch.
+- `applyPatch(_:)` on the facade is rewritten to build a single-action `AgentExecutionPlan` containing one `PatchStrategy` invocation and run it through `AgentRuntime`, preserving the existing public API and return type.
+- `IntentPlanner` is updated so it produces `AgentPlannedAction`s tied to strategies rather than selecting "patch vs. goal-driven" at the top level; patch-backed flows become a mode of `PatchStrategy` selection.
+- Execution traces updated: `.patchEngine` provider remains in telemetry but is emitted by `PatchStrategy`, not the orchestrator.
 
-- Add a new `ContextSource` model that tracks: file path, line range, retrieval method (semantic search, file hint, fallback sample), and relevance score.
-- `AssistantResponse` gains a `contextSources: [ContextSource]` field populated during `gatherContext()`.
-- `ChatMessage` gains a `contextSources` field.
-- In the `MessageBubble`, a new collapsible "Sources" section appears below the assistant's response, showing which files were used as context with their retrieval method (semantic match, route hint, or fallback).
-- Tapping a source navigates to that file in the file viewer.
-- This gives users transparency into what the AI "saw" when answering.
+## Test coverage
 
----
+- `AIOrchestratorContextAssemblyTests`, `WorkflowDiagnosticsTests`, `AgentRuntimeTests`, `ContextPolicyLoaderTests`, `ImportedWorkspaceFlowTests` — all keep passing via facade forwarders.
+- New test files:
+  - `ScoredIntentRouteClassifierTests` — signal-by-signal and tie-break coverage.
+  - `ModelLocationResolverTests` — downloaded vs. user-placed equivalence, manifest round-trip, migration from old layouts.
+  - `AgentActionStrategyTests` — each strategy executes correctly through `AgentRuntime`; patch strategy produces identical results to the previous direct `PatchEngine` call.
+  - `LocalOrchestrationModelTests` (renamed from FM tests) — session IDs, status refresh via resolver.
 
-## 5. Patch Preview & Diff Viewer Improvements
+## Out of scope
 
-**What changes:**
-
-- The `PatchPreviewView` already exists with a proper unified diff viewer showing before/after with line numbers, color-coded additions/removals, and context lines. This is well-implemented.
-- **Fix:** The patch preview is not easily discoverable from the chat flow. Currently the user has to navigate to the Patches tab and manually tap each operation.
-- Wire the patch preview inline: when a patch plan is proposed in chat, each operation in the `PatchListView` gets a "Preview" button that opens `PatchPreviewView` as a sheet.
-- Add a "Preview All" option that shows a scrollable unified diff of all operations in the plan before applying.
-- Add validation warnings inline: before applying, run `PatchEngine.validate()` and show any issues (search text not found, multiple matches) directly in the preview.
-
----
-
-## 6. Basic Syntax Highlighting in File Viewer
-
-**What changes:**
-
-- The `FileViewerView` currently uses a plain `TextEditor` with monospaced font — no syntax highlighting.
-- Add a `SyntaxHighlighter` utility that applies `AttributedString` coloring for common token types: keywords, strings, comments, numbers, and types.
-- Support the most common languages in the codebase: Swift, JavaScript/TypeScript, Python, HTML/CSS, JSON, YAML, Markdown.
-- Use regex-based tokenization (lightweight, no external dependencies) to identify token types and apply semantic colors from the app's theme.
-- Replace the plain `TextEditor` with a read-only `Text(attributedString)` view for syntax-highlighted display, keeping the editable `TextEditor` for edit mode.
-- The highlighting uses the existing dark theme colors (green for strings, orange for keywords, gray for comments, cyan for types, purple for numbers).
-
----
-
-## 7. Conversation Memory Summarization Wiring
-
-**What changes:**
-
-- The summarization infrastructure already exists: `FoundationModelService.summarizeConversationMemory()`, `ChatViewModel.compactConversationMemoryIfNeeded()`, and `AIOrchestrator.summarizeConversationForCompaction()` are all implemented and wired.
-- **Fix:** The compaction threshold (900 estimated tokens) is quite high relative to the context budget (700 max conversation budget), meaning compaction often doesn't trigger early enough.
-- Lower the compaction threshold to 600 tokens so summarization kicks in sooner.
-- Add a visual indicator in the chat when conversation memory has been compacted — a subtle system message like "Earlier messages summarized to save context space."
-- Show the current memory usage estimate in the chat input bar (e.g. "3/7 context budget used") so users understand when they're approaching limits.
-
----
-
-## Files Changed
-
-**New files:**
-
-- `Models/ContextSource.swift` — context source tracking model
-- `Utilities/SyntaxHighlighter.swift` — regex-based syntax highlighting
-- `Views/PatchPreviewAllView.swift` — scrollable multi-operation diff preview
-
-**Modified files:**
-
-- `Services/BundledEmbeddingAssets.swift` — update paths to Application Support
-- `Services/ModelRegistry.swift` — populate Qwen files/URL, update storage root
-- `Services/ModelDownloadService.swift` — add code generation model download, storage migration
-- `Services/AIOrchestrator.swift` — track context sources in gatherContext(), fix silent search failures
-- `Models/AssistantResponse.swift` — add contextSources field
-- `Models/ChatMessage.swift` — add contextSources field
-- `ViewModels/ChatViewModel.swift` — pass context sources, adjust compaction threshold, add memory indicator
-- `Views/MessageBubble.swift` — add collapsible Sources section
-- `Views/ChatView.swift` — add memory usage indicator in input bar
-- `Views/FileViewerView.swift` — add syntax-highlighted read mode
-- `Views/PatchListView.swift` — add Preview button per operation
-- `Views/ModelManagerView.swift` — update Qwen card to use new download flow
+- No UI/UX changes.
+- No change to model download UI, HuggingFace flows, or the Models screen.
+- No change to public SwiftUI view APIs beyond property renames covered by deprecated aliases.
+- No new external dependencies.
 

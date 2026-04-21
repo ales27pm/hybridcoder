@@ -7,13 +7,22 @@ nonisolated struct ToolProviders: Sendable {
     let listFiles: @Sendable (String?) async -> [String]
 }
 
+/// Local orchestration LLM.
+///
+/// Backed by the Qwen runtime (`QwenCoderService`); runs answer generation,
+/// patch-plan generation, conversation summarization, and hosts the
+/// route-classifier contract. Name deliberately does not reference Apple
+/// FoundationModels — this is a local model. The canonical public alias
+/// is `LocalOrchestrationModel`; this type name is retained for backward
+/// compatibility with existing call sites.
 @Observable
 @MainActor
 final class FoundationModelService {
     private let registry: ModelRegistry
     private let modelID: String
-    private let logger = Logger(subsystem: "com.hybridcoder.app", category: "FoundationModelService")
+    private let logger = Logger(subsystem: "com.hybridcoder.app", category: "LocalOrchestrationModel")
     private let qwenService: QwenCoderService
+    private let routeClassifier: RouteClassifier
 
     var statusText: String = "Checking…"
     var isAvailable: Bool = false
@@ -22,13 +31,18 @@ final class FoundationModelService {
     private var toolProviders: ToolProviders?
     private var sessionManager: LanguageModelSessionManager?
 
-    init(registry: ModelRegistry, modelID: String) {
+    init(
+        registry: ModelRegistry,
+        modelID: String,
+        routeClassifier: RouteClassifier = ScoredIntentRouteClassifier()
+    ) {
         self.registry = registry
         self.modelID = modelID
         self.qwenService = QwenCoderService(
             modelName: registry.resolvedLocalModelName(for: modelID),
             bookmarkService: BookmarkService()
         )
+        self.routeClassifier = routeClassifier
         refreshStatus()
     }
 
@@ -55,41 +69,14 @@ final class FoundationModelService {
     }
 
     func invalidateSessions() {
-        sessionManager?.removeSession(id: "fm-route-classifier")
-        sessionManager?.removeSession(id: "fm-explanation")
-        sessionManager?.removeSession(id: "fm-patch-planning")
-        sessionManager?.removeSession(id: "fm-compaction")
+        sessionManager?.removeSession(id: "local-orch-route-classifier")
+        sessionManager?.removeSession(id: "local-orch-explanation")
+        sessionManager?.removeSession(id: "local-orch-patch-planning")
+        sessionManager?.removeSession(id: "local-orch-compaction")
     }
 
     func classifyRoute(query: String, fileList: [String]) async throws -> RouteDecision {
-        let lowered = query.lowercased()
-
-        let route: Route
-        if lowered.contains("patch") || lowered.contains("apply") || lowered.contains("modify") || lowered.contains("edit") {
-            route = .patchPlanning
-        } else if lowered.contains("create") || lowered.contains("implement") || lowered.contains("write") || lowered.contains("generate") {
-            route = .codeGeneration
-        } else if lowered.contains("find") || lowered.contains("where") || lowered.contains("search") {
-            route = .search
-        } else {
-            route = .explanation
-        }
-
-        let terms = lowered
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { $0.count >= 4 }
-        let relevantFiles = fileList.filter { path in
-            let pathLower = path.lowercased()
-            return terms.contains { pathLower.contains($0) }
-        }
-
-        return RouteDecision(
-            route: route.rawValue,
-            reasoning: "Heuristic route selected from query intent.",
-            searchTerms: Array(terms.prefix(8)),
-            relevantFiles: Array(relevantFiles.prefix(8)),
-            confidence: 3
-        )
+        try await routeClassifier.classify(query: query, fileList: fileList)
     }
 
     func generateAnswer(query: String, context: String, route: Route) async throws -> String {
