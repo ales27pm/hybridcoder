@@ -400,9 +400,13 @@ struct OnboardingView: View {
 
     private func downloadEmbedding() async {
         let modelID = orchestrator.modelRegistry.activeEmbeddingModelID
-        guard orchestrator.modelRegistry.entry(for: modelID)?.installState == .installed else {
-            embeddingError = "Place \(modelID) in \(modelsFolderHint)"
-            return
+        if orchestrator.modelRegistry.entry(for: modelID)?.installState != .installed {
+            await orchestrator.modelDownload.download(modelID: modelID)
+            await orchestrator.modelDownload.refreshInstallState(modelID: modelID)
+            guard orchestrator.modelRegistry.entry(for: modelID)?.installState == .installed else {
+                embeddingError = "Place \(modelID) in \(modelsFolderHint)"
+                return
+            }
         }
 
         do {
@@ -419,9 +423,13 @@ struct OnboardingView: View {
 
     private func downloadQwen() async {
         let modelID = orchestrator.modelRegistry.activeCodeGenerationModelID
-        guard orchestrator.modelRegistry.entry(for: modelID)?.installState == .installed else {
-            qwenError = "Place \(modelID) in \(modelsFolderHint)"
-            return
+        if orchestrator.modelRegistry.entry(for: modelID)?.installState != .installed {
+            await orchestrator.modelDownload.download(modelID: modelID)
+            await orchestrator.modelDownload.refreshInstallState(modelID: modelID)
+            guard orchestrator.modelRegistry.entry(for: modelID)?.installState == .installed else {
+                qwenError = "Place \(modelID) in \(modelsFolderHint)"
+                return
+            }
         }
 
         do {
