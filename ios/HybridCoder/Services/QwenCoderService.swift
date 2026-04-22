@@ -43,7 +43,13 @@ actor QwenCoderService {
             throw QwenError.pipelineUnavailable("Missing model file at \(modelURL.path(percentEncoded: false)).")
         }
 
-        _ = try await loadSessionIfNeeded()
+        do {
+            _ = try await loadSessionIfNeeded()
+        } catch {
+            let reason = "Warmup failed: \(error.localizedDescription)"
+            loadError = reason
+            throw QwenError.pipelineUnavailable(reason)
+        }
         loadProgress = 1.0
         progressHandler?(1.0)
         isLoaded = true
