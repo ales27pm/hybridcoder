@@ -65,7 +65,9 @@ final class ModelRegistry {
     nonisolated static let defaultEmbeddingModelID = "jina-embeddings-v3-Q4_K_M.gguf"
     nonisolated static let sharedQwenArtifactFilename = "Qwen2.5-Coder-3B-Instruct-abliterated-Q5_K_M.gguf"
     nonisolated static let embeddingRemoteBaseURL = "https://huggingface.co/lmstudio-community/jina-embeddings-v3-GGUF/resolve/main"
+    nonisolated static let embeddingFallbackRemoteBaseURL = "https://hf-mirror.com/lmstudio-community/jina-embeddings-v3-GGUF/resolve/main"
     nonisolated static let qwenRemoteBaseURL = "https://huggingface.co/bartowski/Qwen2.5-Coder-3B-Instruct-abliterated-GGUF/resolve/main"
+    nonisolated static let qwenFallbackRemoteBaseURL = "https://hf-mirror.com/bartowski/Qwen2.5-Coder-3B-Instruct-abliterated-GGUF/resolve/main"
     nonisolated static let defaultGenerationModelID = "qwen2.5-coder-3b-orchestration"
     nonisolated static let defaultCodeGenerationModelID = sharedQwenArtifactFilename
 
@@ -167,6 +169,17 @@ final class ModelRegistry {
         entries[modelID]?.files.first?.localPath ?? modelID
     }
 
+
+    func remoteBaseURLCandidates(for modelID: String) -> [String] {
+        guard let entry = entries[modelID] else { return [] }
+        let builtInSources = Self.remoteBaseURLCandidates(for: modelID)
+        if builtInSources.isEmpty == false {
+            return builtInSources
+        }
+        guard let remoteBaseURL = entry.remoteBaseURL else { return [] }
+        return [remoteBaseURL]
+    }
+
     func setActiveEmbeddingModel(id: String) {
         guard entries[id]?.capability == .embedding else { return }
         activeEmbeddingModelID = id
@@ -243,6 +256,16 @@ final class ModelRegistry {
 
     func hasAnyGenerationModelReady() -> Bool {
         return isReady(modelID: activeGenerationModelID)
+    }
+
+
+    nonisolated static func remoteBaseURLCandidates(for modelID: String) -> [String] {
+        let builtInSources: [String: [String]] = [
+            defaultEmbeddingModelID: [embeddingRemoteBaseURL, embeddingFallbackRemoteBaseURL],
+            defaultGenerationModelID: [qwenRemoteBaseURL, qwenFallbackRemoteBaseURL],
+            defaultCodeGenerationModelID: [qwenRemoteBaseURL, qwenFallbackRemoteBaseURL]
+        ]
+        return builtInSources[modelID] ?? []
     }
 
     nonisolated static var downloadedModelsRoot: URL {

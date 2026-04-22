@@ -130,9 +130,7 @@ final class ModelDownloadService {
         let modelID = modelID ?? activeEmbeddingModelID
         guard let entry = registry.entry(for: modelID) else { return }
         guard activeTasks[modelID] == nil else { return }
-        guard let file = entry.files.first,
-              let baseURL = entry.remoteBaseURL,
-              let remoteURL = URL(string: "\(baseURL)/\(file.remotePath)") else {
+        guard let file = entry.files.first else {
             errorsByModel[modelID] = "No remote download URL configured for this model."
             return
         }
@@ -154,6 +152,12 @@ final class ModelDownloadService {
                 isDownloading = !activeTasks.isEmpty
                 return
             }
+
+            let remoteURL = try await resolveRemoteDownloadURL(
+                modelID: modelID,
+                file: file,
+                preflightCheck: performAvailabilityCheck
+            )
 
             try await performDownload(
                 modelID: modelID,
@@ -219,6 +223,62 @@ final class ModelDownloadService {
         progressByModel[modelID] = nil
         registry.setInstallState(for: modelID, .notInstalled)
         isDownloading = !activeTasks.isEmpty
+    }
+
+
+    func resolveRemoteDownloadURL(
+        modelID: String,
+        file: ModelRegistry.ModelFile,
+        preflightCheck: @Sendable (URL) async throws -> Void
+    ) async throws -> URL {
+        let candidateURLs = registry.remoteBaseURLCandidates(for: modelID).compactMap { baseURL -> URL? in
+            URL(string: "\(baseURL)/\(file.remotePath)")
+        }
+        guard candidateURLs.isEmpty == false else {
+            throw DownloadError.modelNotDownloaded("No remote download URL configured for this model.")
+        }
+
+        var lastError: DownloadError?
+        for candidate in candidateURLs {
+            do {
+                try await preflightCheck(candidate)
+                return candidate
+            } catch let error as DownloadError {
+                if case .httpError(statusCode: 404, _, _, _) = error {
+                    lastError = error
+                    continue
+                }
+                throw error
+            } catch {
+                throw DownloadError.networkFailure(error.localizedDescription)
+            }
+        }
+
+        throw lastError ?? DownloadError.modelNotDownloaded("No remote download URL configured for this model.")
+    }
+
+    private func performAvailabilityCheck(remoteURL: URL) async throws {
+        var request = URLRequest(url: remoteURL)
+        request.httpMethod = "HEAD"
+        if remoteURL.host?.contains("huggingface.co") == true {
+            let token = huggingFaceToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !token.isEmpty {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+        }
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw DownloadError.networkFailure("Invalid server response")
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw DownloadError.httpError(
+                statusCode: httpResponse.statusCode,
+                remotePath: remoteURL.absoluteString,
+                modelID: nil,
+                repoBaseURL: remoteURL.deletingLastPathComponent().absoluteString
+            )
+        }
     }
 
     private func performDownload(modelID: String, remoteURL: URL, targetURL: URL) async throws {
