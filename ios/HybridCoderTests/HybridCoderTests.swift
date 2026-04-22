@@ -3,6 +3,100 @@ import Testing
 @testable import HybridCoder
 
 struct HybridCoderTests {
+    @MainActor
+    @Test func bookmarkedExternalModelsFolderIsRecognizedAsReady() async throws {
+        let fm = FileManager.default
+        let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let canonicalRoot = sandboxRoot
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        let externalBookmarkedRoot = sandboxRoot
+            .appendingPathComponent("ExternalDrive", isDirectory: true)
+            .appendingPathComponent("Hybrid Coder", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        try fm.createDirectory(at: canonicalRoot, withIntermediateDirectories: true)
+        try fm.createDirectory(at: externalBookmarkedRoot, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: sandboxRoot) }
+
+        let registry = ModelRegistry(externalModelsRootOverride: canonicalRoot)
+        let defaultsSuite = "com.hybridcoder.tests.external-models.defaults.\(UUID().uuidString)"
+        let testDefaults = UserDefaults(suiteName: defaultsSuite)!
+        testDefaults.removePersistentDomain(forName: defaultsSuite)
+        defer { testDefaults.removePersistentDomain(forName: defaultsSuite) }
+
+        let bookmarkService = BookmarkService(
+            secureStore: SecureStoreService(serviceName: "com.hybridcoder.tests.external-models.bookmarks.\(UUID().uuidString)"),
+            userDefaults: testDefaults
+        )
+        try await bookmarkService.saveModelsFolderBookmark(for: externalBookmarkedRoot)
+        let downloadService = ModelDownloadService(registry: registry, bookmarkService: bookmarkService)
+
+        let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+        let codeModelID = registry.activeCodeGenerationModelID
+        let generationModelID = registry.activeGenerationModelID
+        let sharedFileName = try #require(registry.entry(for: codeModelID)?.files.first?.localPath)
+        let modelURL = externalBookmarkedRoot.appendingPathComponent(sharedFileName, isDirectory: false)
+        try Data("gguf".utf8).write(to: modelURL, options: .atomic)
+
+        await downloadService.refreshInstallState(modelID: codeModelID)
+        await downloadService.refreshInstallState(modelID: generationModelID)
+
+        let resolver = ModelLocationResolver(registry: registry)
+        let codeReadiness = resolver.readiness(modelID: codeModelID, preferredRoot: preferredRoot)
+        let generationReadiness = resolver.readiness(modelID: generationModelID, preferredRoot: preferredRoot)
+        let foundationService = FoundationModelService(
+            registry: registry,
+            modelID: generationModelID,
+            bookmarkService: bookmarkService
+        )
+        await foundationService.refreshStatusFromBookmark()
+
+        #expect(codeReadiness.isReady)
+        #expect(generationReadiness.isReady)
+        #expect(foundationService.isAvailable)
+        #expect(foundationService.statusText == "Ready")
+        #expect(registry.entry(for: codeModelID)?.installState == .installed)
+        #expect(registry.entry(for: generationModelID)?.installState == .installed)
+    }
+
+    @MainActor
+    @Test func readinessRequiresAllRegisteredFilesAndReportsMissingFilename() async throws {
+        let fm = FileManager.default
+        let sandboxRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let modelsRoot = sandboxRoot
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        try fm.createDirectory(at: modelsRoot, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: sandboxRoot) }
+
+        let registry = ModelRegistry(externalModelsRootOverride: modelsRoot)
+        let modelID = "custom-multifile"
+        registry.registerCustomModel(ModelRegistry.Entry(
+            id: modelID,
+            displayName: "Custom Multi File",
+            capability: .codeGeneration,
+            provider: .customURL,
+            runtime: .llamaCppGGUF,
+            remoteBaseURL: "https://example.com/models",
+            files: [
+                ModelRegistry.ModelFile(remotePath: "present.gguf", localPath: "present.gguf"),
+                ModelRegistry.ModelFile(remotePath: "missing.gguf", localPath: "missing.gguf")
+            ],
+            isAvailable: true,
+            installState: .notInstalled,
+            loadState: .unloaded
+        ))
+
+        try Data("gguf".utf8).write(
+            to: modelsRoot.appendingPathComponent("present.gguf", isDirectory: false),
+            options: .atomic
+        )
+
+        let readiness = ModelLocationResolver(registry: registry).readiness(modelID: modelID)
+        #expect(!readiness.isReady)
+        #expect(readiness.expectedFilename == "missing.gguf")
+        #expect(readiness.failureReason?.contains("missing.gguf") == true)
+    }
 
     @Test func patchEngineQueuesSameCanonicalFileAndRunsDifferentFilesConcurrently() async throws {
         let repoRoot = try makeTempRepoRoot()

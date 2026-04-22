@@ -31,6 +31,7 @@ final class ModelDownloadService {
 
     private let registry: ModelRegistry
     private let bookmarkService: BookmarkService
+    private let locationResolver: ModelLocationResolver
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "com.hybridcoder",
         category: "ModelDownloadService"
@@ -39,6 +40,7 @@ final class ModelDownloadService {
     init(registry: ModelRegistry, bookmarkService: BookmarkService = BookmarkService()) {
         self.registry = registry
         self.bookmarkService = bookmarkService
+        self.locationResolver = ModelLocationResolver(registry: registry)
         BundledEmbeddingAssets.migrateFromDocumentsIfNeeded()
         try? registry.ensureExternalModelsDirectoryExists()
         try? registry.migrateLegacyExternalModelsIfNeeded()
@@ -55,7 +57,7 @@ final class ModelDownloadService {
     }
 
     var isModelReady: Bool {
-        registry.entry(for: activeEmbeddingModelID)?.installState == .installed
+        locationResolver.readiness(modelID: activeEmbeddingModelID, preferredRoot: resolvedModelsRootOverride).isReady
     }
 
     var huggingFaceToken: String {
@@ -116,7 +118,8 @@ final class ModelDownloadService {
             logger.error("Failed to prepare Models folder: \(error.localizedDescription, privacy: .private)")
         }
         let preferredRoot = await refreshResolvedModelsRoot()
-        let isReady = registry.isModelInstalledInExternalModelsFolder(modelID: modelID, preferredRoot: preferredRoot)
+        let readiness = locationResolver.readiness(modelID: modelID, preferredRoot: preferredRoot)
+        let isReady = readiness.isReady
         registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
         if isReady {
             errorsByModel[modelID] = nil
@@ -300,6 +303,7 @@ final class ModelDownloadService {
                 modelID: modelID,
                 targetURL: targetURL,
                 token: remoteURL.host?.contains("huggingface.co") == true ? huggingFaceToken : "",
+                securityScopedDirectoryURL: targetURL.deletingLastPathComponent(),
                 continuation: continuation
             ) { [weak self] snapshot in
                 guard let self else { return }
@@ -575,6 +579,7 @@ private final class DownloadTaskDelegate: NSObject, URLSessionDownloadDelegate, 
     let modelID: String
     let targetURL: URL
     let token: String
+    let securityScopedDirectoryURL: URL?
     private let continuation: CheckedContinuation<Void, Error>
     private let onProgress: @Sendable (ModelDownloadService.ProgressSnapshot) -> Void
     private var didFinish = false
@@ -585,12 +590,14 @@ private final class DownloadTaskDelegate: NSObject, URLSessionDownloadDelegate, 
         modelID: String,
         targetURL: URL,
         token: String,
+        securityScopedDirectoryURL: URL?,
         continuation: CheckedContinuation<Void, Error>,
         onProgress: @escaping @Sendable (ModelDownloadService.ProgressSnapshot) -> Void
     ) {
         self.modelID = modelID
         self.targetURL = targetURL
         self.token = token
+        self.securityScopedDirectoryURL = securityScopedDirectoryURL
         self.continuation = continuation
         self.onProgress = onProgress
     }
@@ -641,12 +648,24 @@ private final class DownloadTaskDelegate: NSObject, URLSessionDownloadDelegate, 
         }
 
         let fm = FileManager.default
+        let scopedURL = securityScopedDirectoryURL ?? targetURL.deletingLastPathComponent()
+        let didAccessScopedResource = scopedURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccessScopedResource {
+                scopedURL.stopAccessingSecurityScopedResource()
+            }
+        }
         do {
             try fm.createDirectory(at: targetURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             if fm.fileExists(atPath: targetURL.path(percentEncoded: false)) {
                 try fm.removeItem(at: targetURL)
             }
-            try fm.moveItem(at: location, to: targetURL)
+            do {
+                try fm.copyItem(at: location, to: targetURL)
+                try? fm.removeItem(at: location)
+            } catch {
+                try fm.moveItem(at: location, to: targetURL)
+            }
             continuation.resume(returning: ())
         } catch {
             continuation.resume(throwing: ModelDownloadService.DownloadError.networkFailure(error.localizedDescription))

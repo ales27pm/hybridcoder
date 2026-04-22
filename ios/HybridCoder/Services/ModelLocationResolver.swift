@@ -29,6 +29,18 @@ nonisolated struct ResolvedModelLocation: Sendable, Equatable {
     let source: Source
 }
 
+nonisolated struct ModelReadinessCheck: Sendable, Equatable {
+    let modelID: String
+    let location: ResolvedModelLocation?
+    let expectedDirectory: URL
+    let expectedFilename: String?
+    let failureReason: String?
+
+    var isReady: Bool {
+        location != nil
+    }
+}
+
 @MainActor
 final class ModelLocationResolver {
     private let registry: ModelRegistry
@@ -40,21 +52,69 @@ final class ModelLocationResolver {
 
     /// Resolve the on-disk location of the given model, if any.
     /// Returns `nil` when no matching file can be found in any known root.
-    func locate(modelID: String) -> ResolvedModelLocation? {
+    func locate(modelID: String, preferredRoot: URL? = nil) -> ResolvedModelLocation? {
         guard let entry = registry.entry(for: modelID),
               let file = entry.files.first else {
             return nil
         }
 
-        let roots = ModelRegistry.candidateExternalModelsRoots()
+        let roots = ModelRegistry.candidateExternalModelsRoots(preferredRoot: preferredRoot)
         guard let url = ModelRegistry.resolveInstalledFile(named: file.localPath, roots: roots) else {
             return nil
         }
 
+        return Self.makeResolvedLocation(modelID: modelID, url: url)
+    }
+
+    /// Fast boolean check, for hot paths that just want "is it there?"
+    func isLocated(modelID: String) -> Bool {
+        locate(modelID: modelID) != nil
+    }
+
+    func readiness(modelID: String, preferredRoot: URL? = nil) -> ModelReadinessCheck {
+        let expectedDirectory = registry.preferredExternalModelsRoot(preferredRoot: preferredRoot)
+        guard let entry = registry.entry(for: modelID),
+              entry.files.isEmpty == false else {
+            return ModelReadinessCheck(
+                modelID: modelID,
+                location: nil,
+                expectedDirectory: expectedDirectory,
+                expectedFilename: nil,
+                failureReason: "Missing model registry entry for \(modelID)."
+            )
+        }
+
+        let roots = ModelRegistry.candidateExternalModelsRoots(preferredRoot: preferredRoot)
+        var firstResolvedURL: URL?
+        for expectedFile in entry.files {
+            guard let resolved = ModelRegistry.resolveInstalledFile(named: expectedFile.localPath, roots: roots) else {
+                let reason = "Missing model file '\(expectedFile.localPath)' in resolved models directory '\(expectedDirectory.path(percentEncoded: false))'."
+                return ModelReadinessCheck(
+                    modelID: modelID,
+                    location: nil,
+                    expectedDirectory: expectedDirectory,
+                    expectedFilename: expectedFile.localPath,
+                    failureReason: reason
+                )
+            }
+            if firstResolvedURL == nil {
+                firstResolvedURL = resolved
+            }
+        }
+
+        let location = firstResolvedURL.map { Self.makeResolvedLocation(modelID: modelID, url: $0) }
+        return ModelReadinessCheck(
+            modelID: modelID,
+            location: location,
+            expectedDirectory: expectedDirectory,
+            expectedFilename: entry.files.first?.localPath,
+            failureReason: nil
+        )
+    }
+
+    nonisolated private static func makeResolvedLocation(modelID: String, url: URL) -> ResolvedModelLocation {
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize.map { Int64($0) }
         let source: ResolvedModelLocation.Source = {
-            // Files directly under the canonical external models root that
-            // aren't tracked by a download record are treated as user-placed.
             let canonicalRoot = ModelRegistry.externalModelsRoot.standardizedFileURL.path(percentEncoded: false)
             let filePath = url.standardizedFileURL.path(percentEncoded: false)
             guard filePath.hasPrefix(canonicalRoot) else { return .appManaged }
@@ -68,10 +128,5 @@ final class ModelLocationResolver {
             lastVerified: Date(),
             source: source
         )
-    }
-
-    /// Fast boolean check, for hot paths that just want "is it there?"
-    func isLocated(modelID: String) -> Bool {
-        locate(modelID: modelID) != nil
     }
 }
