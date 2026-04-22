@@ -78,7 +78,7 @@ struct ModelManagerView: View {
                 Spacer()
             }
 
-            Text("All inference runs locally. Models are stored in Files > On My iPhone > HybridCoder > Models/.")
+            Text("All inference runs locally. Models are stored in \(ModelRegistry.canonicalModelsFolderDisplayPath).")
                 .font(.caption)
                 .foregroundStyle(Theme.dimText)
 
@@ -556,4 +556,3 @@ struct ModelManagerView: View {
         return formatter.string(fromByteCount: max(bytes, 0))
     }
 }
-

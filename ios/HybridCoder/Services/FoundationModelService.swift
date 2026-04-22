@@ -61,7 +61,7 @@ final class FoundationModelService {
             registry.setInstallState(for: modelID, .installed)
             registry.setLoadState(for: modelID, .loaded)
         } else {
-            statusText = "Model not found in Files > On My iPhone > Hybrid Coder > Models/"
+            statusText = "Model not found in \(ModelRegistry.canonicalModelsFolderDisplayPath)"
             registry.setAvailability(for: modelID, isAvailable: false)
             registry.setInstallState(for: modelID, .notInstalled)
             registry.setLoadState(for: modelID, .unloaded)
@@ -200,7 +200,7 @@ final class FoundationModelService {
         nonisolated var errorDescription: String? {
             switch self {
             case .unavailable:
-                return "llama.cpp model is not available. Place the model inside Files > On My iPhone > Hybrid Coder > Models/."
+                return "llama.cpp model is not available. Place the model inside \(ModelRegistry.canonicalModelsFolderDisplayPath)."
             case .generationFailed(let reason):
                 return "Generation failed: \(reason)"
             }

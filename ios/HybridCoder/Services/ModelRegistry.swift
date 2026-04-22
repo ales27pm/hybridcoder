@@ -281,6 +281,10 @@ final class ModelRegistry {
         documentsRoot.appendingPathComponent("Models", isDirectory: true)
     }
 
+    nonisolated static var canonicalModelsFolderDisplayPath: String {
+        "Files > On My iPhone > Hybrid Coder > Models/"
+    }
+
     nonisolated static var legacyExternalModelsRoot: URL {
         documentsRoot
             .appendingPathComponent("Hybrid Coder", isDirectory: true)
@@ -345,6 +349,10 @@ final class ModelRegistry {
             seen.insert(key)
             return true
         }
+    }
+
+    nonisolated static func canonicalExternalModelsRoot(preferredRoot: URL? = nil) -> URL {
+        candidateExternalModelsRoots(preferredRoot: preferredRoot).first ?? externalModelsRoot
     }
 
     nonisolated static func resolveInstalledFile(named fileName: String, preferredRoot: URL? = nil) -> URL? {
