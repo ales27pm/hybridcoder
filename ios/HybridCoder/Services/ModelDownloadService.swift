@@ -27,6 +27,7 @@ final class ModelDownloadService {
     private var activeTasks: [String: URLSessionDownloadTask] = [:]
     private var taskDelegates: [String: DownloadTaskDelegate] = [:]
     private var resumeDataByModel: [String: Data] = [:]
+    private var resolvedModelsRootOverride: URL?
 
     private let registry: ModelRegistry
     private let bookmarkService: BookmarkService
@@ -39,11 +40,12 @@ final class ModelDownloadService {
         self.registry = registry
         self.bookmarkService = bookmarkService
         BundledEmbeddingAssets.migrateFromDocumentsIfNeeded()
-        try? ModelRegistry.ensureExternalModelsDirectoryExists()
-        try? ModelRegistry.migrateLegacyExternalModelsIfNeeded()
+        try? registry.ensureExternalModelsDirectoryExists()
+        try? registry.migrateLegacyExternalModelsIfNeeded()
         CustomModelStore.shared.registerAll(into: registry)
         Task { [weak self] in
             guard let self else { return }
+            await self.refreshResolvedModelsRoot()
             await self.refreshAllInstallStates()
         }
     }
@@ -74,7 +76,7 @@ final class ModelDownloadService {
 
     func totalDiskUsageBytes() -> Int64 {
         let fm = FileManager.default
-        let root = ModelRegistry.externalModelsRoot
+        let root = resolvedModelsRoot()
         guard let contents = try? fm.contentsOfDirectory(
             at: root,
             includingPropertiesForKeys: [.fileSizeKey],
@@ -93,8 +95,11 @@ final class ModelDownloadService {
     func fileSizeBytes(for modelID: String) -> Int64? {
         guard let entry = registry.entry(for: modelID),
               let file = entry.files.first else { return nil }
-        let url = ModelRegistry.externalModelsRoot.appendingPathComponent(file.localPath, isDirectory: false)
-        guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else { return nil }
+        let root = resolvedModelsRoot()
+        guard let url = ModelRegistry.resolveInstalledFile(
+            named: file.localPath,
+            roots: ModelRegistry.candidateExternalModelsRoots(preferredRoot: root)
+        ) else { return nil }
         return (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize.map { Int64($0) } ?? nil
     }
 
@@ -106,11 +111,12 @@ final class ModelDownloadService {
 
     func refreshInstallState(modelID: String) async {
         do {
-            try ModelRegistry.ensureExternalModelsDirectoryExists()
+            try registry.ensureExternalModelsDirectoryExists()
         } catch {
             logger.error("Failed to prepare Models folder: \(error.localizedDescription, privacy: .private)")
         }
-        let isReady = registry.isModelInstalledInExternalModelsFolder(modelID: modelID)
+        let preferredRoot = await refreshResolvedModelsRoot()
+        let isReady = registry.isModelInstalledInExternalModelsFolder(modelID: modelID, preferredRoot: preferredRoot)
         registry.setInstallState(for: modelID, isReady ? .installed : .notInstalled)
         if isReady {
             errorsByModel[modelID] = nil
@@ -144,8 +150,9 @@ final class ModelDownloadService {
         registry.setInstallState(for: modelID, .downloading(progress: 0))
 
         do {
-            try ModelRegistry.ensureExternalModelsDirectoryExists()
-            let targetURL = ModelRegistry.externalModelsRoot.appendingPathComponent(file.localPath, isDirectory: false)
+            try registry.ensureExternalModelsDirectoryExists()
+            let targetRoot = await refreshResolvedModelsRoot()
+            let targetURL = targetRoot.appendingPathComponent(file.localPath, isDirectory: false)
 
             if FileManager.default.fileExists(atPath: targetURL.path(percentEncoded: false)) {
                 registry.setInstallState(for: modelID, .installed)
@@ -165,7 +172,7 @@ final class ModelDownloadService {
                 targetURL: targetURL
             )
 
-            try await Self.validateDownloadedAssetsOrThrow(modelID: modelID, registry: registry)
+            try await Self.validateDownloadedAssetsOrThrow(modelID: modelID, registry: registry, preferredRoot: targetRoot)
             registry.setInstallState(for: modelID, .installed)
             errorsByModel[modelID] = nil
 
@@ -336,7 +343,8 @@ final class ModelDownloadService {
             registry.setLoadState(for: modelID, .unloaded)
             return
         }
-        let url = ModelRegistry.externalModelsRoot.appendingPathComponent(file.localPath, isDirectory: false)
+        let targetRoot = await refreshResolvedModelsRoot()
+        let url = targetRoot.appendingPathComponent(file.localPath, isDirectory: false)
         try? FileManager.default.removeItem(at: url)
         registry.deleteCodeGenerationModelAssets(modelID: modelID)
         registry.setInstallState(for: modelID, .notInstalled)
@@ -444,15 +452,21 @@ final class ModelDownloadService {
         }
     }
 
-    private static func validateDownloadedAssetsOrThrow(modelID: String, registry: ModelRegistry) async throws {
+    private static func validateDownloadedAssetsOrThrow(
+        modelID: String,
+        registry: ModelRegistry,
+        preferredRoot: URL? = nil
+    ) async throws {
         guard let entry = registry.entry(for: modelID) else {
             throw DownloadError.fileCorrupt("Missing model registry entry for \(modelID)")
         }
-        let root = ModelRegistry.externalModelsRoot
         let fm = FileManager.default
         for expectedFile in entry.files {
-            let url = root.appendingPathComponent(expectedFile.localPath, isDirectory: false)
-            guard fm.fileExists(atPath: url.path(percentEncoded: false)) else {
+            guard let url = ModelRegistry.resolveInstalledFile(
+                named: expectedFile.localPath,
+                roots: ModelRegistry.candidateExternalModelsRoots(preferredRoot: preferredRoot)
+            ),
+            fm.fileExists(atPath: url.path(percentEncoded: false)) else {
                 throw DownloadError.fileCorrupt(expectedFile.localPath)
             }
             if await isInvalidGGUFPayload(at: url) {
@@ -460,6 +474,16 @@ final class ModelDownloadService {
                 throw DownloadError.fileCorrupt("Invalid GGUF artifact: \(expectedFile.localPath)")
             }
         }
+    }
+
+    private func resolvedModelsRoot() -> URL {
+        registry.preferredExternalModelsRoot(preferredRoot: resolvedModelsRootOverride)
+    }
+
+    private func refreshResolvedModelsRoot() async -> URL {
+        let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+        resolvedModelsRootOverride = preferredRoot
+        return registry.preferredExternalModelsRoot(preferredRoot: preferredRoot)
     }
 
     nonisolated enum DownloadError: Error, LocalizedError, Sendable {
