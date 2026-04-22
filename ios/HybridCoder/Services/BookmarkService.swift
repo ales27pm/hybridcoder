@@ -33,7 +33,7 @@ final class BookmarkService {
 
     func saveBookmark(for url: URL) throws -> Repository {
         let bookmarkData = try url.bookmarkData(
-            options: .minimalBookmark,
+            options: [.minimalBookmark, .withSecurityScope],
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
@@ -50,14 +50,14 @@ final class BookmarkService {
         var isStale = false
         guard let url = try? URL(
             resolvingBookmarkData: repository.bookmarkData,
-            options: [],
+            options: [.withSecurityScope],
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         ) else { return nil }
 
         if isStale {
             if let updated = try? url.bookmarkData(
-                options: .minimalBookmark,
+                options: [.minimalBookmark, .withSecurityScope],
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             ) {
@@ -89,7 +89,7 @@ final class BookmarkService {
         }
 
         let bookmarkData = try normalizedURL.bookmarkData(
-            options: .minimalBookmark,
+            options: [.minimalBookmark, .withSecurityScope],
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
@@ -110,7 +110,7 @@ final class BookmarkService {
         var isStale = false
         guard let url = try? URL(
             resolvingBookmarkData: bookmarkData,
-            options: [],
+            options: [.withSecurityScope],
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         ) else { return nil }
