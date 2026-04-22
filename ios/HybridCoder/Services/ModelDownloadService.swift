@@ -47,7 +47,7 @@ final class ModelDownloadService {
         CustomModelStore.shared.registerAll(into: registry)
         Task { [weak self] in
             guard let self else { return }
-            await self.refreshResolvedModelsRoot()
+            _ = await self.refreshResolvedModelsRoot()
             await self.refreshAllInstallStates()
         }
     }
@@ -492,10 +492,9 @@ final class ModelDownloadService {
     ) async rethrows -> T {
         let preferredRoot = await refreshResolvedModelsRoot()
         let didAccessScopedResource = preferredRoot.startAccessingSecurityScopedResource()
-        defer {
-            if didAccessScopedResource {
-                preferredRoot.stopAccessingSecurityScopedResource()
-            }
+        if didAccessScopedResource {
+            defer { preferredRoot.stopAccessingSecurityScopedResource() }
+            return try await operation(preferredRoot)
         }
         return try await operation(preferredRoot)
     }
