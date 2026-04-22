@@ -41,6 +41,18 @@ struct ModelRegistryTests {
         #expect(embeddingEntry?.remoteBaseURL == ModelRegistry.embeddingRemoteBaseURL)
     }
 
+
+    @Test("Built-in embedding model resolves primary and fallback remote sources")
+    func builtInEmbeddingModelResolvesSourceCandidates() {
+        let registry = ModelRegistry()
+        let modelID = ModelRegistry.defaultEmbeddingModelID
+
+        let candidates = registry.remoteBaseURLCandidates(for: modelID)
+        #expect(candidates.count == 2)
+        #expect(candidates.first == ModelRegistry.embeddingRemoteBaseURL)
+        #expect(candidates.last == ModelRegistry.embeddingFallbackRemoteBaseURL)
+    }
+
     @Test("External models folder defaults to Documents/Hybrid Coder/Models and keeps legacy fallbacks")
     func externalModelsFolderPathIsInDocuments() {
         let root = ModelRegistry.externalModelsRoot.path(percentEncoded: false)
