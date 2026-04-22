@@ -70,6 +70,7 @@ final class AIOrchestrator {
 
     let repoAccess = RepoAccessService()
     let modelRegistry: ModelRegistry
+    let bookmarkService: BookmarkService
     let embeddingService: LlamaEmbeddingService
     let modelDownload: ModelDownloadService
     let contextPolicyLoader: ContextPolicyLoader
@@ -128,10 +129,11 @@ final class AIOrchestrator {
     ) {
         let registry = ModelRegistry()
         self.modelRegistry = registry
+        self.bookmarkService = BookmarkService()
         self.embeddingService = LlamaEmbeddingService(
             modelID: registry.activeEmbeddingModelID,
             registry: registry,
-            bookmarkService: BookmarkService()
+            bookmarkService: self.bookmarkService
         )
         self.modelDownload = ModelDownloadService(registry: registry)
         self.contextPolicyLoader = ContextPolicyLoader()
@@ -279,8 +281,12 @@ final class AIOrchestrator {
         await documentationRAG.restorePersistedIndex()
 
         if foundationModel == nil {
-            let fm = FoundationModelService(registry: modelRegistry, modelID: modelRegistry.activeGenerationModelID)
-            fm.refreshStatus()
+            let fm = FoundationModelService(
+                registry: modelRegistry,
+                modelID: modelRegistry.activeGenerationModelID,
+                bookmarkService: bookmarkService
+            )
+            await fm.refreshStatusFromBookmark()
             let toolProviders = buildToolProviders()
             fm.configure(toolProviders: toolProviders, sessionManager: sessionManager)
             foundationModel = fm
@@ -343,7 +349,13 @@ final class AIOrchestrator {
     }
 
     private func makeQwenCoderService(modelID: String) -> QwenCoderService {
-        QwenCoderService(modelName: modelID, bookmarkService: BookmarkService())
+        QwenCoderService(modelName: modelID, bookmarkService: bookmarkService)
+    }
+
+    private func codeGenerationReadiness(modelID: String) async -> ModelReadinessCheck {
+        let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+        let resolver = ModelLocationResolver(registry: modelRegistry)
+        return resolver.readiness(modelID: modelID, preferredRoot: preferredRoot)
     }
 
     private func ensureQwenServiceMatchesActiveModel() async -> QwenCoderService {
@@ -389,13 +401,14 @@ final class AIOrchestrator {
             }
             guard codeGenerationLifecycleToken == token else { return }
 
-            if modelRegistry.areCodeGenerationModelFilesInstalled(modelID: activeModelID) {
+            let readiness = await codeGenerationReadiness(modelID: activeModelID)
+            if readiness.isReady {
                 modelRegistry.markCodeGenerationModelInstalled(modelID: activeModelID)
                 modelRegistry.setInstallState(for: activeModelID, .installed)
                 modelRegistry.setLoadState(for: activeModelID, .loaded)
                 warmUpError = nil
             } else {
-                let message = "llama.cpp warm-up finished, but expected Qwen GGUF file was not found in \(ModelRegistry.canonicalModelsFolderDisplayPath)."
+                let message = readiness.failureReason ?? "llama.cpp warm-up finished, but model readiness check failed."
                 modelRegistry.setInstallState(for: activeModelID, .notInstalled)
                 modelRegistry.setLoadState(for: activeModelID, .failed(message))
                 warmUpError = message
@@ -1200,7 +1213,7 @@ final class AIOrchestrator {
             return result.text
 
         case .explanation, .patchPlanning, .search:
-            let fm = try requireFoundationModel()
+            let fm = try await requireFoundationModel()
             var fullText = ""
             let stream = fm.streamAnswer(query: query, context: context, route: route)
             for try await chunk in stream {
@@ -1234,7 +1247,7 @@ final class AIOrchestrator {
             }
         }
 
-        let fm = try requireFoundationModel()
+        let fm = try await requireFoundationModel()
         var fullText = ""
         let stream = fm.streamAnswer(query: query, context: context, route: .explanation)
         for try await chunk in stream {
@@ -2063,7 +2076,7 @@ final class AIOrchestrator {
     }
 
     private func resolveRoute(for query: String) async throws -> RouteResolution {
-        let fm = try requireFoundationModel()
+        let fm = try await requireFoundationModel()
         let fileNames = repoFiles.prefix(60).map(\.relativePath)
         let decision = try await fm.classifyRoute(query: query, fileList: fileNames)
         guard let route = Route(from: decision.route) else {
@@ -2408,7 +2421,7 @@ final class AIOrchestrator {
 
         let fm: FoundationModelService
         do {
-            fm = try requireFoundationModel()
+            fm = try await requireFoundationModel()
         } catch {
             return nil
         }
@@ -2441,7 +2454,7 @@ final class AIOrchestrator {
             }
         }
 
-        let fm = try requireFoundationModel()
+        let fm = try await requireFoundationModel()
         let text = try await fm.generateAnswer(query: query, context: context, route: .explanation)
         return ProviderBackedText(text: text, provider: .foundationModel)
     }
@@ -2452,15 +2465,15 @@ final class AIOrchestrator {
     }
 
     private func generatePatchPlan(query: String, context: String) async throws -> PatchPlan {
-        let fm = try requireFoundationModel()
+        let fm = try await requireFoundationModel()
         return try await fm.generatePatchPlan(query: query, codeContext: context)
     }
 
-    private func requireFoundationModel() throws -> FoundationModelService {
+    private func requireFoundationModel() async throws -> FoundationModelService {
         guard let fm = foundationModel as? FoundationModelService else {
             throw OrchestratorError.foundationModelNotInitialized
         }
-        fm.refreshStatus()
+        await fm.refreshStatusFromBookmark()
         guard fm.isAvailable else {
             throw OrchestratorError.noModelAvailable
         }
@@ -2508,12 +2521,13 @@ final class AIOrchestrator {
 
         do {
             try await coder.warmUp()
-            if modelRegistry.areCodeGenerationModelFilesInstalled(modelID: activeModelID) {
+            let readiness = await codeGenerationReadiness(modelID: activeModelID)
+            if readiness.isReady {
                 modelRegistry.markCodeGenerationModelInstalled(modelID: activeModelID)
                 modelRegistry.setInstallState(for: activeModelID, .installed)
                 return coder
             }
-            let message = "llama.cpp warm-up finished, but expected Qwen GGUF file was not found in \(ModelRegistry.canonicalModelsFolderDisplayPath)."
+            let message = readiness.failureReason ?? "llama.cpp warm-up finished, but model readiness check failed."
             modelRegistry.setInstallState(for: activeModelID, .notInstalled)
             throw OrchestratorError.codeGenerationModelUnavailable(message)
         } catch {

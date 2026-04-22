@@ -23,6 +23,8 @@ final class FoundationModelService {
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "LocalOrchestrationModel")
     private let qwenService: QwenCoderService
     private let routeClassifier: RouteClassifier
+    private let locationResolver: ModelLocationResolver
+    private let bookmarkService: BookmarkService
 
     var statusText: String = "Checking…"
     var isAvailable: Bool = false
@@ -34,15 +36,18 @@ final class FoundationModelService {
     init(
         registry: ModelRegistry,
         modelID: String,
+        bookmarkService: BookmarkService = BookmarkService(),
         routeClassifier: RouteClassifier = ScoredIntentRouteClassifier()
     ) {
         self.registry = registry
         self.modelID = modelID
+        self.bookmarkService = bookmarkService
         self.qwenService = QwenCoderService(
             modelName: registry.resolvedLocalModelName(for: modelID),
-            bookmarkService: BookmarkService()
+            bookmarkService: bookmarkService
         )
         self.routeClassifier = routeClassifier
+        self.locationResolver = ModelLocationResolver(registry: registry)
         refreshStatus()
     }
 
@@ -52,7 +57,22 @@ final class FoundationModelService {
     }
 
     func refreshStatus() {
-        let installed = registry.isModelInstalledInExternalModelsFolder(modelID: modelID)
+        let readiness = locationResolver.readiness(modelID: modelID)
+        applyReadiness(readiness)
+    }
+
+    func refreshStatus(preferredRoot: URL?) {
+        let readiness = locationResolver.readiness(modelID: modelID, preferredRoot: preferredRoot)
+        applyReadiness(readiness)
+    }
+
+    func refreshStatusFromBookmark() async {
+        let preferredRoot = await bookmarkService.resolveModelsFolderBookmark()
+        refreshStatus(preferredRoot: preferredRoot)
+    }
+
+    private func applyReadiness(_ readiness: ModelReadinessCheck) {
+        let installed = readiness.isReady
         isAvailable = installed
 
         if installed {
@@ -61,7 +81,7 @@ final class FoundationModelService {
             registry.setInstallState(for: modelID, .installed)
             registry.setLoadState(for: modelID, .loaded)
         } else {
-            statusText = "Model not found in \(ModelRegistry.canonicalModelsFolderDisplayPath)"
+            statusText = readiness.failureReason ?? "Model not found in \(ModelRegistry.canonicalModelsFolderDisplayPath)"
             registry.setAvailability(for: modelID, isAvailable: false)
             registry.setInstallState(for: modelID, .notInstalled)
             registry.setLoadState(for: modelID, .unloaded)
