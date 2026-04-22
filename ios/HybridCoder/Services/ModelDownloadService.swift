@@ -302,7 +302,7 @@ final class ModelDownloadService {
             let delegate = DownloadTaskDelegate(
                 modelID: modelID,
                 targetURL: targetURL,
-                securityScopedDirectoryURL: nil,
+                securityScopedDirectoryURL: targetURL.deletingLastPathComponent(),
                 continuation: continuation
             ) { [weak self] snapshot in
                 guard let self else { return }
