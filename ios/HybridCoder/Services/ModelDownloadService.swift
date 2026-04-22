@@ -150,29 +150,32 @@ final class ModelDownloadService {
         registry.setInstallState(for: modelID, .downloading(progress: 0))
 
         do {
-            try registry.ensureExternalModelsDirectoryExists()
-            let targetRoot = await refreshResolvedModelsRoot()
-            let targetURL = targetRoot.appendingPathComponent(file.localPath, isDirectory: false)
+            let targetRoot = try await withModelsFolderAccess { targetRoot in
+                try self.registry.ensureExternalModelsDirectoryExists()
+                let targetURL = targetRoot.appendingPathComponent(file.localPath, isDirectory: false)
 
-            if FileManager.default.fileExists(atPath: targetURL.path(percentEncoded: false)) {
-                registry.setInstallState(for: modelID, .installed)
-                isDownloading = !activeTasks.isEmpty
-                return
+                if FileManager.default.fileExists(atPath: targetURL.path(percentEncoded: false)) {
+                    return targetRoot
+                }
+
+                let remoteURL = try await self.resolveRemoteDownloadURL(
+                    modelID: modelID,
+                    file: file,
+                    preflightCheck: self.performAvailabilityCheck
+                )
+
+                try await self.performDownload(
+                    modelID: modelID,
+                    remoteURL: remoteURL,
+                    targetURL: targetURL
+                )
+
+                return targetRoot
             }
 
-            let remoteURL = try await resolveRemoteDownloadURL(
-                modelID: modelID,
-                file: file,
-                preflightCheck: performAvailabilityCheck
-            )
-
-            try await performDownload(
-                modelID: modelID,
-                remoteURL: remoteURL,
-                targetURL: targetURL
-            )
-
-            try await Self.validateDownloadedAssetsOrThrow(modelID: modelID, registry: registry, preferredRoot: targetRoot)
+            if registry.entry(for: modelID)?.installState != .installed {
+                try await Self.validateDownloadedAssetsOrThrow(modelID: modelID, registry: registry, preferredRoot: targetRoot)
+            }
             registry.setInstallState(for: modelID, .installed)
             errorsByModel[modelID] = nil
 
@@ -343,9 +346,10 @@ final class ModelDownloadService {
             registry.setLoadState(for: modelID, .unloaded)
             return
         }
-        let targetRoot = await refreshResolvedModelsRoot()
-        let url = targetRoot.appendingPathComponent(file.localPath, isDirectory: false)
-        try? FileManager.default.removeItem(at: url)
+        await withModelsFolderAccess { targetRoot in
+            let url = targetRoot.appendingPathComponent(file.localPath, isDirectory: false)
+            try? FileManager.default.removeItem(at: url)
+        }
         registry.deleteCodeGenerationModelAssets(modelID: modelID)
         registry.setInstallState(for: modelID, .notInstalled)
         registry.setLoadState(for: modelID, .unloaded)
@@ -478,6 +482,19 @@ final class ModelDownloadService {
 
     private func resolvedModelsRoot() -> URL {
         registry.preferredExternalModelsRoot(preferredRoot: resolvedModelsRootOverride)
+    }
+
+    private func withModelsFolderAccess<T>(
+        _ operation: (URL) async throws -> T
+    ) async rethrows -> T {
+        let preferredRoot = await refreshResolvedModelsRoot()
+        let didAccessScopedResource = preferredRoot.startAccessingSecurityScopedResource()
+        defer {
+            if didAccessScopedResource {
+                preferredRoot.stopAccessingSecurityScopedResource()
+            }
+        }
+        return try await operation(preferredRoot)
     }
 
     private func refreshResolvedModelsRoot() async -> URL {
