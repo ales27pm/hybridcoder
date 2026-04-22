@@ -55,19 +55,23 @@ struct ModelRegistryTests {
 
     @Test("External models folder defaults to Documents/Models and keeps legacy fallbacks")
     func externalModelsFolderPathIsInDocuments() {
-        let root = ModelRegistry.externalModelsRoot.path(percentEncoded: false)
-        let legacyRoot = ModelRegistry.legacyExternalModelsRoot.path(percentEncoded: false)
-        let legacyFlatRoot = ModelRegistry.legacyFlatExternalModelsRoot.path(percentEncoded: false)
-        let roots = ModelRegistry.candidateExternalModelsRoots().map { $0.path(percentEncoded: false) }
+        let root = ModelRegistry.externalModelsRoot.standardizedFileURL
+        let legacyRoot = ModelRegistry.legacyExternalModelsRoot.standardizedFileURL
+        let legacyFlatRoot = ModelRegistry.legacyFlatExternalModelsRoot.standardizedFileURL
+        let roots = ModelRegistry.candidateExternalModelsRoots().map(\.standardizedFileURL)
 
-        #expect(root.contains("Documents"))
-        #expect(root.hasSuffix("/Models"))
-        #expect(legacyRoot.contains("Documents"))
-        #expect(legacyRoot.contains("Hybrid Coder"))
-        #expect(legacyRoot.hasSuffix("/Models"))
-        #expect(legacyFlatRoot.contains("Documents"))
-        #expect(legacyFlatRoot.contains("HybridCoder"))
-        #expect(legacyFlatRoot.hasSuffix("/Models"))
+        let rootComponents = root.pathComponents
+        let legacyRootComponents = legacyRoot.pathComponents
+        let legacyFlatRootComponents = legacyFlatRoot.pathComponents
+
+        #expect(rootComponents.contains("Documents"))
+        #expect(rootComponents.suffix(1).elementsEqual(["Models"]))
+        #expect(legacyRootComponents.contains("Documents"))
+        #expect(legacyRootComponents.contains("Hybrid Coder"))
+        #expect(legacyRootComponents.suffix(1).elementsEqual(["Models"]))
+        #expect(legacyFlatRootComponents.contains("Documents"))
+        #expect(legacyFlatRootComponents.contains("HybridCoder"))
+        #expect(legacyFlatRootComponents.suffix(1).elementsEqual(["Models"]))
         #expect(roots.contains(root))
         #expect(roots.contains(legacyRoot))
         #expect(roots.contains(legacyFlatRoot))
