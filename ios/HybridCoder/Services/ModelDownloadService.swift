@@ -644,36 +644,30 @@ private final class DownloadTaskDelegate: NSObject, URLSessionDownloadDelegate, 
         }
 
         do {
-            let finalizedURL = try finalizeDownload(tempURL: location, fileName: targetURL.lastPathComponent)
-            if finalizedURL.standardizedFileURL != targetURL.standardizedFileURL {
-                continuation.resume(throwing: ModelDownloadService.DownloadError.networkFailure("Model destination mismatch during finalization."))
-            } else {
-                continuation.resume(returning: ())
+            let finalizedURL = try finalizeDownload(tempURL: location)
+            guard finalizedURL.standardizedFileURL == targetURL.standardizedFileURL else {
+                throw ModelDownloadService.DownloadError.networkFailure("Model destination mismatch during finalization.")
             }
+            continuation.resume(returning: ())
         } catch {
             continuation.resume(throwing: ModelDownloadService.DownloadError.networkFailure(error.localizedDescription))
         }
         session.finishTasksAndInvalidate()
     }
 
-    private func finalizeDownload(tempURL: URL, fileName: String) throws -> URL {
-        let destination = ModelPaths.root.appendingPathComponent(fileName, isDirectory: false)
+    private func finalizeDownload(tempURL: URL) throws -> URL {
+        let destination = targetURL.standardizedFileURL
         let fm = FileManager.default
+        let parent = destination.deletingLastPathComponent()
 
         if let scopedURL = securityScopedDirectoryURL {
             let didAccess = scopedURL.startAccessingSecurityScopedResource()
             defer {
                 if didAccess { scopedURL.stopAccessingSecurityScopedResource() }
             }
-            try fm.createDirectory(at: ModelPaths.root, withIntermediateDirectories: true)
-            if fm.fileExists(atPath: destination.path(percentEncoded: false)) {
-                try fm.removeItem(at: destination)
-            }
-            try fm.copyItem(at: tempURL, to: destination)
-            return destination
         }
 
-        try fm.createDirectory(at: ModelPaths.root, withIntermediateDirectories: true)
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
         if fm.fileExists(atPath: destination.path(percentEncoded: false)) {
             try fm.removeItem(at: destination)
         }

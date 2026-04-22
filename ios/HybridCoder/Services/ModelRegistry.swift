@@ -267,7 +267,7 @@ final class ModelRegistry {
     }
 
     nonisolated static var canonicalModelsFolderDisplayPath: String {
-        externalModelsRoot.path(percentEncoded: false)
+        "Files > On My iPhone > HybridCoder > Models"
     }
 
     nonisolated static func normalizedModelsRoot(from rawURL: URL?) -> URL? {
