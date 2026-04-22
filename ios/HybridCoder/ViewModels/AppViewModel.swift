@@ -241,7 +241,7 @@ final class AppViewModel {
         let skipLastRepositoryRestore = isUITestMode || environment["HYBRIDCODER_SKIP_LAST_REPOSITORY"] == "1"
 
         Task {
-            await prepareExternalModelsStorage()
+            prepareExternalModelsStorage()
 
             if !disableWarmUp {
                 await orchestrator.warmUp()
@@ -255,25 +255,23 @@ final class AppViewModel {
         }
     }
 
-    private func prepareExternalModelsStorage() async {
-        await Task.detached(priority: .utility) {
-            do {
-                try ModelRegistry.ensureExternalModelsDirectoryExists()
-                try ModelRegistry.migrateLegacyExternalModelsIfNeeded()
-                return
-            } catch {
-                let fm = FileManager.default
-                let fallbackRoots = [
-                    ModelRegistry.externalModelsRoot.deletingLastPathComponent(),
-                    ModelRegistry.externalModelsRoot,
-                    ModelRegistry.legacyExternalModelsRoot,
-                    ModelRegistry.legacyFlatExternalModelsRoot
-                ]
-                for root in fallbackRoots {
-                    try? fm.createDirectory(at: root, withIntermediateDirectories: true)
-                }
-                try? ModelRegistry.migrateLegacyExternalModelsIfNeeded()
+    private func prepareExternalModelsStorage() {
+        do {
+            try ModelRegistry.ensureExternalModelsDirectoryExists()
+            try ModelRegistry.migrateLegacyExternalModelsIfNeeded()
+            return
+        } catch {
+            let fm = FileManager.default
+            var fallbackRoots = [
+                ModelRegistry.externalModelsRoot.deletingLastPathComponent(),
+                ModelRegistry.externalModelsRoot
+            ]
+            fallbackRoots.append(contentsOf: ModelRegistry.candidateExternalModelsRoots())
+
+            for root in fallbackRoots {
+                try? fm.createDirectory(at: root, withIntermediateDirectories: true)
             }
-        }.value
+            try? ModelRegistry.migrateLegacyExternalModelsIfNeeded()
+        }
     }
 }
