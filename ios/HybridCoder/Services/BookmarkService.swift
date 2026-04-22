@@ -22,6 +22,22 @@ final class BookmarkService {
     private let logger = Logger(subsystem: "com.hybridcoder.app", category: "BookmarkService")
     var repositories: [Repository] = []
 
+    private var bookmarkCreationOptions: URL.BookmarkCreationOptions {
+#if os(iOS)
+        return [.minimalBookmark]
+#else
+        return [.minimalBookmark, .withSecurityScope]
+#endif
+    }
+
+    private var bookmarkResolutionOptions: URL.BookmarkResolutionOptions {
+#if os(iOS)
+        return []
+#else
+        return [.withSecurityScope]
+#endif
+    }
+
     init(
         secureStore: SecureStoreService = SecureStoreService(serviceName: "com.hybridcoder.repos"),
         userDefaults: UserDefaults = .standard
@@ -33,7 +49,7 @@ final class BookmarkService {
 
     func saveBookmark(for url: URL) throws -> Repository {
         let bookmarkData = try url.bookmarkData(
-            options: [.minimalBookmark, .withSecurityScope],
+            options: bookmarkCreationOptions,
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
@@ -50,14 +66,14 @@ final class BookmarkService {
         var isStale = false
         guard let url = try? URL(
             resolvingBookmarkData: repository.bookmarkData,
-            options: [.withSecurityScope],
+            options: bookmarkResolutionOptions,
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         ) else { return nil }
 
         if isStale {
             if let updated = try? url.bookmarkData(
-                options: [.minimalBookmark, .withSecurityScope],
+                options: bookmarkCreationOptions,
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             ) {
@@ -89,7 +105,7 @@ final class BookmarkService {
         }
 
         let bookmarkData = try normalizedURL.bookmarkData(
-            options: [.minimalBookmark, .withSecurityScope],
+            options: bookmarkCreationOptions,
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
@@ -110,7 +126,7 @@ final class BookmarkService {
         var isStale = false
         guard let url = try? URL(
             resolvingBookmarkData: bookmarkData,
-            options: [.withSecurityScope],
+            options: bookmarkResolutionOptions,
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         ) else { return nil }
