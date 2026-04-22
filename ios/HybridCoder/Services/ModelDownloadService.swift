@@ -302,8 +302,7 @@ final class ModelDownloadService {
             let delegate = DownloadTaskDelegate(
                 modelID: modelID,
                 targetURL: targetURL,
-                token: remoteURL.host?.contains("huggingface.co") == true ? huggingFaceToken : "",
-                securityScopedDirectoryURL: targetURL.deletingLastPathComponent(),
+                securityScopedDirectoryURL: nil,
                 continuation: continuation
             ) { [weak self] snapshot in
                 guard let self else { return }
@@ -578,7 +577,6 @@ final class ModelDownloadService {
 private final class DownloadTaskDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     let modelID: String
     let targetURL: URL
-    let token: String
     let securityScopedDirectoryURL: URL?
     private let continuation: CheckedContinuation<Void, Error>
     private let onProgress: @Sendable (ModelDownloadService.ProgressSnapshot) -> Void
@@ -589,14 +587,12 @@ private final class DownloadTaskDelegate: NSObject, URLSessionDownloadDelegate, 
     init(
         modelID: String,
         targetURL: URL,
-        token: String,
         securityScopedDirectoryURL: URL?,
         continuation: CheckedContinuation<Void, Error>,
         onProgress: @escaping @Sendable (ModelDownloadService.ProgressSnapshot) -> Void
     ) {
         self.modelID = modelID
         self.targetURL = targetURL
-        self.token = token
         self.securityScopedDirectoryURL = securityScopedDirectoryURL
         self.continuation = continuation
         self.onProgress = onProgress
@@ -647,30 +643,42 @@ private final class DownloadTaskDelegate: NSObject, URLSessionDownloadDelegate, 
             return
         }
 
-        let fm = FileManager.default
-        let scopedURL = securityScopedDirectoryURL ?? targetURL.deletingLastPathComponent()
-        let didAccessScopedResource = scopedURL.startAccessingSecurityScopedResource()
-        defer {
-            if didAccessScopedResource {
-                scopedURL.stopAccessingSecurityScopedResource()
-            }
-        }
         do {
-            try fm.createDirectory(at: targetURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if fm.fileExists(atPath: targetURL.path(percentEncoded: false)) {
-                try fm.removeItem(at: targetURL)
+            let finalizedURL = try finalizeDownload(tempURL: location, fileName: targetURL.lastPathComponent)
+            if finalizedURL.standardizedFileURL != targetURL.standardizedFileURL {
+                continuation.resume(throwing: ModelDownloadService.DownloadError.networkFailure("Model destination mismatch during finalization."))
+            } else {
+                continuation.resume(returning: ())
             }
-            do {
-                try fm.copyItem(at: location, to: targetURL)
-                try? fm.removeItem(at: location)
-            } catch {
-                try fm.moveItem(at: location, to: targetURL)
-            }
-            continuation.resume(returning: ())
         } catch {
             continuation.resume(throwing: ModelDownloadService.DownloadError.networkFailure(error.localizedDescription))
         }
         session.finishTasksAndInvalidate()
+    }
+
+    private func finalizeDownload(tempURL: URL, fileName: String) throws -> URL {
+        let destination = ModelPaths.root.appendingPathComponent(fileName, isDirectory: false)
+        let fm = FileManager.default
+
+        if let scopedURL = securityScopedDirectoryURL {
+            let didAccess = scopedURL.startAccessingSecurityScopedResource()
+            defer {
+                if didAccess { scopedURL.stopAccessingSecurityScopedResource() }
+            }
+            try fm.createDirectory(at: ModelPaths.root, withIntermediateDirectories: true)
+            if fm.fileExists(atPath: destination.path(percentEncoded: false)) {
+                try fm.removeItem(at: destination)
+            }
+            try fm.copyItem(at: tempURL, to: destination)
+            return destination
+        }
+
+        try fm.createDirectory(at: ModelPaths.root, withIntermediateDirectories: true)
+        if fm.fileExists(atPath: destination.path(percentEncoded: false)) {
+            try fm.removeItem(at: destination)
+        }
+        try fm.copyItem(at: tempURL, to: destination)
+        return destination
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {

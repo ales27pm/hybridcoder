@@ -76,17 +76,9 @@ final class ModelRegistry {
     private let codeGenerationID = ModelRegistry.defaultCodeGenerationModelID
     private let legacyGenerationID = ModelRegistry.sharedQwenArtifactFilename
     private let externalModelsRootOverride: URL?
-    private let legacyExternalModelsRootOverride: URL?
-    private let legacyFlatExternalModelsRootOverride: URL?
 
-    init(
-        externalModelsRootOverride: URL? = nil,
-        legacyExternalModelsRootOverride: URL? = nil,
-        legacyFlatExternalModelsRootOverride: URL? = nil
-    ) {
+    init(externalModelsRootOverride: URL? = nil) {
         self.externalModelsRootOverride = externalModelsRootOverride?.standardizedFileURL
-        self.legacyExternalModelsRootOverride = legacyExternalModelsRootOverride?.standardizedFileURL
-        self.legacyFlatExternalModelsRootOverride = legacyFlatExternalModelsRootOverride?.standardizedFileURL
         let embeddingFiles: [ModelFile] = [
             ModelFile(remotePath: embeddingID, localPath: embeddingID)
         ]
@@ -272,29 +264,12 @@ final class ModelRegistry {
         BundledEmbeddingAssets.modelsRootURL
     }
 
-    nonisolated static var documentsRoot: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-    }
-
     nonisolated static var externalModelsRoot: URL {
-        documentsRoot.appendingPathComponent("Models", isDirectory: true)
+        ModelPaths.root
     }
 
     nonisolated static var canonicalModelsFolderDisplayPath: String {
-        "Files > On My iPhone > Hybrid Coder > Models/"
-    }
-
-    nonisolated static var legacyExternalModelsRoot: URL {
-        documentsRoot
-            .appendingPathComponent("Hybrid Coder", isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
-    }
-
-    nonisolated static var legacyFlatExternalModelsRoot: URL {
-        documentsRoot
-            .appendingPathComponent("HybridCoder", isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
+        externalModelsRoot.path(percentEncoded: false)
     }
 
     nonisolated static func normalizedModelsRoot(from rawURL: URL?) -> URL? {
@@ -310,12 +285,6 @@ final class ModelRegistry {
         if lastComponent == "models" {
             return url
         }
-        if lastComponent == "documents" {
-            return externalModelsRoot
-        }
-        if lastComponent == "hybridcoder" || lastComponent == "hybrid coder" {
-            return url.appendingPathComponent("Models", isDirectory: true)
-        }
         return externalModelsRoot
     }
 
@@ -325,10 +294,6 @@ final class ModelRegistry {
 
     nonisolated static func migrateLegacyExternalModelsIfNeeded() throws {
         try ensureExternalModelsDirectoryExists()
-        try migrateLegacyModelsIfNeeded(
-            targetRoot: externalModelsRoot,
-            legacyRoots: [legacyExternalModelsRoot, legacyFlatExternalModelsRoot]
-        )
     }
 
     nonisolated static func candidateExternalModelsRoots(preferredRoot: URL? = nil) -> [URL] {
@@ -337,8 +302,6 @@ final class ModelRegistry {
             urls.append(normalizedPreferred)
         }
         urls.append(externalModelsRoot.standardizedFileURL)
-        urls.append(legacyExternalModelsRoot.standardizedFileURL)
-        urls.append(legacyFlatExternalModelsRoot.standardizedFileURL)
 
         var seen: Set<String> = []
         return urls.filter { url in
@@ -499,10 +462,6 @@ final class ModelRegistry {
 
     func migrateLegacyExternalModelsIfNeeded() throws {
         try ensureExternalModelsDirectoryExists()
-        try Self.migrateLegacyModelsIfNeeded(
-            targetRoot: effectiveExternalModelsRoot,
-            legacyRoots: [effectiveLegacyExternalModelsRoot, effectiveLegacyFlatExternalModelsRoot]
-        )
     }
 
     func deleteCodeGenerationModelAssets(modelID: String, preferredRoot: URL? = nil) {
@@ -527,22 +486,12 @@ final class ModelRegistry {
         externalModelsRootOverride ?? Self.externalModelsRoot
     }
 
-    private var effectiveLegacyExternalModelsRoot: URL {
-        legacyExternalModelsRootOverride ?? Self.legacyExternalModelsRoot
-    }
-
-    private var effectiveLegacyFlatExternalModelsRoot: URL {
-        legacyFlatExternalModelsRootOverride ?? Self.legacyFlatExternalModelsRoot
-    }
-
     private func candidateExternalModelsRoots(preferredRoot: URL? = nil) -> [URL] {
         var urls: [URL] = []
         if let normalizedPreferred = Self.normalizedModelsRoot(from: preferredRoot) {
             urls.append(normalizedPreferred)
         }
         urls.append(effectiveExternalModelsRoot.standardizedFileURL)
-        urls.append(effectiveLegacyExternalModelsRoot.standardizedFileURL)
-        urls.append(effectiveLegacyFlatExternalModelsRoot.standardizedFileURL)
 
         var seen: Set<String> = []
         return urls.filter { url in
@@ -576,46 +525,6 @@ final class ModelRegistry {
         }
         let nsError = error as NSError
         return nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileNoSuchFileError
-    }
-
-    private nonisolated static func migrateLegacyModelsIfNeeded(
-        targetRoot: URL,
-        legacyRoots: [URL]
-    ) throws {
-        let fileManager = FileManager.default
-        try createDirectoryWithParentRetry(at: targetRoot, fileManager: fileManager)
-
-        for legacyRoot in legacyRoots {
-            let normalizedLegacyRoot = legacyRoot.standardizedFileURL
-            if normalizedLegacyRoot.path(percentEncoded: false) == targetRoot.standardizedFileURL.path(percentEncoded: false) {
-                continue
-            }
-
-            var isDirectory: ObjCBool = false
-            guard fileManager.fileExists(atPath: normalizedLegacyRoot.path(percentEncoded: false), isDirectory: &isDirectory),
-                  isDirectory.boolValue else {
-                continue
-            }
-
-            let fileURLs = (try? fileManager.contentsOfDirectory(
-                at: normalizedLegacyRoot,
-                includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            )) ?? []
-
-            for fileURL in fileURLs {
-                let destination = targetRoot.appendingPathComponent(fileURL.lastPathComponent, isDirectory: false)
-                if fileManager.fileExists(atPath: destination.path(percentEncoded: false)) {
-                    continue
-                }
-                do {
-                    try fileManager.moveItem(at: fileURL, to: destination)
-                } catch {
-                    try fileManager.copyItem(at: fileURL, to: destination)
-                    try? fileManager.removeItem(at: fileURL)
-                }
-            }
-        }
     }
 
 }

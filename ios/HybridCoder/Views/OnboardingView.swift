@@ -370,8 +370,15 @@ struct OnboardingView: View {
         }
 
         Task {
+            await resetSetupStateForRetry()
             await downloadAll()
         }
+    }
+
+    private func resetSetupStateForRetry() async {
+        await orchestrator.resetCodeGenerationModelState()
+        await orchestrator.modelDownload.deleteDownloadedModels(modelID: orchestrator.modelRegistry.activeCodeGenerationModelID)
+        await orchestrator.refreshRegistryInstallState()
     }
 
     private func downloadAll() async {
@@ -423,7 +430,7 @@ struct OnboardingView: View {
             }
             withAnimation { qwenComplete = true }
         } catch {
-            qwenError = error.localizedDescription
+            qwenError = "Warmup failed: \(error.localizedDescription)"
         }
     }
 
