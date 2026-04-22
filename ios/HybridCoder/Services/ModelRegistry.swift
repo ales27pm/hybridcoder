@@ -56,8 +56,6 @@ final class ModelRegistry {
     var activeGenerationModelID: String
     var activeCodeGenerationModelID: String
 
-    let embeddingModelsRootFolder = BundledEmbeddingAssets.embeddingModelsFolder
-
     private let activeEmbeddingKey = "models.active.embedding"
     private let activeGenerationKey = "models.active.generation"
     private let activeCodeGenerationKey = "models.active.codeGeneration"
