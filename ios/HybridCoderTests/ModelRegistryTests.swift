@@ -53,7 +53,7 @@ struct ModelRegistryTests {
         #expect(candidates.last == ModelRegistry.embeddingFallbackRemoteBaseURL)
     }
 
-    @Test("External models folder defaults to Documents/Hybrid Coder/Models and keeps legacy fallbacks")
+    @Test("External models folder defaults to Documents/Models and keeps legacy fallbacks")
     func externalModelsFolderPathIsInDocuments() {
         let root = ModelRegistry.externalModelsRoot.path(percentEncoded: false)
         let legacyRoot = ModelRegistry.legacyExternalModelsRoot.path(percentEncoded: false)
@@ -61,12 +61,12 @@ struct ModelRegistryTests {
         let roots = ModelRegistry.candidateExternalModelsRoots().map { $0.path(percentEncoded: false) }
 
         #expect(root.contains("Documents"))
-        #expect(root.contains("Hybrid Coder"))
         #expect(root.hasSuffix("/Models"))
         #expect(legacyRoot.contains("Documents"))
-        #expect(legacyRoot.contains("HybridCoder"))
+        #expect(legacyRoot.contains("Hybrid Coder"))
         #expect(legacyRoot.hasSuffix("/Models"))
         #expect(legacyFlatRoot.contains("Documents"))
+        #expect(legacyFlatRoot.contains("HybridCoder"))
         #expect(legacyFlatRoot.hasSuffix("/Models"))
         #expect(roots.contains(root))
         #expect(roots.contains(legacyRoot))
