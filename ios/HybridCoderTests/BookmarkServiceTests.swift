@@ -124,4 +124,46 @@ struct BookmarkServiceTests {
         testDefaults.removePersistentDomain(forName: defaultsSuite)
         try? fm.removeItem(at: sandboxRoot)
     }
+
+    @Test("Resolving invalid repository bookmark removes dead entry")
+    func resolveInvalidRepositoryBookmarkPurgesEntry() async throws {
+        let secureStore = SecureStoreService(serviceName: "com.hybridcoder.tests.bookmarks.repo.invalid.\(UUID().uuidString)")
+        let defaultsSuite = "com.hybridcoder.tests.bookmarks.repo.invalid.defaults.\(UUID().uuidString)"
+        let testDefaults = UserDefaults(suiteName: defaultsSuite)!
+        testDefaults.removePersistentDomain(forName: defaultsSuite)
+        let service = BookmarkService(secureStore: secureStore, userDefaults: testDefaults)
+
+        let broken = Repository(name: "BrokenRepo", bookmarkData: Data([0xDE, 0xAD, 0xBE, 0xEF]))
+        service.repositories = [broken]
+
+        let resolved = service.resolveBookmark(broken)
+        #expect(resolved == nil)
+        #expect(service.repositories.isEmpty)
+
+        try? await secureStore.deleteAll()
+        testDefaults.removePersistentDomain(forName: defaultsSuite)
+    }
+
+    @Test("Saving bookmark for same folder updates existing repository entry")
+    func saveBookmarkDeduplicatesResolvedPath() async throws {
+        let secureStore = SecureStoreService(serviceName: "com.hybridcoder.tests.bookmarks.repo.dedupe.\(UUID().uuidString)")
+        let defaultsSuite = "com.hybridcoder.tests.bookmarks.repo.dedupe.defaults.\(UUID().uuidString)"
+        let testDefaults = UserDefaults(suiteName: defaultsSuite)!
+        testDefaults.removePersistentDomain(forName: defaultsSuite)
+        let service = BookmarkService(secureStore: secureStore, userDefaults: testDefaults)
+        let fm = FileManager.default
+
+        let repoRoot = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: repoRoot, withIntermediateDirectories: true)
+
+        let first = try service.saveBookmark(for: repoRoot)
+        let second = try service.saveBookmark(for: repoRoot)
+
+        #expect(service.repositories.count == 1)
+        #expect(first.id == second.id)
+
+        try? await secureStore.deleteAll()
+        testDefaults.removePersistentDomain(forName: defaultsSuite)
+        try? fm.removeItem(at: repoRoot)
+    }
 }
