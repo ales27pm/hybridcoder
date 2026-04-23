@@ -119,7 +119,8 @@ final class WorkspaceSessionViewModel {
 
     func openRepository(_ repository: Repository) {
         guard let url = bookmarkService.resolveBookmark(repository) else {
-            studioContainer.importError = "Could not resolve bookmark for \(repository.name). Try re-importing."
+            bookmarkService.removeRepository(repository)
+            studioContainer.importError = "Could not resolve bookmark for \(repository.name). Re-import the folder from Files."
             return
         }
         guard url.startAccessingSecurityScopedResource() else {

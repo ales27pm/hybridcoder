@@ -53,10 +53,27 @@ final class BookmarkService {
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
-        let repo = Repository(
-            name: url.lastPathComponent,
-            bookmarkData: bookmarkData
-        )
+        let standardizedURL = url.standardizedFileURL
+        if let existingIndex = repositories.firstIndex(where: { existing in
+            guard let existingURL = resolveBookmarkURL(for: existing.bookmarkData) else { return false }
+            return existingURL.standardizedFileURL.path(percentEncoded: false) == standardizedURL.path(percentEncoded: false)
+        }) {
+            let existing = repositories[existingIndex]
+            let repo = Repository(
+                id: existing.id,
+                name: url.lastPathComponent,
+                bookmarkData: bookmarkData,
+                lastOpened: existing.lastOpened,
+                fileCount: existing.fileCount,
+                indexedCount: existing.indexedCount
+            )
+            repositories[existingIndex] = repo
+            persistRepositories()
+            return repo
+        }
+
+        let repo = Repository(name: url.lastPathComponent, bookmarkData: bookmarkData)
+        repositories.removeAll { $0.name == repo.name && resolveBookmarkURL(for: $0.bookmarkData) == nil }
         repositories.append(repo)
         persistRepositories()
         return repo
@@ -69,7 +86,10 @@ final class BookmarkService {
             options: bookmarkResolutionOptions,
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
-        ) else { return nil }
+        ) else {
+            removeRepository(repository)
+            return nil
+        }
 
         if isStale {
             if let updated = try? url.bookmarkData(
@@ -92,6 +112,16 @@ final class BookmarkService {
             }
         }
         return url
+    }
+
+    private func resolveBookmarkURL(for data: Data) -> URL? {
+        var isStale = false
+        return try? URL(
+            resolvingBookmarkData: data,
+            options: bookmarkResolutionOptions,
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
     }
 
 
