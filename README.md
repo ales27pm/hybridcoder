@@ -52,3 +52,24 @@ Then use:
 - `docs/product-vision.md` for goals and non-goals
 - `docs/agent-runtime.md` for the bytecoding strategy
 - `docs/roadmap.md` for the phased refactor plan
+
+## Installing Anemll assets
+
+Use the helper script below to overlay an Anemll zip into a local HybridCoder checkout:
+
+```bash
+python3 scripts/install_anemll_into_hybridcoder.py \
+  --zip /path/to/Anemll-main.zip \
+  --repo-root /path/to/hybridcoder
+```
+
+You can also pass the upstream archive URL directly:
+
+```bash
+python3 scripts/install_anemll_into_hybridcoder.py \
+  --zip https://github.com/Anemll/Anemll/archive/refs/heads/main.zip \
+  --repo-root /path/to/hybridcoder \
+  --dry-run
+```
+
+Use `--strip-components` (default `1`) if your archive layout differs.
